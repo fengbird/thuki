@@ -292,7 +292,7 @@ impl GenerationState {
     }
 
     /// Stores a new cancellation token, replacing any previous one.
-    fn set(&self, token: CancellationToken) {
+    pub fn set(&self, token: CancellationToken) {
         *self.token.lock().unwrap() = Some(token);
     }
 
@@ -304,7 +304,7 @@ impl GenerationState {
     }
 
     /// Clears the stored token without cancelling it (used on natural completion).
-    fn clear(&self) {
+    pub fn clear(&self) {
         *self.token.lock().unwrap() = None;
     }
 }

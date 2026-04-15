@@ -18,6 +18,7 @@ import { ConversationView } from './view/ConversationView';
 import { AskBarView, MAX_IMAGES } from './view/AskBarView';
 import { OnboardingView } from './view/onboarding/index';
 import type { OnboardingStage } from './view/onboarding/index';
+import { ReplyDraftView } from './view/ReplyDraftView';
 import { HistoryPanel } from './components/HistoryPanel';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import type { AttachedImage } from './types/image';
@@ -35,6 +36,32 @@ const DEFAULT_MODEL_FALLBACK = 'gemma4:e2b';
 
 const OVERLAY_VISIBILITY_EVENT = 'thuki://visibility';
 const ONBOARDING_EVENT = 'thuki://onboarding';
+const REPLY_DRAFT_OPEN_EVENT = 'thuki://reply-draft-open';
+const REPLY_DRAFT_IMAGE_EVENT = 'thuki://reply-draft-image';
+
+/** Payload for `thuki://reply-draft-open` — app identity only; the
+ * screenshot arrives in a separate image event once CG capture finishes. */
+interface ReplyDraftOpenPayload {
+  bundle_id: string;
+  app_name: string;
+}
+
+/** Payload for `thuki://reply-draft-image` — exactly one of `image_path`
+ * (success) or `error` (failure) is populated per emission. */
+interface ReplyDraftImagePayload {
+  image_path: string | null;
+  error: string | null;
+}
+
+/** Combined reply-flow state tracked by `App.tsx`. Populated in two steps:
+ * first from the `open` event (imagePath/captureError both null), then from
+ * the `image` event which fills one of the two. */
+interface ReplyContext {
+  bundleId: string;
+  appName: string;
+  imagePath: string | null;
+  captureError: string | null;
+}
 
 /**
  * Authoritative deadline from the start of the hide transition to the native
@@ -105,6 +132,11 @@ function App() {
   /** Non-null when the backend signals onboarding is needed; holds the current stage. */
   const [onboardingStage, setOnboardingStage] =
     useState<OnboardingStage | null>(null);
+
+  /** Non-null while the ⌃⇧R reply-draft flow is active. Populated by the
+   * two-phase reply events: `open` seeds it with app identity, `image`
+   * fills in either `imagePath` on success or `captureError` on failure. */
+  const [replyContext, setReplyContext] = useState<ReplyContext | null>(null);
 
   /**
    * Whether the ask-bar history panel is currently open.
@@ -283,6 +315,50 @@ function App() {
    * also repositions the window upward to keep its bottom pinned as the
    * conversation grows.
    */
+  /**
+   * Reference to the ResizeObserver attached to the reply-draft wrapper.
+   * Stored so `setReplyContainerRef` can disconnect the previous observer
+   * before attaching a new one (re-attaches can happen when React
+   * re-creates the DOM node during Fast Refresh or consecutive reply
+   * events).
+   */
+  const replyObserverRef = useRef<ResizeObserver | null>(null);
+
+  /**
+   * Callback ref for the reply-draft wrapper. Observes its intrinsic
+   * height and resizes the native Tauri window to match so the reply
+   * panel is never clipped by the overlay's collapsed 80px height.
+   * Mirrors the pattern used by `setContainerRef` for the normal chat
+   * container.
+   */
+  const setReplyContainerRef = useCallback((node: HTMLDivElement | null) => {
+    if (replyObserverRef.current) {
+      replyObserverRef.current.disconnect();
+      replyObserverRef.current = null;
+    }
+
+    if (node) {
+      const observer = new ResizeObserver(
+        /* v8 ignore start -- ResizeObserver callback requires a native browser resize event */
+        (entries) => {
+          requestAnimationFrame(() => {
+            for (const entry of entries) {
+              const rect = entry.target.getBoundingClientRect();
+              const targetHeight =
+                Math.ceil(rect.height) + CONTAINER_VERTICAL_PADDING;
+              void getCurrentWindow().setSize(
+                new LogicalSize(OVERLAY_WIDTH, targetHeight),
+              );
+            }
+          });
+        },
+        /* v8 ignore stop */
+      );
+      observer.observe(node);
+      replyObserverRef.current = observer;
+    }
+  }, []);
+
   const setContainerRef = useCallback((node: HTMLDivElement | null) => {
     morphingContainerNodeRef.current = node;
 
@@ -1226,6 +1302,8 @@ function App() {
   useEffect(() => {
     let unlistenVisibility: (() => void) | undefined;
     let unlistenOnboarding: (() => void) | undefined;
+    let unlistenReplyDraftOpen: (() => void) | undefined;
+    let unlistenReplyDraftImage: (() => void) | undefined;
 
     const attachListeners = async () => {
       unlistenVisibility = await listen<OverlayVisibilityPayload>(
@@ -1249,7 +1327,34 @@ function App() {
           setOnboardingStage(payload.stage);
         },
       );
-      // Both listeners registered — safe to let Rust decide what to show on launch.
+      unlistenReplyDraftOpen = await listen<ReplyDraftOpenPayload>(
+        REPLY_DRAFT_OPEN_EVENT,
+        ({ payload }) => {
+          // A new draft request — seed the context with just app identity.
+          // Image path + capture error stay null until the image event lands.
+          setReplyContext({
+            bundleId: payload.bundle_id,
+            appName: payload.app_name,
+            imagePath: null,
+            captureError: null,
+          });
+        },
+      );
+      unlistenReplyDraftImage = await listen<ReplyDraftImagePayload>(
+        REPLY_DRAFT_IMAGE_EVENT,
+        ({ payload }) => {
+          setReplyContext((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  imagePath: payload.image_path,
+                  captureError: payload.error,
+                }
+              : prev,
+          );
+        },
+      );
+      // Listeners registered — safe to let Rust decide what to show on launch.
       await invoke('notify_frontend_ready');
     };
 
@@ -1257,6 +1362,8 @@ function App() {
     return () => {
       unlistenVisibility?.();
       unlistenOnboarding?.();
+      unlistenReplyDraftOpen?.();
+      unlistenReplyDraftImage?.();
     };
   }, [replayEntranceAnimation, requestHideOverlay]);
 
@@ -1292,7 +1399,9 @@ function App() {
 
   /**
    * Commits the native window hide after a fixed deadline from the start of
-   * the exit transition.
+   * the exit transition. Also clears any active reply-draft context so a
+   * subsequent double-tap Ctrl opens the normal Ask Bar instead of
+   * re-rendering the stale reply panel.
    */
   useEffect(() => {
     if (overlayState !== 'hiding') return;
@@ -1301,6 +1410,7 @@ function App() {
       void getCurrentWindow().hide();
       void invoke('notify_overlay_hidden');
       setOverlayState('hidden');
+      setReplyContext(null);
     }, HIDE_COMMIT_DELAY_MS);
 
     return () => clearTimeout(timer);
@@ -1366,6 +1476,28 @@ function App() {
         stage={onboardingStage}
         onComplete={() => setOnboardingStage(null)}
       />
+    );
+  }
+
+  if (replyContext !== null) {
+    return (
+      <div
+        onMouseDown={handleDragStart}
+        className="flex flex-col items-center justify-start h-screen w-screen px-3 pt-2 pb-6 bg-transparent overflow-visible"
+      >
+        <div ref={setReplyContainerRef} className="w-full">
+          <ReplyDraftView
+            bundleId={replyContext.bundleId}
+            appName={replyContext.appName}
+            imagePath={replyContext.imagePath}
+            captureError={replyContext.captureError}
+            onDismiss={() => {
+              setReplyContext(null);
+              handleCloseOverlay();
+            }}
+          />
+        </div>
+      </div>
     );
   }
 

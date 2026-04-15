@@ -390,6 +390,277 @@ fn capture_full_screen_pixels() -> Result<(u32, u32, Vec<u8>), String> {
     Err("full-screen capture is only supported on macOS".to_string())
 }
 
+// ─── Single-window capture (macOS) ─────────────────────────────────────────
+
+/// Captures raw RGBA pixels of the topmost layer-0 window owned by the
+/// given process id. Walks `CGWindowListCopyWindowInfo` to locate the
+/// window, then drives `CGWindowListCreateImage` with
+/// `kCGWindowListOptionIncludingWindow` so only that window's pixels are
+/// composited — menu bar, Dock, and everything else is excluded.
+///
+/// Must run on the macOS main thread (CoreGraphics internally dispatches
+/// there). Callers wrap via `run_on_main_thread`.
+///
+/// Excluded from coverage: thin wrapper over macOS CoreGraphics FFI.
+#[cfg(target_os = "macos")]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn capture_window_raw(pid: i32) -> Result<(u32, u32, Vec<u8>), String> {
+    use core_foundation::base::TCFType;
+    use core_foundation::string::CFString;
+    use core_graphics::geometry::{CGPoint, CGRect, CGSize};
+    use std::ffi::c_void;
+
+    type CFArrayRef = *const c_void;
+    type CFDictionaryRef = *const c_void;
+
+    const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: u32 = 1;
+    const K_CG_WINDOW_LIST_OPTION_INCLUDING_WINDOW: u32 = 1 << 3;
+    const K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS: u32 = 1 << 4;
+    const K_CG_NULL_WINDOW_ID: u32 = 0;
+    const K_CG_WINDOW_IMAGE_BOUNDS_IGNORE_FRAMING: u32 = 1;
+    const K_CG_WINDOW_IMAGE_NOMINAL_RESOLUTION: u32 = 1 << 4;
+
+    const K_CF_NUMBER_S_INT32_TYPE: i32 = 3;
+    const K_CG_BITMAP_BYTE_ORDER32_HOST: u32 = 2 << 12;
+    const K_CG_IMAGE_ALPHA_PREMULTIPLIED_FIRST: u32 = 2;
+    const BGRA_BITMAP_INFO: u32 =
+        K_CG_BITMAP_BYTE_ORDER32_HOST | K_CG_IMAGE_ALPHA_PREMULTIPLIED_FIRST;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn CGWindowListCopyWindowInfo(option: u32, relativeToWindow: u32) -> CFArrayRef;
+        fn CGWindowListCreateImage(
+            screenBounds: CGRect,
+            listOption: u32,
+            relativeToWindow: u32,
+            imageOption: u32,
+        ) -> *const c_void;
+        fn CGImageGetWidth(image: *const c_void) -> usize;
+        fn CGImageGetHeight(image: *const c_void) -> usize;
+        fn CGImageRelease(image: *const c_void);
+        fn CGColorSpaceCreateDeviceRGB() -> *const c_void;
+        fn CGColorSpaceRelease(cs: *const c_void);
+        fn CGBitmapContextCreate(
+            data: *mut c_void,
+            width: usize,
+            height: usize,
+            bitsPerComponent: usize,
+            bytesPerRow: usize,
+            colorSpace: *const c_void,
+            bitmapInfo: u32,
+        ) -> *const c_void;
+        fn CGContextDrawImage(ctx: *const c_void, rect: CGRect, image: *const c_void);
+        fn CGContextRelease(ctx: *const c_void);
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFArrayGetCount(array: CFArrayRef) -> isize;
+        fn CFArrayGetValueAtIndex(array: CFArrayRef, idx: isize) -> *const c_void;
+        fn CFDictionaryGetValue(dict: CFDictionaryRef, key: *const c_void) -> *const c_void;
+        fn CFNumberGetValue(number: *const c_void, theType: i32, valuePtr: *mut c_void) -> bool;
+        fn CFBooleanGetValue(b: *const c_void) -> u8;
+        fn CFRelease(cf: *const c_void);
+    }
+
+    unsafe {
+        if !CGPreflightScreenCaptureAccess() {
+            return Err(
+                "Screen Recording permission is required. Grant it in System \
+                 Settings > Privacy & Security > Screen Recording."
+                    .to_string(),
+            );
+        }
+
+        let list_options =
+            K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY | K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS;
+        let window_info_list = CGWindowListCopyWindowInfo(list_options, K_CG_NULL_WINDOW_ID);
+        if window_info_list.is_null() {
+            return Err("Failed to enumerate windows.".to_string());
+        }
+
+        let count = CFArrayGetCount(window_info_list);
+        let pid_key = CFString::new("kCGWindowOwnerPID");
+        let wid_key = CFString::new("kCGWindowNumber");
+        let layer_key = CFString::new("kCGWindowLayer");
+        let onscreen_key = CFString::new("kCGWindowIsOnscreen");
+
+        let mut target_window_id: u32 = K_CG_NULL_WINDOW_ID;
+        for i in 0..count {
+            let dict = CFArrayGetValueAtIndex(window_info_list, i) as CFDictionaryRef;
+            if dict.is_null() {
+                continue;
+            }
+
+            let pid_val =
+                CFDictionaryGetValue(dict, pid_key.as_concrete_TypeRef() as *const c_void);
+            if pid_val.is_null() {
+                continue;
+            }
+            let mut owner_pid: i32 = 0;
+            CFNumberGetValue(
+                pid_val,
+                K_CF_NUMBER_S_INT32_TYPE,
+                &mut owner_pid as *mut i32 as *mut c_void,
+            );
+            if owner_pid != pid {
+                continue;
+            }
+
+            // Only normal-layer windows (layer 0). Menu extras, status
+            // items, floating palettes live at other layers.
+            let layer_val =
+                CFDictionaryGetValue(dict, layer_key.as_concrete_TypeRef() as *const c_void);
+            if !layer_val.is_null() {
+                let mut layer: i32 = 0;
+                CFNumberGetValue(
+                    layer_val,
+                    K_CF_NUMBER_S_INT32_TYPE,
+                    &mut layer as *mut i32 as *mut c_void,
+                );
+                if layer != 0 {
+                    continue;
+                }
+            }
+
+            // Skip windows that are minimised/offscreen when the flag is present.
+            let onscreen_val =
+                CFDictionaryGetValue(dict, onscreen_key.as_concrete_TypeRef() as *const c_void);
+            if !onscreen_val.is_null() && CFBooleanGetValue(onscreen_val) == 0 {
+                continue;
+            }
+
+            let wid_val =
+                CFDictionaryGetValue(dict, wid_key.as_concrete_TypeRef() as *const c_void);
+            if wid_val.is_null() {
+                continue;
+            }
+            let mut wid: u32 = 0;
+            CFNumberGetValue(
+                wid_val,
+                K_CF_NUMBER_S_INT32_TYPE,
+                &mut wid as *mut u32 as *mut c_void,
+            );
+            target_window_id = wid;
+            break;
+        }
+
+        CFRelease(window_info_list);
+
+        if target_window_id == K_CG_NULL_WINDOW_ID {
+            return Err(format!(
+                "No on-screen window found for the focused app (pid {pid})."
+            ));
+        }
+
+        // Null CGRect + kCGWindowListOptionIncludingWindow causes CG to use
+        // the window's own bounds as the capture rect.
+        let null_rect = CGRect {
+            origin: CGPoint::new(0.0, 0.0),
+            size: CGSize::new(0.0, 0.0),
+        };
+        // `kCGWindowImageNominalResolution` captures at 1× (logical) pixels
+        // rather than the device's 2× retina backing. On a typical chat
+        // window this cuts the rendered image by 4×, which speeds up the
+        // bitmap-context rasterise, the downstream resize, and JPEG encode
+        // proportionally. The vision model does not benefit from sub-pixel
+        // fidelity — nominal resolution is more than enough for reading
+        // chat bubble text.
+        let cg_image = CGWindowListCreateImage(
+            null_rect,
+            K_CG_WINDOW_LIST_OPTION_INCLUDING_WINDOW,
+            target_window_id,
+            K_CG_WINDOW_IMAGE_BOUNDS_IGNORE_FRAMING | K_CG_WINDOW_IMAGE_NOMINAL_RESOLUTION,
+        );
+        if cg_image.is_null() {
+            return Err("Window capture failed.".to_string());
+        }
+
+        let width = CGImageGetWidth(cg_image);
+        let height = CGImageGetHeight(cg_image);
+        if width == 0 || height == 0 {
+            CGImageRelease(cg_image);
+            return Err("Window capture returned an empty image.".to_string());
+        }
+
+        let bytes_per_row = width * 4;
+        let mut pixel_bytes: Vec<u8> = vec![0u8; height * bytes_per_row];
+        let color_space = CGColorSpaceCreateDeviceRGB();
+        let ctx = CGBitmapContextCreate(
+            pixel_bytes.as_mut_ptr() as *mut c_void,
+            width,
+            height,
+            8,
+            bytes_per_row,
+            color_space,
+            BGRA_BITMAP_INFO,
+        );
+        CGColorSpaceRelease(color_space);
+        if ctx.is_null() {
+            CGImageRelease(cg_image);
+            return Err("Failed to create bitmap context for window capture.".to_string());
+        }
+
+        let draw_rect = CGRect {
+            origin: CGPoint::new(0.0, 0.0),
+            size: CGSize::new(width as f64, height as f64),
+        };
+        CGContextDrawImage(ctx, draw_rect, cg_image);
+        CGContextRelease(ctx);
+        CGImageRelease(cg_image);
+
+        for chunk in pixel_bytes.chunks_exact_mut(4) {
+            chunk.swap(0, 2);
+        }
+
+        Ok((width as u32, height as u32, pixel_bytes))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn capture_window_raw(_pid: i32) -> Result<(u32, u32, Vec<u8>), String> {
+    Err("window capture is only supported on macOS".to_string())
+}
+
+/// Tauri command: captures a PNG of the topmost normal-layer window
+/// belonging to `pid` and saves it under the app's images directory.
+/// Returns the absolute file path so the frontend can feed it to the
+/// multimodal reply model.
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub async fn capture_window_command(
+    pid: i32,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let base_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<(u32, u32, Vec<u8>), String>>();
+    app_handle
+        .run_on_main_thread(move || {
+            tx.send(capture_window_raw(pid)).ok();
+        })
+        .map_err(|e| format!("failed to dispatch capture to main thread: {e}"))?;
+
+    let (width, height, rgba_bytes) = rx
+        .await
+        .map_err(|_| "main thread capture channel closed unexpectedly".to_string())??;
+
+    tokio::task::spawn_blocking(move || {
+        crate::images::save_rgba_image(&base_dir, width, height, rgba_bytes)
+    })
+    .await
+    .map_err(|e| format!("image encoding task failed: {e}"))?
+}
+
 /// Tauri command: silently captures the full screen (excluding Thuki's own
 /// windows) and returns the absolute file path of the saved image.
 ///
@@ -420,20 +691,11 @@ pub async fn capture_full_screen_command(app_handle: tauri::AppHandle) -> Result
         .await
         .map_err(|_| "main thread capture channel closed unexpectedly".to_string())??;
 
-    // Phase 2: Encode to PNG and save via the images pipeline on a blocking
-    // thread so the main thread stays responsive.
+    // Phase 2: Resize + JPEG-encode + save directly from the RGBA buffer on
+    // a blocking thread. Skips a PNG encode/decode round-trip — on retina
+    // captures that round-trip alone cost 1.5–3 s.
     tokio::task::spawn_blocking(move || {
-        let buf =
-            image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(width, height, rgba_bytes)
-                .ok_or_else(|| "Failed to create image buffer from captured pixels.".to_string())?;
-        let dynamic = image::DynamicImage::ImageRgba8(buf);
-
-        let mut png: Vec<u8> = Vec::new();
-        dynamic
-            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-            .map_err(|e| format!("Failed to encode screen capture as PNG: {e}"))?;
-
-        crate::images::save_image(&base_dir, &png)
+        crate::images::save_rgba_image(&base_dir, width, height, rgba_bytes)
     })
     .await
     .map_err(|e| format!("image encoding task failed: {e}"))?
@@ -510,6 +772,14 @@ mod tests {
     #[test]
     fn capture_full_screen_returns_err_on_non_macos() {
         let result = capture_full_screen_pixels();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("only supported on macOS"));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn capture_window_returns_err_on_non_macos() {
+        let result = capture_window_raw(1);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("only supported on macOS"));
     }

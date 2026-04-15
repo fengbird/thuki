@@ -20,6 +20,7 @@ pub mod database;
 pub mod history;
 pub mod images;
 pub mod onboarding;
+pub mod reply;
 pub mod screenshot;
 
 #[cfg(target_os = "macos")]
@@ -600,6 +601,83 @@ fn spawn_periodic_image_cleanup(app_handle: tauri::AppHandle) {
     });
 }
 
+// ─── Reply hotkey orchestration ────────────────────────────────────────────
+
+/// Frontend event fired the moment the reply hotkey is detected so the
+/// overlay can appear with a "capturing…" state before the screenshot
+/// actually completes. Carries only app identity; the image arrives in a
+/// separate event below.
+const REPLY_DRAFT_OPEN_EVENT: &str = "thuki://reply-draft-open";
+/// Frontend event fired once the window screenshot is ready (or failed).
+/// Payload is `ReplyDraftImagePayload` — `image_path` populated on
+/// success, `error` populated on failure.
+const REPLY_DRAFT_IMAGE_EVENT: &str = "thuki://reply-draft-image";
+
+/// Handles a ⌃⇧R press in two phases:
+///
+/// 1. **Synchronous**: capture the frontmost app info, emit
+///    `thuki://reply-draft-open`, and show the overlay. The user sees the
+///    draft panel pop up within a few frames of pressing the hotkey, with
+///    a "Capturing screenshot of <App>…" placeholder.
+/// 2. **Asynchronous**: screenshot only that app's topmost window
+///    (through `screenshot::capture_window_command`), then emit
+///    `thuki://reply-draft-image` with either the file path on success or
+///    a human-readable error on failure. The frontend kicks off reply
+///    generation once the image path arrives.
+///
+/// Runs on its own thread (dispatched from the event-tap callback) so
+/// AppKit and CoreGraphics calls can block without starving the tap's
+/// CFRunLoop.
+#[cfg(target_os = "macos")]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn handle_reply_hotkey(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let Some(info) = reply::frontmost_app_info() else {
+            eprintln!("thuki: [reply] no frontmost app — ignoring hotkey");
+            return;
+        };
+
+        // Phase 1: make the overlay visible immediately with app identity,
+        // so the user gets feedback that the hotkey registered.
+        if let Err(e) = app_handle.emit(
+            REPLY_DRAFT_OPEN_EVENT,
+            reply::ReplyDraftOpenPayload {
+                bundle_id: info.bundle_id.clone(),
+                app_name: info.app_name.clone(),
+            },
+        ) {
+            eprintln!("thuki: [reply] failed to emit draft-open event: {e}");
+            return;
+        }
+
+        let show_handle = app_handle.clone();
+        let _ = app_handle.run_on_main_thread(move || {
+            show_overlay(&show_handle, crate::context::ActivationContext::empty());
+        });
+
+        // Phase 2: capture the target window. If it fails, we still emit
+        // the image event so the frontend can surface the error inline.
+        let image_payload =
+            match screenshot::capture_window_command(info.pid, app_handle.clone()).await {
+                Ok(path) => reply::ReplyDraftImagePayload {
+                    image_path: Some(path),
+                    error: None,
+                },
+                Err(e) => {
+                    eprintln!("thuki: [reply] window capture failed: {e}");
+                    reply::ReplyDraftImagePayload {
+                        image_path: None,
+                        error: Some(e),
+                    }
+                }
+            };
+
+        if let Err(e) = app_handle.emit(REPLY_DRAFT_IMAGE_EVENT, image_payload) {
+            eprintln!("thuki: [reply] failed to emit draft-image event: {e}");
+        }
+    });
+}
+
 // ─── Application entry point ─────────────────────────────────────────────────
 
 /// Initialises and runs the Tauri application.
@@ -681,29 +759,42 @@ pub fn run() {
             // Screen Recording) avoids that redundant dialog entirely.
             #[cfg(target_os = "macos")]
             {
-                let app_handle = app.handle().clone();
+                let activator_app_handle = app.handle().clone();
+                let reply_app_handle = app.handle().clone();
                 let activator = activator::OverlayActivator::new();
                 if permissions::is_accessibility_granted() {
-                    activator.start(move || {
-                        // Skip AX + clipboard when hiding — no context needed and
-                        // simulating Cmd+C against Thuki's own WebView would produce
-                        // a macOS alert sound.
-                        let is_visible = OVERLAY_INTENDED_VISIBLE.load(Ordering::SeqCst);
-                        let handle = app_handle.clone();
-                        let handle2 = app_handle.clone();
-                        // Dispatch context capture to a dedicated thread so the event
-                        // tap callback returns immediately. AX attribute lookups and
-                        // clipboard simulation can block for seconds (macOS AX default
-                        // timeout is ~6 s) when the focused app does not implement the
-                        // accessibility protocol. Blocking the tap callback freezes the
-                        // CFRunLoop and silently prevents all future key events from
-                        // being delivered to the activator.
-                        std::thread::spawn(move || {
-                            let ctx = crate::context::capture_activation_context(is_visible);
-                            let _ =
-                                handle.run_on_main_thread(move || toggle_overlay(&handle2, ctx));
-                        });
-                    });
+                    activator.start(
+                        move || {
+                            // Skip AX + clipboard when hiding — no context needed and
+                            // simulating Cmd+C against Thuki's own WebView would produce
+                            // a macOS alert sound.
+                            let is_visible = OVERLAY_INTENDED_VISIBLE.load(Ordering::SeqCst);
+                            let handle = activator_app_handle.clone();
+                            let handle2 = activator_app_handle.clone();
+                            // Dispatch context capture to a dedicated thread so the event
+                            // tap callback returns immediately. AX attribute lookups and
+                            // clipboard simulation can block for seconds (macOS AX default
+                            // timeout is ~6 s) when the focused app does not implement the
+                            // accessibility protocol. Blocking the tap callback freezes the
+                            // CFRunLoop and silently prevents all future key events from
+                            // being delivered to the activator.
+                            std::thread::spawn(move || {
+                                let ctx = crate::context::capture_activation_context(is_visible);
+                                let _ = handle
+                                    .run_on_main_thread(move || toggle_overlay(&handle2, ctx));
+                            });
+                        },
+                        move || {
+                            // Reply hotkey (⌃⇧R).  Dispatch off the tap
+                            // callback thread — screenshot + AppKit focus
+                            // queries are far too slow to run inline, and
+                            // blocking the tap would silently disable it.
+                            let handle = reply_app_handle.clone();
+                            std::thread::spawn(move || {
+                                handle_reply_hotkey(handle);
+                            });
+                        },
+                    );
                 }
                 app.manage(activator);
             }
@@ -727,6 +818,7 @@ pub fn run() {
             app.manage(commands::SystemPrompt(commands::load_system_prompt()));
             app.manage(commands::load_model_config());
             app.manage(commands::load_api_config());
+            app.manage(reply::ReplyPrompt(reply::load_reply_prompt()));
 
             // ── SQLite database for conversation history ──────────
             let app_data_dir = app
@@ -774,6 +866,12 @@ pub fn run() {
             screenshot::capture_screenshot_command,
             #[cfg(not(coverage))]
             screenshot::capture_full_screen_command,
+            #[cfg(not(coverage))]
+            screenshot::capture_window_command,
+            #[cfg(not(coverage))]
+            reply::generate_reply,
+            #[cfg(not(coverage))]
+            reply::paste_reply_and_hide,
             notify_overlay_hidden,
             notify_frontend_ready,
             set_window_frame,

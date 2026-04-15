@@ -4041,4 +4041,193 @@ describe('App', () => {
       expect(screen.queryByText('Before you dive in')).toBeNull();
     });
   });
+
+  describe('reply-draft flow', () => {
+    it('opens ReplyDraftView in Capturing state on thuki://reply-draft-open', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('thuki://reply-draft-open', {
+          bundle_id: 'com.tencent.xinWeChat',
+          app_name: 'WeChat',
+        });
+      });
+
+      // Ask bar swapped out, reply-draft shown in capturing state.
+      expect(screen.queryByPlaceholderText('Ask Thuki anything...')).toBeNull();
+      expect(screen.getByTestId('reply-draft-root')).toBeInTheDocument();
+      expect(screen.getByTestId('reply-target-app').textContent).toBe('WeChat');
+      // Spinner is present instead of a real thumbnail while pending.
+      expect(screen.getByTestId('reply-thumbnail-pending')).toBeInTheDocument();
+      // No generate_reply dispatched yet — screenshot isn't ready.
+      const generateCalls = invoke.mock.calls.filter(
+        ([cmd]) => cmd === 'generate_reply',
+      );
+      expect(generateCalls).toHaveLength(0);
+    });
+
+    it('dispatches generate_reply once thuki://reply-draft-image arrives with a path', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('thuki://reply-draft-open', {
+          bundle_id: 'com.apple.MobileSMS',
+          app_name: 'Messages',
+        });
+      });
+      invoke.mockClear();
+
+      await act(async () => {
+        emitTauriEvent('thuki://reply-draft-image', {
+          image_path: '/tmp/imessages.png',
+          error: null,
+        });
+      });
+
+      expect(invoke).toHaveBeenCalledWith(
+        'generate_reply',
+        expect.objectContaining({
+          imagePath: '/tmp/imessages.png',
+          appName: 'Messages',
+        }),
+      );
+      expect(screen.getByTestId('reply-thumbnail')).toBeInTheDocument();
+    });
+
+    it('surfaces a Capture failed banner when the image event carries an error', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('thuki://reply-draft-open', {
+          bundle_id: 'com.apple.MobileSMS',
+          app_name: 'Messages',
+        });
+      });
+
+      await act(async () => {
+        emitTauriEvent('thuki://reply-draft-image', {
+          image_path: null,
+          error: 'No on-screen window found for the focused app (pid 42).',
+        });
+      });
+
+      expect(screen.getByText(/Capture failed/)).toBeInTheDocument();
+      expect(screen.getByText(/No on-screen window found/)).toBeInTheDocument();
+    });
+
+    it('ignores an image event that arrives without a prior open event', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('thuki://reply-draft-image', {
+          image_path: '/tmp/orphan.png',
+          error: null,
+        });
+      });
+
+      // No reply-draft UI should appear — the open event is the
+      // authoritative trigger for entering reply mode.
+      expect(screen.queryByTestId('reply-draft-root')).toBeNull();
+    });
+
+    it('Escape inside ReplyDraftView dismisses and restores normal UI', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('thuki://reply-draft-open', {
+          bundle_id: 'com.apple.MobileSMS',
+          app_name: 'Messages',
+        });
+      });
+      expect(screen.getByTestId('reply-draft-root')).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: 'Escape' });
+      });
+      await act(async () => {});
+
+      expect(screen.queryByTestId('reply-draft-root')).toBeNull();
+    });
+
+    it('clears the reply context after the hide animation so the next show renders the Ask Bar', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        render(<App />);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        await showOverlay();
+
+        await act(async () => {
+          emitTauriEvent('thuki://reply-draft-open', {
+            bundle_id: 'com.tencent.xinWeChat',
+            app_name: 'WeChat',
+          });
+        });
+        expect(screen.getByTestId('reply-draft-root')).toBeInTheDocument();
+
+        // Escape dismisses reply and kicks off the hide transition.
+        await act(async () => {
+          fireEvent.keyDown(window, { key: 'Escape' });
+        });
+
+        // Reply panel exits immediately (replyContext cleared in onDismiss).
+        expect(screen.queryByTestId('reply-draft-root')).toBeNull();
+
+        // Advance the 350ms hide timer to drive overlayState → 'hidden'.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(400);
+        });
+
+        // Simulate a fresh double-tap Ctrl — visibility=show only, no
+        // reply-draft-open event. The Ask Bar should come back, NOT the
+        // reply panel.
+        await act(async () => {
+          emitTauriEvent('thuki://visibility', {
+            state: 'show',
+            selected_text: null,
+            window_x: null,
+            window_y: null,
+            screen_bottom_y: null,
+          });
+        });
+
+        expect(screen.queryByTestId('reply-draft-root')).toBeNull();
+        expect(
+          screen.getByPlaceholderText('Ask Thuki anything...'),
+        ).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a second reply-draft-open for a different app replaces the current draft', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('thuki://reply-draft-open', {
+          bundle_id: 'com.tencent.xinWeChat',
+          app_name: 'WeChat',
+        });
+      });
+      expect(screen.getByTestId('reply-target-app').textContent).toBe('WeChat');
+
+      await act(async () => {
+        emitTauriEvent('thuki://reply-draft-open', {
+          bundle_id: 'com.apple.MobileSMS',
+          app_name: 'Messages',
+        });
+      });
+      expect(screen.getByTestId('reply-target-app').textContent).toBe(
+        'Messages',
+      );
+    });
+  });
 });

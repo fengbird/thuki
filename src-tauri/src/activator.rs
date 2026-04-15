@@ -38,6 +38,23 @@ const ACTIVATION_COOLDOWN: Duration = Duration::from_millis(600);
 const KC_PRIMARY_L: i64 = 0x3b;
 const KC_PRIMARY_R: i64 = 0x3e;
 
+/// Keycode for the letter R. Used to detect the reply hotkey (⌃⇧R).
+const KC_R: i64 = 0x0f;
+
+/// Returns true when `keycode` + `flags` match the reply hotkey (⌃⇧R with
+/// **no** ⌘ or ⌥). Extracted as a pure function so the modifier-set check
+/// can be unit-tested without synthesising CGEvents.
+fn is_reply_hotkey(keycode: i64, flags: CGEventFlags) -> bool {
+    if keycode != KC_R {
+        return false;
+    }
+    let has_ctrl = flags.contains(CGEventFlags::CGEventFlagControl);
+    let has_shift = flags.contains(CGEventFlags::CGEventFlagShift);
+    let has_cmd = flags.contains(CGEventFlags::CGEventFlagCommand);
+    let has_alt = flags.contains(CGEventFlags::CGEventFlagAlternate);
+    has_ctrl && has_shift && !has_cmd && !has_alt
+}
+
 /// Maximum number of attempts to establish the event tap while waiting for system permissions.
 const MAX_PERMISSION_ATTEMPTS: u32 = 6;
 
@@ -147,12 +164,13 @@ impl OverlayActivator {
     ///
     /// # Arguments
     ///
-    /// * `on_activation` - A thread-safe closure executed whenever the activation
-    ///   sequence is detected.
+    /// * `on_activation` — invoked on double-tap Control (toggles the overlay).
+    /// * `on_reply_hotkey` — invoked on ⌃⇧R (triggers smart-reply capture).
     #[cfg_attr(coverage_nightly, coverage(off))]
-    pub fn start<F>(&self, on_activation: F)
+    pub fn start<F, G>(&self, on_activation: F, on_reply_hotkey: G)
     where
         F: Fn() + Send + Sync + 'static,
+        G: Fn() + Send + Sync + 'static,
     {
         if self.is_active.load(Ordering::SeqCst) {
             return;
@@ -166,9 +184,10 @@ impl OverlayActivator {
 
         let is_active = self.is_active.clone();
         let on_activation = Arc::new(on_activation);
+        let on_reply_hotkey = Arc::new(on_reply_hotkey);
 
         std::thread::spawn(move || {
-            run_loop_with_retry(is_active, on_activation);
+            run_loop_with_retry(is_active, on_activation, on_reply_hotkey);
         });
     }
 }
@@ -197,9 +216,13 @@ enum TapExitReason {
 ///   `TapDisabledByTimeout`). Retries immediately with no attempt limit so the
 ///   listener recovers as fast as possible.
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn run_loop_with_retry<F>(is_active: Arc<AtomicBool>, on_activation: Arc<F>)
-where
+fn run_loop_with_retry<F, G>(
+    is_active: Arc<AtomicBool>,
+    on_activation: Arc<F>,
+    on_reply_hotkey: Arc<G>,
+) where
     F: Fn() + Send + Sync + 'static,
+    G: Fn() + Send + Sync + 'static,
 {
     let mut permission_failures: u32 = 0;
 
@@ -208,7 +231,7 @@ where
             return;
         }
 
-        match try_initialize_tap(&is_active, &on_activation) {
+        match try_initialize_tap(&is_active, &on_activation, &on_reply_hotkey) {
             TapExitReason::Deactivated => return,
 
             TapExitReason::TapDied => {
@@ -243,9 +266,14 @@ where
 /// Returns the reason the run loop exited so the caller can decide whether
 /// to retry.
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn try_initialize_tap<F>(is_active: &Arc<AtomicBool>, on_activation: &Arc<F>) -> TapExitReason
+fn try_initialize_tap<F, G>(
+    is_active: &Arc<AtomicBool>,
+    on_activation: &Arc<F>,
+    on_reply_hotkey: &Arc<G>,
+) -> TapExitReason
 where
     F: Fn() + Send + Sync + 'static,
+    G: Fn() + Send + Sync + 'static,
 {
     let state = Arc::new(Mutex::new(ActivationState {
         last_trigger: None,
@@ -255,6 +283,7 @@ where
 
     let cb_active = is_active.clone();
     let cb_on_activation = on_activation.clone();
+    let cb_on_reply_hotkey = on_reply_hotkey.clone();
     let cb_state = state.clone();
 
     // Create the event tap at HID level — the lowest level before events reach
@@ -275,11 +304,13 @@ where
         // events are blocked or modified. Requires Accessibility permission,
         // which Thuki already holds.
         CGEventTapOptions::Default,
-        // Only register for FlagsChanged. TapDisabledByTimeout and
-        // TapDisabledByUserInput have sentinel values (0xFFFFFFFE/0xFFFFFFFF)
-        // that overflow the bitmask and cannot be included here — macOS delivers
-        // them to the callback automatically without registration.
-        vec![CGEventType::FlagsChanged],
+        // Register for FlagsChanged (Control-key press/release for the
+        // double-tap sequence) and KeyDown (for the ⌃⇧R reply hotkey).
+        // TapDisabledByTimeout and TapDisabledByUserInput have sentinel
+        // values (0xFFFFFFFE/0xFFFFFFFF) that overflow the bitmask and
+        // cannot be included here — macOS delivers them to the callback
+        // automatically without registration.
+        vec![CGEventType::FlagsChanged, CGEventType::KeyDown],
         move |_proxy, event_type, event: &CGEvent| -> CallbackResult {
             // macOS auto-disables event taps whose callback is too slow.
             // Stop the run loop so the outer retry loop reinstalls the tap.
@@ -303,17 +334,27 @@ where
             let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
             let flags = event.get_flags();
 
-            // Filter for primary triggers (Modifier keys)
-            if keycode != KC_PRIMARY_L && keycode != KC_PRIMARY_R {
-                return CallbackResult::Keep;
-            }
+            match event_type {
+                CGEventType::KeyDown => {
+                    if is_reply_hotkey(keycode, flags) {
+                        cb_on_reply_hotkey();
+                    }
+                }
+                CGEventType::FlagsChanged => {
+                    // Filter for primary triggers (Control modifier keys).
+                    if keycode != KC_PRIMARY_L && keycode != KC_PRIMARY_R {
+                        return CallbackResult::Keep;
+                    }
 
-            // Check specific bitmask for the Control key state
-            let is_press = flags.contains(CGEventFlags::CGEventFlagControl);
+                    // Check specific bitmask for the Control key state.
+                    let is_press = flags.contains(CGEventFlags::CGEventFlagControl);
 
-            let mut s = cb_state.lock().unwrap();
-            if evaluate_activation(&mut s, is_press) {
-                cb_on_activation();
+                    let mut s = cb_state.lock().unwrap();
+                    if evaluate_activation(&mut s, is_press) {
+                        cb_on_activation();
+                    }
+                }
+                _ => {}
             }
 
             CallbackResult::Keep
@@ -513,5 +554,62 @@ mod tests {
 
         assert!(!evaluate_activation(&mut state, false));
         assert!(state.last_trigger.is_none());
+    }
+
+    // ─── is_reply_hotkey ────────────────────────────────────────────────────
+
+    #[test]
+    fn reply_hotkey_matches_ctrl_shift_r() {
+        let flags = CGEventFlags::CGEventFlagControl | CGEventFlags::CGEventFlagShift;
+        assert!(is_reply_hotkey(KC_R, flags));
+    }
+
+    #[test]
+    fn reply_hotkey_rejects_wrong_keycode() {
+        let flags = CGEventFlags::CGEventFlagControl | CGEventFlags::CGEventFlagShift;
+        assert!(!is_reply_hotkey(0x00, flags));
+    }
+
+    #[test]
+    fn reply_hotkey_rejects_missing_ctrl() {
+        let flags = CGEventFlags::CGEventFlagShift;
+        assert!(!is_reply_hotkey(KC_R, flags));
+    }
+
+    #[test]
+    fn reply_hotkey_rejects_missing_shift() {
+        let flags = CGEventFlags::CGEventFlagControl;
+        assert!(!is_reply_hotkey(KC_R, flags));
+    }
+
+    #[test]
+    fn reply_hotkey_rejects_extra_command_modifier() {
+        let flags = CGEventFlags::CGEventFlagControl
+            | CGEventFlags::CGEventFlagShift
+            | CGEventFlags::CGEventFlagCommand;
+        assert!(!is_reply_hotkey(KC_R, flags));
+    }
+
+    #[test]
+    fn reply_hotkey_rejects_extra_option_modifier() {
+        let flags = CGEventFlags::CGEventFlagControl
+            | CGEventFlags::CGEventFlagShift
+            | CGEventFlags::CGEventFlagAlternate;
+        assert!(!is_reply_hotkey(KC_R, flags));
+    }
+
+    #[test]
+    fn reply_hotkey_rejects_no_modifiers() {
+        let flags = CGEventFlags::empty();
+        assert!(!is_reply_hotkey(KC_R, flags));
+    }
+
+    #[test]
+    fn reply_hotkey_ignores_unrelated_modifier_bits() {
+        // CapsLock on — shouldn't disqualify the hotkey.
+        let flags = CGEventFlags::CGEventFlagControl
+            | CGEventFlags::CGEventFlagShift
+            | CGEventFlags::CGEventFlagAlphaShift;
+        assert!(is_reply_hotkey(KC_R, flags));
     }
 }

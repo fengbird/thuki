@@ -47,21 +47,15 @@ fn err<E: std::fmt::Display>(context: &'static str) -> impl FnOnce(E) -> String 
     move |e| format!("{context}: {e}")
 }
 
-/// Compresses raw image bytes to JPEG (max 1920px) and writes to the flat
-/// images directory with a UUID filename.
-///
-/// Returns the absolute path of the saved file. The caller owns the path and
-/// can pass it to the frontend for `asset://` rendering.
-///
-/// # Errors
-///
-/// Returns an error if the image bytes cannot be decoded, the output directory
-/// cannot be created, or the file cannot be written.
-pub fn save_image(base_dir: &Path, image_data: &[u8]) -> Result<String, String> {
-    let img = image::load_from_memory(image_data).map_err(err("failed to decode image"))?;
-
+/// Common tail of both save-image paths: optionally downscale, JPEG-encode,
+/// and write to the flat images directory with a UUID filename. Returns
+/// the absolute path of the saved file.
+fn encode_and_save_jpeg(base_dir: &Path, img: image::DynamicImage) -> Result<String, String> {
+    // Triangle (bilinear) is 5–10× faster than Lanczos3 and visually
+    // indistinguishable at the scales we care about (chat window → ~1280–
+    // 1920 px). Lanczos3 is overkill for vision-model consumption.
     let resized = if img.width() > MAX_DIMENSION || img.height() > MAX_DIMENSION {
-        img.resize(MAX_DIMENSION, MAX_DIMENSION, FilterType::Lanczos3)
+        img.resize(MAX_DIMENSION, MAX_DIMENSION, FilterType::Triangle)
     } else {
         img
     };
@@ -87,6 +81,43 @@ pub fn save_image(base_dir: &Path, image_data: &[u8]) -> Result<String, String> 
     path.to_str()
         .map(|s| s.to_string())
         .ok_or("image path contains non-UTF-8 characters".to_string())
+}
+
+/// Compresses raw image bytes to JPEG (max 1920px) and writes to the flat
+/// images directory with a UUID filename.
+///
+/// Returns the absolute path of the saved file. The caller owns the path and
+/// can pass it to the frontend for `asset://` rendering.
+///
+/// # Errors
+///
+/// Returns an error if the image bytes cannot be decoded, the output directory
+/// cannot be created, or the file cannot be written.
+pub fn save_image(base_dir: &Path, image_data: &[u8]) -> Result<String, String> {
+    let img = image::load_from_memory(image_data).map_err(err("failed to decode image"))?;
+    encode_and_save_jpeg(base_dir, img)
+}
+
+/// Compresses raw RGBA pixel bytes to JPEG and writes to the flat images
+/// directory. Skips the PNG encode → decode round-trip that
+/// `save_image` would require when the caller already owns decoded
+/// pixels (as the CoreGraphics capture paths do). Cuts screenshot
+/// save time roughly in half on retina displays.
+///
+/// # Errors
+///
+/// Returns an error if the dimensions do not match the buffer length, the
+/// output directory cannot be created, JPEG encoding fails, or the file
+/// cannot be written.
+pub fn save_rgba_image(
+    base_dir: &Path,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+) -> Result<String, String> {
+    let buf = image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(width, height, rgba)
+        .ok_or_else(|| "rgba buffer length does not match dimensions".to_string())?;
+    encode_and_save_jpeg(base_dir, image::DynamicImage::ImageRgba8(buf))
 }
 
 /// Deletes a single image file from disk, provided it resides within the
@@ -275,6 +306,52 @@ mod tests {
         assert!(path.ends_with(".jpg"));
         // File should be in the flat images/ directory, not a subdirectory.
         assert!(path.contains("/images/"));
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn save_rgba_image_writes_jpeg_from_raw_pixels() {
+        let base = temp_dir();
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+        ];
+        let path = save_rgba_image(&base, 2, 2, rgba).unwrap();
+
+        assert!(Path::new(&path).exists());
+        assert!(path.ends_with(".jpg"));
+        let saved = image::open(&path).unwrap();
+        assert_eq!(saved.width(), 2);
+        assert_eq!(saved.height(), 2);
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn save_rgba_image_downscales_oversize_input() {
+        let base = temp_dir();
+        let width: u32 = 2400;
+        let height: u32 = 1600;
+        let rgba = vec![128u8; (width * height * 4) as usize];
+        let path = save_rgba_image(&base, width, height, rgba).unwrap();
+
+        let saved = image::open(&path).unwrap();
+        assert!(saved.width() <= MAX_DIMENSION);
+        assert!(saved.height() <= MAX_DIMENSION);
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn save_rgba_image_rejects_mismatched_dimensions() {
+        let base = temp_dir();
+        // Claim 4x4 (= 64 bytes) but only provide 8 bytes.
+        let result = save_rgba_image(&base, 4, 4, vec![0u8; 8]);
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("rgba buffer length does not match dimensions"));
 
         fs::remove_dir_all(&base).unwrap();
     }
