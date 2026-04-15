@@ -709,13 +709,24 @@ pub fn run() {
             }
 
             // ── Persistent HTTP client ────────────────────────────────
-            app.manage(reqwest::Client::new());
+            // `.no_proxy()` keeps requests to a local/LAN LLM server from
+            // being routed through whatever HTTP proxy the user's system
+            // has configured (Clash, Shadowsocks, corporate proxy, etc.).
+            // LLM traffic is typically localhost or LAN where an ambient
+            // proxy would either break the call or leak request bodies.
+            app.manage(
+                reqwest::Client::builder()
+                    .no_proxy()
+                    .build()
+                    .expect("failed to build reqwest client"),
+            );
 
             // ── Generation + conversation state ─────────────────────
             app.manage(commands::GenerationState::new());
             app.manage(commands::ConversationHistory::new());
             app.manage(commands::SystemPrompt(commands::load_system_prompt()));
             app.manage(commands::load_model_config());
+            app.manage(commands::load_api_config());
 
             // ── SQLite database for conversation history ──────────
             let app_data_dir = app

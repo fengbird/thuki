@@ -2,23 +2,29 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use futures_util::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 use tauri::{ipc::Channel, State};
 use tokio_util::sync::CancellationToken;
 
-/// Default configuration constants as the application currently lacks a Settings UI.
-pub const DEFAULT_OLLAMA_URL: &str = "http://127.0.0.1:11434";
-pub const DEFAULT_MODEL_NAME: &str = "gemma4:e2b";
+/// Default OpenAI-compatible API base URL (includes any `/v1`-style prefix).
+/// The streaming endpoint is constructed as `{base}/chat/completions`.
+pub const DEFAULT_API_BASE_URL: &str = "http://10.0.0.4:1234/v1";
+/// Default model name used when `THUKI_SUPPORTED_AI_MODELS` is unset.
+pub const DEFAULT_MODEL_NAME: &str = "qwen/qwen3-vl-8b";
+/// Default API key sent via `Authorization: Bearer`. LM Studio does not
+/// validate it, but sending something keeps the request universally compatible.
+pub const DEFAULT_API_KEY: &str = "lm-studio";
 const DEFAULT_SYSTEM_PROMPT: &str = include_str!("../prompts/system_prompt.txt");
 
-/// Classifies the kind of error returned from the Ollama backend.
+/// Classifies the kind of error returned from the LLM backend.
 /// Used by the frontend to pick accent bar color and display copy.
 #[derive(Clone, Serialize, PartialEq, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub enum OllamaErrorKind {
-    /// Ollama process is not running (connection refused / timeout).
+    /// Connection refused / timeout — the LLM server is not reachable.
     NotRunning,
-    /// The requested model has not been pulled yet (HTTP 404).
+    /// The requested model is not loaded (HTTP 404).
     ModelNotFound,
     /// Any other unexpected error.
     Other,
@@ -38,10 +44,8 @@ pub fn classify_http_error(status: u16) -> OllamaError {
     match status {
         404 => OllamaError {
             kind: OllamaErrorKind::ModelNotFound,
-            message: format!(
-                "Model not found\nRun: ollama pull {} in a terminal.",
-                DEFAULT_MODEL_NAME
-            ),
+            message: "Model not found\nCheck that the model is loaded on the LLM server."
+                .to_string(),
         },
         _ => OllamaError {
             kind: OllamaErrorKind::Other,
@@ -51,16 +55,23 @@ pub fn classify_http_error(status: u16) -> OllamaError {
 }
 
 /// Maps a reqwest connection/transport error to a user-friendly `OllamaError`.
+///
+/// Any error that stops us from reaching the server (connect refused, DNS
+/// failure, timeout, other request-phase failures) is reported as
+/// `NotRunning` so the user sees a single, actionable message. Reqwest's
+/// `is_connect` flag is unreliable across TLS/connection-pool code paths,
+/// so we also treat generic `is_request` errors as "server unreachable" —
+/// both produce the same user-facing guidance regardless.
 pub fn classify_stream_error(e: &reqwest::Error) -> OllamaError {
-    if e.is_connect() || e.is_timeout() {
+    if e.is_connect() || e.is_timeout() || e.is_request() {
         OllamaError {
             kind: OllamaErrorKind::NotRunning,
-            message: "Ollama isn't running\nStart Ollama and try again.".to_string(),
+            message: "LLM server isn't running\nStart your server and try again.".to_string(),
         }
     } else {
         OllamaError {
             kind: OllamaErrorKind::Other,
-            message: "Something went wrong\nCould not reach Ollama.".to_string(),
+            message: "Something went wrong\nCould not reach the LLM server.".to_string(),
         }
     }
 }
@@ -81,49 +92,186 @@ pub enum StreamChunk {
     Error(OllamaError),
 }
 
-/// A single message in the Ollama `/api/chat` conversation format.
+/// A single chat message in the in-memory conversation.
 ///
-/// The optional `images` field carries base64-encoded image data for
-/// multimodal models. When absent or empty, the message is text-only.
-#[derive(Clone, Serialize, Deserialize)]
+/// `content` is a plain string; `images` carries optional base64-encoded
+/// image bodies for multimodal requests. The wire serialization is OpenAI
+/// `chat/completions` compatible — when images are present, `content`
+/// becomes an array of `{type: text|image_url, ...}` parts; otherwise it is
+/// sent as a plain string.
+#[derive(Clone, Debug)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<String>>,
 }
 
-/// Sampling parameters for Ollama `/api/chat`, following Google's recommended
-/// configuration for Gemma4 models.
+impl Serialize for ChatMessage {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let mut state = ser.serialize_struct("ChatMessage", 2)?;
+        state.serialize_field("role", &self.role)?;
+        match &self.images {
+            Some(imgs) if !imgs.is_empty() => {
+                let mut parts: Vec<serde_json::Value> = Vec::with_capacity(imgs.len() + 1);
+                if !self.content.is_empty() {
+                    parts.push(serde_json::json!({
+                        "type": "text",
+                        "text": self.content,
+                    }));
+                }
+                for img in imgs {
+                    parts.push(serde_json::json!({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("data:image/jpeg;base64,{img}"),
+                        },
+                    }));
+                }
+                state.serialize_field("content", &parts)?;
+            }
+            _ => {
+                state.serialize_field("content", &self.content)?;
+            }
+        }
+        state.end()
+    }
+}
+
+/// Request payload for the OpenAI `/chat/completions` endpoint.
 #[derive(Serialize)]
-struct OllamaOptions {
+struct ChatCompletionsRequest<'a> {
+    model: &'a str,
+    messages: &'a [ChatMessage],
+    stream: bool,
     temperature: f64,
     top_p: f64,
-    top_k: u32,
 }
 
-/// Request payload for Ollama `/api/chat` endpoint.
-#[derive(Serialize)]
-struct OllamaChatRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-    stream: bool,
-    think: bool,
-    options: OllamaOptions,
-}
-
-/// Nested message object in Ollama `/api/chat` response chunks.
-#[derive(Deserialize)]
-struct OllamaChatResponseMessage {
+/// Per-chunk delta in an OpenAI streaming response. Either `content` (the
+/// visible assistant text) or `reasoning_content` (DeepSeek/qwen3 reasoning
+/// stream — also accepted as `reasoning` for OpenAI's o-series alias).
+#[derive(Deserialize, Default)]
+struct Delta {
+    #[serde(default)]
     content: Option<String>,
-    thinking: Option<String>,
+    #[serde(default, alias = "reasoning")]
+    reasoning_content: Option<String>,
 }
 
-/// Expected structured response chunk from Ollama `/api/chat`.
+/// Single choice in a streaming chunk. `delta` carries incremental tokens;
+/// `finish_reason` is set on the final chunk but is informational — the
+/// stream terminator is always the `data: [DONE]` sentinel.
 #[derive(Deserialize)]
-struct OllamaChatResponse {
-    message: Option<OllamaChatResponseMessage>,
-    done: Option<bool>,
+struct Choice {
+    #[serde(default)]
+    delta: Option<Delta>,
+}
+
+/// Top-level OpenAI streaming chunk.
+#[derive(Deserialize)]
+struct ChatCompletionsChunk {
+    #[serde(default)]
+    choices: Vec<Choice>,
+}
+
+/// State machine that extracts inline `<think>…</think>` tags from streamed
+/// assistant content. Tags may span multiple deltas, so we buffer any suffix
+/// that could be the start of a tag and only emit bytes once it's clear
+/// whether they belong to the visible answer or the thinking channel.
+struct ThinkTagState {
+    in_think: bool,
+    /// Carry-over from the previous delta — either non-empty when a partial
+    /// tag is pending, or empty.
+    carry: String,
+}
+
+impl ThinkTagState {
+    fn new() -> Self {
+        Self {
+            in_think: false,
+            carry: String::new(),
+        }
+    }
+
+    /// Processes an incoming content delta, emitting `Token` and
+    /// `ThinkingToken` chunks as segments become unambiguous. `acc` records
+    /// only user-visible Token text so the caller can persist it.
+    fn process(&mut self, delta: &str, on_chunk: &impl Fn(StreamChunk), acc: &mut String) {
+        self.carry.push_str(delta);
+        loop {
+            if self.in_think {
+                if let Some(idx) = self.carry.find("</think>") {
+                    let before: String = self.carry.drain(..idx).collect();
+                    if !before.is_empty() {
+                        on_chunk(StreamChunk::ThinkingToken(before));
+                    }
+                    // Drop the closing tag itself.
+                    self.carry.drain(..CLOSE_TAG.len());
+                    self.in_think = false;
+                    continue;
+                }
+                let tail = potential_tag_tail(&self.carry, CLOSE_TAG);
+                let safe_len = self.carry.len() - tail;
+                if safe_len > 0 {
+                    let emit: String = self.carry.drain(..safe_len).collect();
+                    on_chunk(StreamChunk::ThinkingToken(emit));
+                }
+                break;
+            } else {
+                if let Some(idx) = self.carry.find(OPEN_TAG) {
+                    let before: String = self.carry.drain(..idx).collect();
+                    if !before.is_empty() {
+                        acc.push_str(&before);
+                        on_chunk(StreamChunk::Token(before));
+                    }
+                    self.carry.drain(..OPEN_TAG.len());
+                    self.in_think = true;
+                    continue;
+                }
+                let tail = potential_tag_tail(&self.carry, OPEN_TAG);
+                let safe_len = self.carry.len() - tail;
+                if safe_len > 0 {
+                    let emit: String = self.carry.drain(..safe_len).collect();
+                    acc.push_str(&emit);
+                    on_chunk(StreamChunk::Token(emit));
+                }
+                break;
+            }
+        }
+    }
+
+    /// Flushes any remaining buffered text at end of stream. Emits under
+    /// whichever channel matches the current state so no bytes are lost
+    /// if the stream terminates mid-tag.
+    fn flush(&mut self, on_chunk: &impl Fn(StreamChunk), acc: &mut String) {
+        if self.carry.is_empty() {
+            return;
+        }
+        let emit = std::mem::take(&mut self.carry);
+        if self.in_think {
+            on_chunk(StreamChunk::ThinkingToken(emit));
+        } else {
+            acc.push_str(&emit);
+            on_chunk(StreamChunk::Token(emit));
+        }
+    }
+}
+
+const OPEN_TAG: &str = "<think>";
+const CLOSE_TAG: &str = "</think>";
+
+/// Returns the length of the longest suffix of `s` that is a strict prefix
+/// of `tag` (i.e. a partial-tag tail that we must hold off emitting until
+/// the next delta clarifies whether a tag is forming). Zero when no partial
+/// tag is present. Tag must be ASCII so byte- and char-boundaries coincide.
+fn potential_tag_tail(s: &str, tag: &str) -> usize {
+    let max_len = tag.len().saturating_sub(1).min(s.len());
+    for i in (1..=max_len).rev() {
+        if s.ends_with(&tag[..i]) {
+            return i;
+        }
+    }
+    0
 }
 
 /// Holds the active cancellation token for the current generation request.
@@ -230,6 +378,29 @@ pub fn load_model_config() -> ModelConfig {
     }
 }
 
+/// OpenAI-compatible endpoint configuration. Loaded once at startup from
+/// the `THUKI_API_BASE_URL` and `THUKI_API_KEY` environment variables.
+pub struct ApiConfig {
+    pub base_url: String,
+    pub api_key: String,
+}
+
+/// Reads the API base URL and key from environment variables, falling back
+/// to defaults when unset or empty. The trailing slash is stripped so the
+/// caller can unconditionally append `/chat/completions`.
+pub fn load_api_config() -> ApiConfig {
+    let base_url = std::env::var("THUKI_API_BASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .unwrap_or_else(|| DEFAULT_API_BASE_URL.to_string());
+    let api_key = std::env::var("THUKI_API_KEY")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_API_KEY.to_string());
+    ApiConfig { base_url, api_key }
+}
+
 /// Returns the active model and full supported list to the frontend.
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg_attr(not(coverage), tauri::command)]
@@ -237,35 +408,106 @@ pub fn get_model_config(model_config: tauri::State<'_, ModelConfig>) -> serde_js
     serde_json::json!({ "active": model_config.active, "all": model_config.all })
 }
 
-/// Core streaming logic for Ollama `/api/chat`, separated from the Tauri
-/// command for testability. Uses `tokio::select!` to race each chunk read
-/// against the cancellation token, ensuring the HTTP connection is dropped
-/// immediately when the user cancels — which signals Ollama to stop inference.
-/// Returns the accumulated assistant response so the caller can persist it.
+/// Finds the end index of the next SSE event in `buffer`. Events are
+/// delimited by a blank line — either `\n\n` or `\r\n\r\n`. Returns the
+/// byte index of the last delimiter byte (inclusive); caller should drain
+/// up to and including that index.
+fn find_sse_event(buffer: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    while i + 1 < buffer.len() {
+        if buffer[i] == b'\n' && buffer[i + 1] == b'\n' {
+            return Some(i + 1);
+        }
+        if i + 3 < buffer.len()
+            && buffer[i] == b'\r'
+            && buffer[i + 1] == b'\n'
+            && buffer[i + 2] == b'\r'
+            && buffer[i + 3] == b'\n'
+        {
+            return Some(i + 3);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Processes a single SSE event (one or more `data:` lines). Returns `true`
+/// when the sentinel `data: [DONE]` marker is encountered, indicating the
+/// stream has completed naturally.
+fn process_sse_event(
+    event: &str,
+    on_chunk: &impl Fn(StreamChunk),
+    acc: &mut String,
+    parser: &mut ThinkTagState,
+) -> bool {
+    for line in event.lines() {
+        let trimmed = line.trim_start();
+        let Some(data) = trimmed.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim_start();
+        if data == "[DONE]" {
+            parser.flush(on_chunk, acc);
+            on_chunk(StreamChunk::Done);
+            return true;
+        }
+        if data.is_empty() {
+            continue;
+        }
+        let Ok(chunk) = serde_json::from_str::<ChatCompletionsChunk>(data) else {
+            continue;
+        };
+        for choice in &chunk.choices {
+            let Some(delta) = &choice.delta else {
+                continue;
+            };
+            if let Some(reasoning) = &delta.reasoning_content {
+                if !reasoning.is_empty() {
+                    on_chunk(StreamChunk::ThinkingToken(reasoning.clone()));
+                }
+            }
+            if let Some(text) = &delta.content {
+                if !text.is_empty() {
+                    parser.process(text, on_chunk, acc);
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Core streaming logic for the OpenAI-compatible `/chat/completions`
+/// endpoint, separated from the Tauri command for testability. Uses
+/// `tokio::select!` to race each chunk read against the cancellation token,
+/// ensuring the HTTP connection is dropped immediately when the user
+/// cancels — which signals the server to stop inference. Returns the
+/// accumulated assistant response so the caller can persist it.
 pub async fn stream_ollama_chat(
     endpoint: &str,
+    api_key: &str,
     model: &str,
     messages: Vec<ChatMessage>,
-    think: bool,
     client: &reqwest::Client,
     cancel_token: CancellationToken,
     on_chunk: impl Fn(StreamChunk),
 ) -> String {
-    let request_payload = OllamaChatRequest {
-        model: model.to_string(),
-        messages,
+    let request_payload = ChatCompletionsRequest {
+        model,
+        messages: &messages,
         stream: true,
-        think,
-        options: OllamaOptions {
-            temperature: 1.0,
-            top_p: 0.95,
-            top_k: 64,
-        },
+        temperature: 1.0,
+        top_p: 0.95,
     };
 
     let mut accumulated = String::new();
+    let mut tag_parser = ThinkTagState::new();
 
-    let res = client.post(endpoint).json(&request_payload).send().await;
+    let res = client
+        .post(endpoint)
+        .bearer_auth(api_key)
+        .json(&request_payload)
+        .send()
+        .await;
 
     match res {
         Ok(response) => {
@@ -283,7 +525,7 @@ pub async fn stream_ollama_chat(
                     biased;
                     _ = cancel_token.cancelled() => {
                         // Drop the stream — closes the HTTP connection,
-                        // which signals Ollama to stop inference.
+                        // which signals the server to stop inference.
                         drop(stream);
                         on_chunk(StreamChunk::Cancelled);
                         return accumulated;
@@ -293,37 +535,17 @@ pub async fn stream_ollama_chat(
                             Some(Ok(bytes)) => {
                                 buffer.extend_from_slice(&bytes);
 
-                                while let Some(idx) = buffer.iter().position(|&b| b == b'\n') {
-                                    let line_bytes = buffer.drain(..=idx).collect::<Vec<u8>>();
-                                    if let Ok(line_text) = String::from_utf8(line_bytes) {
-                                        let trimmed = line_text.trim();
-                                        if trimmed.is_empty() {
-                                            continue;
-                                        }
-
-                                        if let Ok(json) =
-                                            serde_json::from_str::<OllamaChatResponse>(trimmed)
-                                        {
-                                            if let Some(ref msg) = json.message {
-                                                if let Some(ref thinking) = msg.thinking {
-                                                    if !thinking.is_empty() {
-                                                        on_chunk(StreamChunk::ThinkingToken(
-                                                            thinking.clone(),
-                                                        ));
-                                                    }
-                                                }
-                                                if let Some(ref token) = msg.content {
-                                                    if !token.is_empty() {
-                                                        accumulated.push_str(token);
-                                                        on_chunk(StreamChunk::Token(
-                                                            token.clone(),
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                            if let Some(true) = json.done {
-                                                on_chunk(StreamChunk::Done);
-                                            }
+                                while let Some(idx) = find_sse_event(&buffer) {
+                                    let event_bytes =
+                                        buffer.drain(..=idx).collect::<Vec<u8>>();
+                                    if let Ok(event_text) = std::str::from_utf8(&event_bytes) {
+                                        if process_sse_event(
+                                            event_text,
+                                            &on_chunk,
+                                            &mut accumulated,
+                                            &mut tag_parser,
+                                        ) {
+                                            return accumulated;
                                         }
                                     }
                                 }
@@ -332,7 +554,10 @@ pub async fn stream_ollama_chat(
                                 on_chunk(StreamChunk::Error(classify_stream_error(&e)));
                                 return accumulated;
                             }
-                            None => return accumulated,
+                            None => {
+                                tag_parser.flush(&on_chunk, &mut accumulated);
+                                return accumulated;
+                            }
                         }
                     }
                 }
@@ -346,10 +571,16 @@ pub async fn stream_ollama_chat(
     accumulated
 }
 
-/// Streams a chat response from the local Ollama backend. Appends the user
-/// message and assistant response to conversation history after completion
-/// or cancellation (retaining context for follow-up requests). Uses an epoch
-/// counter to prevent stale writes after a reset.
+/// Streams a chat response from the configured OpenAI-compatible backend.
+/// Appends the user message and assistant response to conversation history
+/// after completion or cancellation (retaining context for follow-up
+/// requests). Uses an epoch counter to prevent stale writes after a reset.
+///
+/// The `_think` parameter is accepted for IPC compatibility with the
+/// frontend's `/think` slash command but is not sent on the wire — OpenAI
+/// protocol has no standardised think flag, and the streamer already
+/// extracts reasoning content from `reasoning_content` deltas and inline
+/// `<think>…</think>` tags regardless.
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg_attr(not(coverage), tauri::command)]
 #[allow(clippy::too_many_arguments)]
@@ -357,15 +588,16 @@ pub async fn ask_ollama(
     message: String,
     quoted_text: Option<String>,
     image_paths: Option<Vec<String>>,
-    think: bool,
+    _think: bool,
     on_event: Channel<StreamChunk>,
     client: State<'_, reqwest::Client>,
     generation: State<'_, GenerationState>,
     history: State<'_, ConversationHistory>,
     system_prompt: State<'_, SystemPrompt>,
     model_config: State<'_, ModelConfig>,
+    api_config: State<'_, ApiConfig>,
 ) -> Result<(), String> {
-    let endpoint = format!("{}/api/chat", DEFAULT_OLLAMA_URL.trim_end_matches('/'));
+    let endpoint = format!("{}/chat/completions", api_config.base_url);
     let cancel_token = CancellationToken::new();
     generation.set(cancel_token.clone());
 
@@ -379,7 +611,7 @@ pub async fn ask_ollama(
         _ => message,
     };
 
-    // Base64-encode attached images for the Ollama multimodal API.
+    // Base64-encode attached images for the OpenAI multimodal API.
     let images = match image_paths {
         Some(ref paths) if !paths.is_empty() => {
             Some(crate::images::encode_images_as_base64(paths)?)
@@ -393,7 +625,7 @@ pub async fn ask_ollama(
         images,
     };
 
-    // Snapshot the current epoch and build the messages array for Ollama.
+    // Snapshot the current epoch and build the messages array for the API.
     // The user message is NOT yet committed to history — it is only added
     // after a response (including partial/cancelled) to prevent orphaned
     // messages on errors.
@@ -412,9 +644,9 @@ pub async fn ask_ollama(
 
     let accumulated = stream_ollama_chat(
         &endpoint,
+        &api_config.api_key,
         &model_config.active,
         messages,
-        think,
         &client,
         cancel_token.clone(),
         |chunk| {
@@ -432,8 +664,8 @@ pub async fn ask_ollama(
         let mut conv = history.messages.lock().unwrap();
         // Preserve images in history so that follow-up messages can still
         // reference earlier screenshots or attachments.  The full conversation
-        // (including base64 blobs) is replayed to Ollama on every turn, which
-        // is fine for a localhost-only setup.
+        // (including base64 blobs) is replayed on every turn, which is fine
+        // for a local/LAN server setup.
         conv.push(user_msg);
         conv.push(ChatMessage {
             role: "assistant".to_string(),
@@ -481,30 +713,59 @@ mod tests {
         (chunks, callback)
     }
 
-    /// Helper: builds a `/api/chat` response line from content + done flag.
-    fn chat_line(content: &str, done: bool) -> String {
+    /// Helper: builds a single SSE event containing a `choices[].delta.content`
+    /// token. Terminates with the double-newline that separates SSE events.
+    fn sse_content(content: &str) -> String {
         format!(
-            "{{\"message\":{{\"role\":\"assistant\",\"content\":\"{}\"}},\"done\":{}}}\n",
-            content, done
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":{}}}}}]}}\n\n",
+            serde_json::Value::String(content.to_string())
         )
+    }
+
+    /// Helper: builds an SSE event containing only a `reasoning_content` delta.
+    fn sse_reasoning(reasoning: &str) -> String {
+        format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"reasoning_content\":{}}}}}]}}\n\n",
+            serde_json::Value::String(reasoning.to_string())
+        )
+    }
+
+    /// Helper: SSE event with an empty delta — matches the pre-[DONE] chunk
+    /// many providers send carrying only `finish_reason`.
+    fn sse_finish() -> &'static str {
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+    }
+
+    const SSE_DONE: &str = "data: [DONE]\n\n";
+
+    /// Builds a reqwest client with no proxy configuration so tests are not
+    /// affected by an ambient macOS system proxy that would otherwise
+    /// intercept requests to `127.0.0.1:<port>` and rewrite connection
+    /// failures as HTTP 502 gateway responses.
+    fn test_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("test reqwest client")
     }
 
     #[tokio::test]
     async fn streams_tokens_from_valid_response() {
         let mut server = mockito::Server::new_async().await;
         let body = format!(
-            "{}{}{}",
-            chat_line("Hello", false),
-            chat_line(" world", false),
-            chat_line("", true),
+            "{}{}{}{}",
+            sse_content("Hello"),
+            sse_content(" world"),
+            sse_finish(),
+            SSE_DONE
         );
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_body(body)
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
         let messages = vec![ChatMessage {
@@ -514,10 +775,10 @@ mod tests {
         }];
 
         let accumulated = stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             messages,
-            false,
             &client,
             token,
             callback,
@@ -528,7 +789,7 @@ mod tests {
         let chunks = chunks.lock().unwrap();
         assert!(matches!(&chunks[0], StreamChunk::Token(t) if t == "Hello"));
         assert!(matches!(&chunks[1], StreamChunk::Token(t) if t == " world"));
-        assert!(matches!(&chunks[2], StreamChunk::Done));
+        assert!(matches!(chunks.last().unwrap(), StreamChunk::Done));
         assert_eq!(accumulated, "Hello world");
     }
 
@@ -536,21 +797,21 @@ mod tests {
     async fn handles_http_500() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_status(500)
             .with_body("Internal Server Error")
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         let accumulated = stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -566,15 +827,15 @@ mod tests {
 
     #[tokio::test]
     async fn handles_connection_refused() {
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         let accumulated = stream_ollama_chat(
-            "http://127.0.0.1:1/api/chat",
+            "http://127.0.0.1:1/chat/completions",
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -590,22 +851,22 @@ mod tests {
     #[tokio::test]
     async fn handles_malformed_json() {
         let mut server = mockito::Server::new_async().await;
-        let body = format!("not json at all\n{}", chat_line("ok", true));
+        let body = format!("data: not json at all\n\n{}{}", sse_content("ok"), SSE_DONE);
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_body(body)
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -615,26 +876,29 @@ mod tests {
         mock.assert_async().await;
         let chunks = chunks.lock().unwrap();
         assert!(chunks.iter().any(|c| matches!(c, StreamChunk::Done)));
+        assert!(chunks
+            .iter()
+            .any(|c| matches!(c, StreamChunk::Token(t) if t == "ok")));
     }
 
     #[tokio::test]
     async fn handles_empty_response_body() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_body("")
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         let accumulated = stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -652,26 +916,26 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let body = format!(
             "{}{}{}{}",
-            chat_line("A", false),
-            chat_line("B", false),
-            chat_line("C", false),
-            chat_line("", true),
+            sse_content("A"),
+            sse_content("B"),
+            sse_content("C"),
+            SSE_DONE,
         );
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_body(body)
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         let accumulated = stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -694,23 +958,27 @@ mod tests {
     #[tokio::test]
     async fn handles_invalid_utf8_in_stream() {
         let mut server = mockito::Server::new_async().await;
-        let mut body = b"\xFF\xFE\n".to_vec();
-        body.extend_from_slice(chat_line("ok", true).as_bytes());
+        // Invalid UTF-8 bytes form one "event" (terminated by \n\n) that we
+        // cannot decode as a str — it must be skipped silently.  The next
+        // event carries a normal token.
+        let mut body = b"\xFF\xFE\n\n".to_vec();
+        body.extend_from_slice(sse_content("ok").as_bytes());
+        body.extend_from_slice(SSE_DONE.as_bytes());
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_body(body)
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -719,6 +987,9 @@ mod tests {
 
         mock.assert_async().await;
         let chunks = chunks.lock().unwrap();
+        assert!(chunks
+            .iter()
+            .any(|c| matches!(c, StreamChunk::Token(t) if t == "ok")));
         assert!(chunks.iter().any(|c| matches!(c, StreamChunk::Done)));
     }
 
@@ -735,22 +1006,22 @@ mod tests {
             let _ = stream
                 .write_all(
                     b"HTTP/1.1 200 OK\r\n\
-                      Content-Type: application/x-ndjson\r\n\
+                      Content-Type: text/event-stream\r\n\
                       Transfer-Encoding: chunked\r\n\r\n\
                       4\r\ntest",
                 )
                 .await;
         });
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("http://127.0.0.1:{}/api/chat", port),
+            &format!("http://127.0.0.1:{}/chat/completions", port),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -766,21 +1037,21 @@ mod tests {
     async fn http_500_with_empty_body() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_status(500)
             .with_body("")
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -796,24 +1067,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn whitespace_only_lines_are_skipped() {
+    async fn non_data_sse_lines_are_skipped() {
         let mut server = mockito::Server::new_async().await;
-        let body = format!("   \n{}", chat_line("hi", true));
+        // Comments (starting with `:`) and event-id lines must be ignored.
+        let body = format!(
+            ": keep-alive comment\nid: 42\n\n{}{}",
+            sse_content("hi"),
+            SSE_DONE
+        );
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_body(body)
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -822,27 +1098,66 @@ mod tests {
 
         mock.assert_async().await;
         let chunks = chunks.lock().unwrap();
+        assert!(chunks
+            .iter()
+            .any(|c| matches!(c, StreamChunk::Token(t) if t == "hi")));
         assert!(chunks.iter().any(|c| matches!(c, StreamChunk::Done)));
     }
 
     #[tokio::test]
-    async fn message_field_absent_emits_only_done() {
+    async fn empty_data_line_is_skipped() {
         let mut server = mockito::Server::new_async().await;
+        let body = format!("data:\n\n{}{}", sse_content("ok"), SSE_DONE);
         let mock = server
-            .mock("POST", "/api/chat")
-            .with_body("{\"done\":true}\n")
+            .mock("POST", "/chat/completions")
+            .with_body(body)
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
+            &client,
+            token,
+            callback,
+        )
+        .await;
+
+        mock.assert_async().await;
+        let chunks = chunks.lock().unwrap();
+        assert!(chunks
+            .iter()
+            .any(|c| matches!(c, StreamChunk::Token(t) if t == "ok")));
+    }
+
+    #[tokio::test]
+    async fn delta_absent_emits_only_done() {
+        let mut server = mockito::Server::new_async().await;
+        let body = format!(
+            "data: {{\"choices\":[{{\"finish_reason\":\"stop\"}}]}}\n\n{}",
+            SSE_DONE
+        );
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let client = test_client();
+        let token = CancellationToken::new();
+        let (chunks, callback) = collect_chunks();
+
+        stream_ollama_chat(
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
+            "test-model",
+            vec![],
             &client,
             token,
             callback,
@@ -869,16 +1184,16 @@ mod tests {
 
         tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let first_line = chat_line("A", false);
+            let first = sse_content("A");
             let header = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\r\n{}",
-                first_line
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n{}",
+                first
             );
             let _ = stream.write_all(header.as_bytes()).await;
             server_done_clone.notified().await;
         });
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let token_clone = token.clone();
         let (chunks, callback) = collect_chunks();
@@ -889,10 +1204,10 @@ mod tests {
         });
 
         stream_ollama_chat(
-            &format!("http://127.0.0.1:{}/api/chat", port),
+            &format!("http://127.0.0.1:{}/chat/completions", port),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -914,22 +1229,22 @@ mod tests {
     async fn pre_cancelled_token_emits_cancelled_immediately() {
         let mut server = mockito::Server::new_async().await;
         let _mock = server
-            .mock("POST", "/api/chat")
-            .with_body(chat_line("Hello", true))
+            .mock("POST", "/chat/completions")
+            .with_body(format!("{}{}", sse_content("Hello"), SSE_DONE))
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         token.cancel();
 
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -944,15 +1259,15 @@ mod tests {
     async fn sends_messages_array_in_request() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .match_body(mockito::Matcher::PartialJsonString(
                 r#"{"messages":[{"role":"system","content":"Be helpful"},{"role":"user","content":"hi"}]}"#.to_string(),
             ))
-            .with_body(chat_line("", true))
+            .with_body(SSE_DONE)
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (_, callback) = collect_chunks();
         let messages = vec![
@@ -969,10 +1284,10 @@ mod tests {
         ];
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             messages,
-            false,
             &client,
             token,
             callback,
@@ -983,23 +1298,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn message_content_absent_emits_only_done() {
+    async fn sends_bearer_authorization_header() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("POST", "/api/chat")
-            .with_body("{\"message\":{\"role\":\"assistant\"},\"done\":true}\n")
+            .mock("POST", "/chat/completions")
+            .match_header("Authorization", "Bearer sk-test-42")
+            .with_body(SSE_DONE)
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
+        let token = CancellationToken::new();
+        let (_, callback) = collect_chunks();
+
+        stream_ollama_chat(
+            &format!("{}/chat/completions", server.url()),
+            "sk-test-42",
+            "test-model",
+            vec![],
+            &client,
+            token,
+            callback,
+        )
+        .await;
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn delta_content_absent_emits_only_done() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_body(format!(
+                "data: {{\"choices\":[{{\"delta\":{{\"role\":\"assistant\"}}}}]}}\n\n{}",
+                SSE_DONE
+            ))
+            .create_async()
+            .await;
+
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -1144,29 +1490,74 @@ mod tests {
         std::env::remove_var("THUKI_SUPPORTED_AI_MODELS");
     }
 
+    // ── load_api_config tests ────────────────────────────────────────────────
+
+    #[test]
+    fn load_api_config_returns_defaults_when_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("THUKI_API_BASE_URL");
+        std::env::remove_var("THUKI_API_KEY");
+        let cfg = load_api_config();
+        assert_eq!(cfg.base_url, DEFAULT_API_BASE_URL);
+        assert_eq!(cfg.api_key, DEFAULT_API_KEY);
+    }
+
+    #[test]
+    fn load_api_config_reads_env_vars() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("THUKI_API_BASE_URL", "http://example.test:9000/v1");
+        std::env::set_var("THUKI_API_KEY", "sk-abc");
+        let cfg = load_api_config();
+        assert_eq!(cfg.base_url, "http://example.test:9000/v1");
+        assert_eq!(cfg.api_key, "sk-abc");
+        std::env::remove_var("THUKI_API_BASE_URL");
+        std::env::remove_var("THUKI_API_KEY");
+    }
+
+    #[test]
+    fn load_api_config_strips_trailing_slash() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("THUKI_API_BASE_URL", "http://example.test:9000/v1/");
+        let cfg = load_api_config();
+        assert_eq!(cfg.base_url, "http://example.test:9000/v1");
+        std::env::remove_var("THUKI_API_BASE_URL");
+    }
+
+    #[test]
+    fn load_api_config_ignores_blank_env_vars() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("THUKI_API_BASE_URL", "   ");
+        std::env::set_var("THUKI_API_KEY", "   ");
+        let cfg = load_api_config();
+        assert_eq!(cfg.base_url, DEFAULT_API_BASE_URL);
+        assert_eq!(cfg.api_key, DEFAULT_API_KEY);
+        std::env::remove_var("THUKI_API_BASE_URL");
+        std::env::remove_var("THUKI_API_KEY");
+    }
+
     // ── sampling options test ────────────────────────────────────────────────
 
     #[tokio::test]
     async fn sends_sampling_options_in_request() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .match_body(mockito::Matcher::PartialJsonString(
-                r#"{"options":{"temperature":1.0,"top_p":0.95,"top_k":64}}"#.to_string(),
+                r#"{"temperature":1.0,"top_p":0.95,"stream":true}"#.to_string(),
             ))
-            .with_body(chat_line("", true))
+            .with_body(SSE_DONE)
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (_, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -1236,7 +1627,7 @@ mod tests {
     fn classify_http_404_returns_model_not_found() {
         let err = classify_http_error(404);
         assert_eq!(err.kind, OllamaErrorKind::ModelNotFound);
-        assert!(err.message.contains("gemma4:e2b"));
+        assert!(err.message.contains("Model not found"));
     }
 
     #[test]
@@ -1255,15 +1646,15 @@ mod tests {
 
     #[tokio::test]
     async fn connection_refused_emits_not_running_error() {
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            "http://127.0.0.1:1/api/chat",
+            "http://127.0.0.1:1/chat/completions",
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -1281,21 +1672,21 @@ mod tests {
     async fn http_404_emits_model_not_found_error() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_status(404)
             .with_body("")
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -1319,74 +1710,47 @@ mod tests {
     }
 
     #[test]
-    fn ollama_chat_request_sends_think_false_explicitly() {
-        let req = OllamaChatRequest {
-            model: "test".to_string(),
-            messages: vec![],
-            stream: true,
-            think: false,
-            options: OllamaOptions {
-                temperature: 1.0,
-                top_p: 0.95,
-                top_k: 64,
-            },
-        };
-        let json = serde_json::to_value(&req).unwrap();
-        assert_eq!(json["think"], false);
+    fn delta_deserializes_content_and_reasoning() {
+        let json = r#"{"content":"hello","reasoning_content":"let me think"}"#;
+        let d: Delta = serde_json::from_str(json).unwrap();
+        assert_eq!(d.content.unwrap(), "hello");
+        assert_eq!(d.reasoning_content.unwrap(), "let me think");
     }
 
     #[test]
-    fn ollama_chat_request_includes_think_when_true() {
-        let req = OllamaChatRequest {
-            model: "test".to_string(),
-            messages: vec![],
-            stream: true,
-            think: true,
-            options: OllamaOptions {
-                temperature: 1.0,
-                top_p: 0.95,
-                top_k: 64,
-            },
-        };
-        let json = serde_json::to_value(&req).unwrap();
-        assert_eq!(json["think"], true);
+    fn delta_accepts_reasoning_alias() {
+        let json = r#"{"reasoning":"o1-style"}"#;
+        let d: Delta = serde_json::from_str(json).unwrap();
+        assert_eq!(d.reasoning_content.unwrap(), "o1-style");
     }
 
     #[test]
-    fn ollama_response_message_deserializes_thinking_field() {
-        let json = r#"{"content":"hello","thinking":"let me think"}"#;
-        let msg: OllamaChatResponseMessage = serde_json::from_str(json).unwrap();
-        assert_eq!(msg.content.unwrap(), "hello");
-        assert_eq!(msg.thinking.unwrap(), "let me think");
-    }
-
-    #[test]
-    fn ollama_response_message_thinking_absent() {
+    fn delta_deserializes_without_reasoning() {
         let json = r#"{"content":"hello"}"#;
-        let msg: OllamaChatResponseMessage = serde_json::from_str(json).unwrap();
-        assert_eq!(msg.content.unwrap(), "hello");
-        assert!(msg.thinking.is_none());
+        let d: Delta = serde_json::from_str(json).unwrap();
+        assert_eq!(d.content.unwrap(), "hello");
+        assert!(d.reasoning_content.is_none());
     }
 
     #[tokio::test]
     async fn http_500_emits_other_error_with_status() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_status(500)
             .with_body("Internal Server Error")
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            false,
             &client,
             token,
             callback,
@@ -1401,38 +1765,32 @@ mod tests {
         );
     }
 
-    /// Helper: builds a `/api/chat` response line with both thinking and content fields.
-    fn chat_line_with_thinking(thinking: &str, content: &str, done: bool) -> String {
-        format!(
-            "{{\"message\":{{\"role\":\"assistant\",\"content\":\"{}\",\"thinking\":\"{}\"}},\"done\":{}}}\n",
-            content, thinking, done
-        )
-    }
+    // ─── reasoning_content streaming ────────────────────────────────────────
 
     #[tokio::test]
-    async fn stream_ollama_chat_emits_thinking_tokens() {
+    async fn stream_emits_reasoning_as_thinking_tokens() {
         let mut server = mockito::Server::new_async().await;
         let body = format!(
             "{}{}{}",
-            chat_line_with_thinking("step 1", "", false),
-            chat_line_with_thinking("", "Hello", false),
-            chat_line_with_thinking("", "", true),
+            sse_reasoning("step 1"),
+            sse_content("Hello"),
+            SSE_DONE,
         );
         let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_body(body)
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         let accumulated = stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            true,
             &client,
             token,
             callback,
@@ -1441,71 +1799,32 @@ mod tests {
 
         mock.assert_async().await;
         let chunks = chunks.lock().unwrap();
-
-        // ThinkingToken emitted for thinking field
         assert!(matches!(&chunks[0], StreamChunk::ThinkingToken(t) if t == "step 1"));
-        // Token emitted for content field
         assert!(matches!(&chunks[1], StreamChunk::Token(t) if t == "Hello"));
-        // Done emitted
-        assert!(matches!(&chunks[2], StreamChunk::Done));
-
-        // Accumulated return value contains only content, not thinking
+        assert!(matches!(chunks.last().unwrap(), StreamChunk::Done));
+        // Accumulated contains only visible content, not the thinking stream.
         assert_eq!(accumulated, "Hello");
     }
 
     #[tokio::test]
-    async fn stream_ollama_chat_sends_think_true_in_request() {
+    async fn stream_skips_empty_reasoning_delta() {
         let mut server = mockito::Server::new_async().await;
+        let body = format!("{}{}{}", sse_reasoning(""), sse_content("Hello"), SSE_DONE,);
         let mock = server
-            .mock("POST", "/api/chat")
-            .match_body(mockito::Matcher::PartialJsonString(
-                r#"{"think":true}"#.to_string(),
-            ))
-            .with_body(chat_line("", true))
-            .create_async()
-            .await;
-
-        let client = reqwest::Client::new();
-        let token = CancellationToken::new();
-        let (_, callback) = collect_chunks();
-
-        stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
-            "test-model",
-            vec![],
-            true,
-            &client,
-            token,
-            callback,
-        )
-        .await;
-
-        mock.assert_async().await;
-    }
-
-    #[tokio::test]
-    async fn stream_ollama_chat_empty_thinking_not_emitted() {
-        let mut server = mockito::Server::new_async().await;
-        let body = format!(
-            "{}{}",
-            chat_line_with_thinking("", "Hello", false),
-            chat_line_with_thinking("", "", true),
-        );
-        let mock = server
-            .mock("POST", "/api/chat")
+            .mock("POST", "/chat/completions")
             .with_body(body)
             .create_async()
             .await;
 
-        let client = reqwest::Client::new();
+        let client = test_client();
         let token = CancellationToken::new();
         let (chunks, callback) = collect_chunks();
 
         stream_ollama_chat(
-            &format!("{}/api/chat", server.url()),
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
             "test-model",
             vec![],
-            true,
             &client,
             token,
             callback,
@@ -1514,14 +1833,396 @@ mod tests {
 
         mock.assert_async().await;
         let chunks = chunks.lock().unwrap();
-
-        // No ThinkingToken emitted for empty thinking field
         assert!(chunks
             .iter()
             .all(|c| !matches!(c, StreamChunk::ThinkingToken(_))));
-        // Content token still emitted
         assert!(chunks
             .iter()
             .any(|c| matches!(c, StreamChunk::Token(t) if t == "Hello")));
+    }
+
+    // ─── <think>…</think> inline tag parsing ─────────────────────────────────
+
+    #[tokio::test]
+    async fn inline_think_tag_is_split_into_thinking_and_content() {
+        let mut server = mockito::Server::new_async().await;
+        let body = format!("{}{}", sse_content("<think>hmm</think>answer"), SSE_DONE,);
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let client = test_client();
+        let token = CancellationToken::new();
+        let (chunks, callback) = collect_chunks();
+
+        let accumulated = stream_ollama_chat(
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
+            "test-model",
+            vec![],
+            &client,
+            token,
+            callback,
+        )
+        .await;
+
+        mock.assert_async().await;
+        let chunks = chunks.lock().unwrap();
+        let thinking: String = chunks
+            .iter()
+            .filter_map(|c| match c {
+                StreamChunk::ThinkingToken(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        let content: String = chunks
+            .iter()
+            .filter_map(|c| match c {
+                StreamChunk::Token(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thinking, "hmm");
+        assert_eq!(content, "answer");
+        assert_eq!(accumulated, "answer");
+    }
+
+    #[tokio::test]
+    async fn think_tag_split_across_deltas() {
+        let mut server = mockito::Server::new_async().await;
+        // The open tag is split: "<thi" ends one delta, "nk>why</think>done"
+        // completes the thinking block and starts visible content.
+        let body = format!(
+            "{}{}{}",
+            sse_content("<thi"),
+            sse_content("nk>why</think>done"),
+            SSE_DONE,
+        );
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let client = test_client();
+        let token = CancellationToken::new();
+        let (chunks, callback) = collect_chunks();
+
+        let accumulated = stream_ollama_chat(
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
+            "test-model",
+            vec![],
+            &client,
+            token,
+            callback,
+        )
+        .await;
+
+        mock.assert_async().await;
+        let chunks = chunks.lock().unwrap();
+        let thinking: String = chunks
+            .iter()
+            .filter_map(|c| match c {
+                StreamChunk::ThinkingToken(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        let content: String = chunks
+            .iter()
+            .filter_map(|c| match c {
+                StreamChunk::Token(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thinking, "why");
+        assert_eq!(content, "done");
+        assert_eq!(accumulated, "done");
+    }
+
+    #[tokio::test]
+    async fn unterminated_think_tag_flushes_as_thinking() {
+        let mut server = mockito::Server::new_async().await;
+        // Stream ends mid-think-block without a closing tag — the buffered
+        // content should still be flushed as thinking, not lost.
+        let body = format!("{}{}", sse_content("<think>still going"), SSE_DONE);
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let client = test_client();
+        let token = CancellationToken::new();
+        let (chunks, callback) = collect_chunks();
+
+        stream_ollama_chat(
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
+            "test-model",
+            vec![],
+            &client,
+            token,
+            callback,
+        )
+        .await;
+
+        mock.assert_async().await;
+        let chunks = chunks.lock().unwrap();
+        assert!(chunks
+            .iter()
+            .any(|c| matches!(c, StreamChunk::ThinkingToken(t) if t == "still going")));
+    }
+
+    #[tokio::test]
+    async fn partial_tag_tail_held_until_stream_end_is_flushed_as_content() {
+        let mut server = mockito::Server::new_async().await;
+        // Last delta ends with "<thi" which is a partial tag tail.  When the
+        // stream closes with no more data, the tail is not a real tag so it
+        // must be flushed as visible content rather than silently dropped.
+        let body = format!("{}{}", sse_content("hi<thi"), SSE_DONE);
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let client = test_client();
+        let token = CancellationToken::new();
+        let (chunks, callback) = collect_chunks();
+
+        let accumulated = stream_ollama_chat(
+            &format!("{}/chat/completions", server.url()),
+            "sk-test",
+            "test-model",
+            vec![],
+            &client,
+            token,
+            callback,
+        )
+        .await;
+
+        mock.assert_async().await;
+        let chunks = chunks.lock().unwrap();
+        let content: String = chunks
+            .iter()
+            .filter_map(|c| match c {
+                StreamChunk::Token(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(content, "hi<thi");
+        assert_eq!(accumulated, "hi<thi");
+    }
+
+    // ─── think-tag-parser unit tests ─────────────────────────────────────────
+
+    #[test]
+    fn potential_tag_tail_full_prefix() {
+        assert_eq!(potential_tag_tail("abc<thi", "<think>"), 4);
+    }
+
+    #[test]
+    fn potential_tag_tail_single_char_prefix() {
+        assert_eq!(potential_tag_tail("abc<", "<think>"), 1);
+    }
+
+    #[test]
+    fn potential_tag_tail_no_match() {
+        assert_eq!(potential_tag_tail("abc", "<think>"), 0);
+    }
+
+    #[test]
+    fn potential_tag_tail_empty_string() {
+        assert_eq!(potential_tag_tail("", "<think>"), 0);
+    }
+
+    #[test]
+    fn potential_tag_tail_shorter_than_full_tag() {
+        // "</t" is a valid prefix of "</think>" of length 3.
+        assert_eq!(potential_tag_tail("some</t", "</think>"), 3);
+    }
+
+    #[test]
+    fn think_tag_state_emits_normal_content() {
+        let mut state = ThinkTagState::new();
+        let (chunks, cb) = collect_chunks();
+        let mut acc = String::new();
+        state.process("hello", &cb, &mut acc);
+        let chunks = chunks.lock().unwrap();
+        assert!(chunks
+            .iter()
+            .any(|c| matches!(c, StreamChunk::Token(t) if t == "hello")));
+        assert_eq!(acc, "hello");
+    }
+
+    #[test]
+    fn think_tag_state_splits_complete_tag_in_single_delta() {
+        let mut state = ThinkTagState::new();
+        let (chunks, cb) = collect_chunks();
+        let mut acc = String::new();
+        state.process("a<think>b</think>c", &cb, &mut acc);
+        let chunks = chunks.lock().unwrap();
+        let thinking: String = chunks
+            .iter()
+            .filter_map(|c| match c {
+                StreamChunk::ThinkingToken(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        let content: String = chunks
+            .iter()
+            .filter_map(|c| match c {
+                StreamChunk::Token(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thinking, "b");
+        assert_eq!(content, "ac");
+        assert_eq!(acc, "ac");
+    }
+
+    #[test]
+    fn think_tag_state_flush_normal_buffer_emits_as_content() {
+        let mut state = ThinkTagState::new();
+        let (chunks, cb) = collect_chunks();
+        let mut acc = String::new();
+        // Enter and exit a brief think block to land a ThinkingToken in the
+        // chunk list so the filter_map below exercises both arms.
+        state.process("<think>brief</think>", &cb, &mut acc);
+        // Feed a partial open tag — it stays buffered.
+        state.process("abc<thi", &cb, &mut acc);
+        // Flush — the tail is not a real tag, so it must surface as content.
+        state.flush(&cb, &mut acc);
+        let chunks = chunks.lock().unwrap();
+        let all_tokens: String = chunks
+            .iter()
+            .filter_map(|c| match c {
+                StreamChunk::Token(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(all_tokens, "abc<thi");
+        assert_eq!(acc, "abc<thi");
+    }
+
+    #[test]
+    fn think_tag_state_flush_in_think_mode_emits_as_thinking() {
+        let mut state = ThinkTagState::new();
+        let (chunks, cb) = collect_chunks();
+        let mut acc = String::new();
+        // Emit some visible content first so the filter_map below exercises
+        // both arms (Token → _ arm, ThinkingToken → Some arm).
+        state.process("hi", &cb, &mut acc);
+        // Enter think mode and buffer a partial close tag tail at the end.
+        state.process("<think>abc</thi", &cb, &mut acc);
+        // Flush with carry="</thi" and in_think=true: the held tail must
+        // surface as a ThinkingToken rather than being silently dropped.
+        state.flush(&cb, &mut acc);
+        let chunks = chunks.lock().unwrap();
+        let thinking: String = chunks
+            .iter()
+            .filter_map(|c| match c {
+                StreamChunk::ThinkingToken(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thinking, "abc</thi");
+        assert_eq!(acc, "hi");
+    }
+
+    #[test]
+    fn think_tag_state_flush_empty_buffer_emits_nothing() {
+        let mut state = ThinkTagState::new();
+        let (chunks, cb) = collect_chunks();
+        let mut acc = String::new();
+        state.flush(&cb, &mut acc);
+        let chunks = chunks.lock().unwrap();
+        assert!(chunks.is_empty());
+    }
+
+    // ─── ChatMessage wire format ─────────────────────────────────────────────
+
+    #[test]
+    fn chat_message_serializes_plain_string_without_images() {
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: "hi".to_string(),
+            images: None,
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["role"], "user");
+        assert_eq!(json["content"], "hi");
+    }
+
+    #[test]
+    fn chat_message_serializes_empty_image_list_as_plain_string() {
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: "hi".to_string(),
+            images: Some(vec![]),
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["content"], "hi");
+    }
+
+    #[test]
+    fn chat_message_serializes_images_as_multimodal_content_array() {
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: "what is this?".to_string(),
+            images: Some(vec!["AAAA".to_string(), "BBBB".to_string()]),
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        let arr = json["content"].as_array().expect("content should be array");
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[0]["type"], "text");
+        assert_eq!(arr[0]["text"], "what is this?");
+        assert_eq!(arr[1]["type"], "image_url");
+        assert_eq!(arr[1]["image_url"]["url"], "data:image/jpeg;base64,AAAA");
+        assert_eq!(arr[2]["type"], "image_url");
+        assert_eq!(arr[2]["image_url"]["url"], "data:image/jpeg;base64,BBBB");
+    }
+
+    #[test]
+    fn chat_message_serializes_images_with_empty_text_as_image_only_array() {
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: String::new(),
+            images: Some(vec!["AAAA".to_string()]),
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        let arr = json["content"].as_array().expect("content should be array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["type"], "image_url");
+    }
+
+    // ─── SSE framing helper ─────────────────────────────────────────────────
+
+    #[test]
+    fn find_sse_event_returns_none_for_partial_event() {
+        assert_eq!(find_sse_event(b"data: hi\n"), None);
+        assert_eq!(find_sse_event(b""), None);
+        assert_eq!(find_sse_event(b"d"), None);
+    }
+
+    #[test]
+    fn find_sse_event_detects_lf_delimiter() {
+        // "data: hi\n\n" — index of the second '\n' is 9.
+        assert_eq!(find_sse_event(b"data: hi\n\n"), Some(9));
+    }
+
+    #[test]
+    fn find_sse_event_detects_crlf_delimiter() {
+        // "data: hi\r\n\r\n" — index of the last '\n' is 11.
+        assert_eq!(find_sse_event(b"data: hi\r\n\r\n"), Some(11));
+    }
+
+    #[test]
+    fn find_sse_event_returns_first_event_when_multiple_present() {
+        let buf = b"data: a\n\ndata: b\n\n";
+        assert_eq!(find_sse_event(buf), Some(8));
     }
 }

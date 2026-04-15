@@ -113,7 +113,14 @@ Choose one of the two options below to set up your AI engine before installing T
    ollama list
    ```
 
-   You should see your model listed. Once it appears, Ollama is ready and Thuki will connect to it automatically at `http://127.0.0.1:11434`.
+   You should see your model listed. Thuki talks to an **OpenAI-compatible** server — for Ollama, enable its OpenAI-compat endpoint and point Thuki at it:
+
+   ```bash
+   export THUKI_API_BASE_URL=http://127.0.0.1:11434/v1
+   export THUKI_SUPPORTED_AI_MODELS=<your-ollama-model-name>
+   ```
+
+   The default (`http://10.0.0.4:1234/v1` with API key `lm-studio`) is set up for an LM Studio server on the LAN; override it via `THUKI_API_BASE_URL` / `THUKI_API_KEY`.
 
 #### Option B: Docker Sandbox (For security-conscious users)
 
@@ -178,7 +185,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development setup guide.
 <details>
 <summary>Click to expand</summary>
 
-Thuki is a **Tauri v2** app (Rust backend + React/TypeScript frontend) that interfaces with a locally running Ollama instance at `http://127.0.0.1:11434`.
+Thuki is a **Tauri v2** app (Rust backend + React/TypeScript frontend) that talks to any OpenAI-compatible `/chat/completions` endpoint — LM Studio, vLLM, llama.cpp server, Ollama's OpenAI-compat endpoint, or a hosted provider — configured via `THUKI_API_BASE_URL` and `THUKI_API_KEY`.
 
 ### Dual-Layer Isolation
 

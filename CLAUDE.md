@@ -47,7 +47,7 @@ Tests use **Vitest** for the frontend (React/TypeScript with React Testing Libra
 
 ## Architecture
 
-Thuki is a macOS-only desktop app, a floating AI secretary activated by double-tapping the Control key. It is a **Tauri v2** app (Rust backend + React/TypeScript frontend) that interfaces with a locally running **Ollama** instance at `http://127.0.0.1:11434`.
+Thuki is a macOS-only desktop app, a floating AI secretary activated by double-tapping the Control key. It is a **Tauri v2** app (Rust backend + React/TypeScript frontend) that talks to any **OpenAI-compatible** inference server (LM Studio, vLLM, llama.cpp, Ollama's OpenAI-compat endpoint, hosted providers, …) via `POST {base}/chat/completions` with SSE streaming. The backend endpoint is configured through `THUKI_API_BASE_URL` / `THUKI_API_KEY` and defaults to `http://10.0.0.4:1234/v1` with key `lm-studio`.
 
 ### Frontend (`src/`)
 
@@ -63,13 +63,13 @@ The UI morphs between two states: a compact spotlight-style input bar → an exp
 ### Backend (`src-tauri/src/`)
 
 - **`lib.rs`** — app setup: converts window to NSPanel (fullscreen overlay), registers tray, spawns hotkey listener, intercepts close events (hides instead of quits)
-- **`commands.rs`** — `ask_ollama` Tauri command: streams newline-delimited JSON from Ollama, sends chunks via Tauri Channel
+- **`commands.rs`** — `ask_ollama` Tauri command (name retained for IPC compat): streams SSE from an OpenAI-compatible `/chat/completions` endpoint, parses `reasoning_content` deltas and inline `<think>…</think>` tags as thinking tokens, sends chunks via Tauri Channel
 - **`screenshot.rs`** — `capture_full_screen_command` Tauri command: uses CoreGraphics FFI (`CGWindowListCreateImage`) to capture all displays excluding Thuki's own windows, writes a JPEG to a temp dir, and returns the path
 - **`activator.rs`** — Core Graphics event tap watching for double-tap Control key (400ms window, 600ms cooldown). The tap MUST use `CGEventTapLocation::HID` and `CGEventTapOptions::Default` — see the critical constraint note in "Key Design Constraints" below.
 
 ### Sandbox (`sandbox/`)
 
-Docker Compose runs Ollama in a hardened container: `cap_drop: ALL`, `no-new-privileges`, read-only model volume, localhost-only port binding (`127.0.0.1:11434`). Two services: `sandbox-init` (one-shot model pull) and `sandbox-server` (long-running daemon). `sandbox:stop` uses `down -v` which wipes the volume.
+Docker Compose runs Ollama in a hardened container: `cap_drop: ALL`, `no-new-privileges`, read-only model volume, localhost-only port binding (`127.0.0.1:11434`). Two services: `sandbox-init` (one-shot model pull) and `sandbox-server` (long-running daemon). `sandbox:stop` uses `down -v` which wipes the volume. The sandbox is an **optional local inference setup** — point `THUKI_API_BASE_URL` at it via Ollama's OpenAI-compat endpoint (`http://127.0.0.1:11434/v1`) if you want the full privacy-sandboxed flow; otherwise any OpenAI-compatible server works.
 
 ### IPC Pattern
 

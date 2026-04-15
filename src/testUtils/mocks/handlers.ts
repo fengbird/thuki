@@ -1,18 +1,27 @@
 import { http, HttpResponse } from 'msw';
 
-const OLLAMA_URL = 'http://127.0.0.1:11434';
+/**
+ * Default OpenAI-compatible endpoint used by the backend.  Real HTTP traffic
+ * from tests goes through the Tauri IPC bridge (stubbed in `mocks/tauri.ts`),
+ * so this handler mostly exists to catch stray fetches and provide a sensible
+ * stream shape if any test ever calls the endpoint directly.
+ */
+const API_URL = 'http://10.0.0.4:1234/v1';
 
-function ollamaStreamResponse(tokens: string[]) {
-  const lines = tokens
-    .map((t) => JSON.stringify({ response: t, done: false }))
-    .concat(JSON.stringify({ response: '', done: true }));
-  return new HttpResponse(lines.join('\n'), {
-    headers: { 'Content-Type': 'application/x-ndjson' },
+function sseStreamResponse(tokens: string[]) {
+  const events = tokens
+    .map(
+      (t) =>
+        `data: ${JSON.stringify({ choices: [{ delta: { content: t } }] })}\n\n`,
+    )
+    .concat('data: [DONE]\n\n');
+  return new HttpResponse(events.join(''), {
+    headers: { 'Content-Type': 'text/event-stream' },
   });
 }
 
 export const handlers = [
-  http.post(`${OLLAMA_URL}/api/generate`, () => {
-    return ollamaStreamResponse(['Hello', ' world', '!']);
+  http.post(`${API_URL}/chat/completions`, () => {
+    return sseStreamResponse(['Hello', ' world', '!']);
   }),
 ];

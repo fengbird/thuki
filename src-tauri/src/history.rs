@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use tauri::State;
 
-use crate::commands::{ChatMessage, ConversationHistory, ModelConfig, SystemPrompt};
+use crate::commands::{ApiConfig, ChatMessage, ConversationHistory, ModelConfig, SystemPrompt};
 use crate::database;
 
 /// Thread-safe wrapper around the SQLite connection.
@@ -208,6 +208,7 @@ pub async fn generate_title(
     client: State<'_, reqwest::Client>,
     system_prompt: State<'_, SystemPrompt>,
     model_config: State<'_, ModelConfig>,
+    api_config: State<'_, ApiConfig>,
 ) -> Result<(), String> {
     // Build a condensed context for title generation.
     let mut context = String::new();
@@ -242,17 +243,14 @@ pub async fn generate_title(
         },
     ];
 
-    let endpoint = format!(
-        "{}/api/chat",
-        crate::commands::DEFAULT_OLLAMA_URL.trim_end_matches('/')
-    );
+    let endpoint = format!("{}/chat/completions", api_config.base_url);
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
     let accumulated = crate::commands::stream_ollama_chat(
         &endpoint,
+        &api_config.api_key,
         &model_config.active,
         title_messages,
-        false,
         &client,
         cancel_token,
         |_| {}, // No per-chunk side effects; we use the accumulated return value.

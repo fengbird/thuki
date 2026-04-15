@@ -86,7 +86,14 @@ rustup toolchain install nightly-2026-03-30 --component llvm-tools
    ollama pull gemma4:e2b
    ```
 
-   Thuki connects to `http://127.0.0.1:11434` by default.
+   Thuki talks to an OpenAI-compatible `/chat/completions` endpoint. To use a local Ollama, point it at Ollama's OpenAI-compat URL:
+
+   ```bash
+   export THUKI_API_BASE_URL=http://127.0.0.1:11434/v1
+   export THUKI_SUPPORTED_AI_MODELS=gemma4:e2b
+   ```
+
+   Other supported backends: LM Studio, vLLM, llama.cpp server, hosted providers (OpenAI, DeepSeek, 硅基流动, …). Configure with `THUKI_API_BASE_URL` and `THUKI_API_KEY`.
 
 4. **Configure environment** (optional)
 
