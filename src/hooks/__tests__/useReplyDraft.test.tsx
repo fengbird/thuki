@@ -59,6 +59,42 @@ describe('useReplyDraft', () => {
     expect(result.current.state.isGenerating).toBe(true);
   });
 
+  it('strips leading whitespace the model emits before the reply body', async () => {
+    const { result } = renderHook(() => useReplyDraft());
+
+    await act(async () => {
+      await result.current.generate('/tmp/shot.png', 'WeChat');
+    });
+
+    const channel = getLastChannel()!;
+    // Simulate a model that yields "\n\n" right after reasoning, then the
+    // real reply. The accumulated text should never expose those leading
+    // newlines to the UI.
+    act(() => {
+      channel.simulateMessage({ type: 'Token', data: '\n\n' });
+      channel.simulateMessage({ type: 'Token', data: 'Hello' });
+      channel.simulateMessage({ type: 'Token', data: ' world' });
+    });
+
+    expect(result.current.state.text).toBe('Hello world');
+  });
+
+  it('strips leading whitespace from the thinking stream', async () => {
+    const { result } = renderHook(() => useReplyDraft());
+
+    await act(async () => {
+      await result.current.generate('/tmp/shot.png', 'WeChat');
+    });
+
+    const channel = getLastChannel()!;
+    act(() => {
+      channel.simulateMessage({ type: 'ThinkingToken', data: '\n\n' });
+      channel.simulateMessage({ type: 'ThinkingToken', data: 'Reading' });
+    });
+
+    expect(result.current.state.thinking).toBe('Reading');
+  });
+
   it('accumulates ThinkingToken chunks into thinking', async () => {
     const { result } = renderHook(() => useReplyDraft());
 

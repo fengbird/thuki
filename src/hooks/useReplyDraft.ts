@@ -57,10 +57,13 @@ export function useReplyDraft() {
       if (generationIdRef.current !== id) return;
 
       if (chunk.type === 'Token') {
-        text += chunk.data;
+        // Strip any leading whitespace the model emits between its
+        // reasoning output and the reply body. Once the leading edge is
+        // past whitespace, `trimStart` is a no-op on further ticks.
+        text = (text + chunk.data).trimStart();
         setState((s) => ({ ...s, text }));
       } else if (chunk.type === 'ThinkingToken') {
-        thinking += chunk.data;
+        thinking = (thinking + chunk.data).trimStart();
         setState((s) => ({ ...s, thinking }));
       } else if (chunk.type === 'Done') {
         setState((s) => ({ ...s, isGenerating: false }));

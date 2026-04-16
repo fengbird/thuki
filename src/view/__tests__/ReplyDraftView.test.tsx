@@ -119,6 +119,29 @@ describe('ReplyDraftView', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
+  it('paste trims trailing whitespace the model tacked on after the reply', async () => {
+    const onDismiss = vi.fn();
+    render(<ReplyDraftView {...defaultProps} onDismiss={onDismiss} />);
+    await act(async () => {});
+
+    const channel = getLastChannel()!;
+    act(() => {
+      channel.simulateMessage({ type: 'Token', data: 'Hello!' });
+      channel.simulateMessage({ type: 'Token', data: '\n\n' });
+      channel.simulateMessage({ type: 'Done' });
+    });
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Enter' });
+    });
+    await act(async () => {});
+
+    expect(invoke).toHaveBeenCalledWith('paste_reply_and_hide', {
+      bundleId: 'com.tencent.xinWeChat',
+      text: 'Hello!',
+    });
+  });
+
   it('Enter is a no-op while streaming is in flight', async () => {
     const onDismiss = vi.fn();
     render(<ReplyDraftView {...defaultProps} onDismiss={onDismiss} />);

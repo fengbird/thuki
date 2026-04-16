@@ -21,12 +21,33 @@ export interface ReplyDraftViewProps {
 }
 
 /**
- * Renders the reply-draft UI: a thumbnail of the captured window, the
- * app the reply is destined for, the streaming draft text (plus thinking
- * stream when the model emits one), and inline error callouts for
- * capture / generation / paste failures.
+ * Warm-ambient theme tokens — shared visual language with the onboarding
+ * `IntroStep`. Centralised here so if the design evolves we can tune one
+ * spot rather than chase literals through the markup.
+ */
+const THEME = {
+  cardBg:
+    'radial-gradient(ellipse 80% 55% at 50% 0%, rgba(255,141,92,0.14) 0%, rgba(28,24,20,0.97) 60%), rgba(28,24,20,0.97)',
+  cardBorder: '1px solid rgba(255, 141, 92, 0.2)',
+  cardShadow: '0 0 40px rgba(255,100,40,0.07)',
+  cardRadius: 24,
+  divider: 'rgba(255,255,255,0.05)',
+  textPrimary: '#f0f0f2',
+  textSecondary: 'rgba(240,240,242,0.9)',
+  textMuted: 'rgba(255,255,255,0.3)',
+  textDim: 'rgba(255,255,255,0.28)',
+  accent: 'rgba(255,141,92,0.65)',
+  accentStrong: '#ff8d5c',
+  fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+};
+
+/**
+ * Renders the reply-draft UI in the warm-ambient theme shared with the
+ * onboarding screen: dark card with a subtle orange radial glow, an
+ * orange-tinted thumbnail/header, streaming draft + reasoning, inline
+ * error callouts, and keyboard hint chips styled like IntroStep.
  *
- * Keyboard shortcuts (registered as long as the view is mounted):
+ * Keyboard shortcuts (registered while mounted):
  * - `Enter`          → paste the draft into the target app
  * - `Escape`         → dismiss without pasting (cancels generation first)
  * - `⌘R` / `Ctrl+R`  → regenerate from the same screenshot
@@ -43,9 +64,7 @@ export function ReplyDraftView({
   const [pasteError, setPasteError] = useState<string | null>(null);
   const thinkingRef = useRef<HTMLDivElement | null>(null);
 
-  // Keep the thinking block pinned to its latest token as it streams. The
-  // container is `max-h-20` with overflow scroll, so without this the user
-  // would only see the first few lines of a long reasoning trace.
+  // Keep the thinking block pinned to its latest token as it streams.
   useEffect(() => {
     const el = thinkingRef.current;
     if (el) {
@@ -53,9 +72,7 @@ export function ReplyDraftView({
     }
   }, [state.thinking]);
 
-  // Only kick off generation once the image has arrived. While the
-  // screenshot is pending, `imagePath` stays null and this effect is a
-  // no-op — the "Capturing…" placeholder is shown instead.
+  // Only kick off generation once the image has arrived.
   useEffect(() => {
     if (!imagePath) return;
     void generate(imagePath, appName);
@@ -76,7 +93,13 @@ export function ReplyDraftView({
     setIsPasting(true);
     setPasteError(null);
     try {
-      await invoke('paste_reply_and_hide', { bundleId, text: state.text });
+      // Trim trailing whitespace on the way out — the hook already strips
+      // leading whitespace during streaming, but the model occasionally
+      // tacks a final newline on after the reply.
+      await invoke('paste_reply_and_hide', {
+        bundleId,
+        text: state.text.trim(),
+      });
       onDismiss();
     } catch (e) {
       setIsPasting(false);
@@ -87,8 +110,6 @@ export function ReplyDraftView({
   }, [pasteDisabled, bundleId, state.text, onDismiss]);
 
   const handleRegenerate = useCallback(async () => {
-    // `regenerateDisabled` already rejects the null-imagePath case, so
-    // by this point the screenshot is definitely ready.
     if (regenerateDisabled || imagePath === null) return;
     if (state.isGenerating) {
       await cancel();
@@ -133,67 +154,135 @@ export function ReplyDraftView({
   return (
     <div
       data-testid="reply-draft-root"
-      className="flex flex-col gap-3 p-4 rounded-xl backdrop-blur-xl bg-black/30 border border-white/10 max-w-[560px]"
+      style={{
+        width: 440,
+        background: THEME.cardBg,
+        border: THEME.cardBorder,
+        borderRadius: THEME.cardRadius,
+        boxShadow: THEME.cardShadow,
+        padding: '22px 22px 18px',
+        fontFamily: THEME.fontFamily,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 14,
+      }}
     >
-      <div className="flex items-center gap-3">
+      {/* Header: thumbnail + label + app name */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         {imagePath ? (
           <img
             src={convertFileSrc(imagePath)}
             alt={`Screenshot of ${appName}`}
-            className="w-10 h-10 rounded-md object-cover border border-white/10"
             data-testid="reply-thumbnail"
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 8,
+              objectFit: 'cover',
+              border: '1px solid rgba(255,141,92,0.18)',
+              flexShrink: 0,
+            }}
           />
         ) : (
           <div
             data-testid="reply-thumbnail-pending"
-            className="w-10 h-10 rounded-md border border-white/10 bg-white/5 flex items-center justify-center"
             aria-hidden
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 8,
+              border: '1px solid rgba(255,141,92,0.18)',
+              background: 'rgba(255,141,92,0.06)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
           >
-            <div className="w-3 h-3 border-2 border-white/40 border-t-white/80 rounded-full animate-spin" />
+            <Spinner />
           </div>
         )}
-        <div className="flex-1 min-w-0">
-          <div className="text-[11px] uppercase tracking-[0.08em] text-white/40">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 10.5,
+              letterSpacing: '0.09em',
+              textTransform: 'uppercase',
+              color: 'rgba(255,141,92,0.7)',
+              fontWeight: 600,
+              marginBottom: 2,
+            }}
+          >
             {isCapturing ? 'Capturing…' : 'Draft reply'}
           </div>
           <div
             data-testid="reply-target-app"
-            className="text-[13px] font-[590] text-white/90 truncate"
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: THEME.textPrimary,
+              letterSpacing: '-0.2px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
           >
             {appName}
           </div>
         </div>
       </div>
 
+      {/* Divider */}
+      <div style={{ height: 1, background: THEME.divider }} />
+
+      {/* Thinking stream (auto-scroll to bottom) */}
       {state.thinking && (
         <div
           ref={thinkingRef}
           data-testid="reply-thinking"
-          className="text-[11.5px] text-white/40 italic leading-snug max-h-20 overflow-y-auto whitespace-pre-wrap"
+          style={{
+            fontSize: 11.5,
+            fontStyle: 'italic',
+            color: 'rgba(255,255,255,0.38)',
+            lineHeight: 1.55,
+            maxHeight: 80,
+            overflowY: 'auto',
+            whiteSpace: 'pre-wrap',
+            paddingRight: 4,
+          }}
         >
           {state.thinking}
         </div>
       )}
 
+      {/* Draft body */}
       <div
         data-testid="reply-body"
-        className="text-[14px] text-white/95 leading-relaxed whitespace-pre-wrap min-h-[48px]"
+        style={{
+          fontSize: 14,
+          color: THEME.textPrimary,
+          lineHeight: 1.55,
+          whiteSpace: 'pre-wrap',
+          minHeight: 48,
+          letterSpacing: '-0.1px',
+        }}
       >
         {state.text ? (
           state.text
         ) : captureError ? (
-          <span className="text-white/40">Window capture failed.</span>
+          <span style={{ color: THEME.textMuted }}>Window capture failed.</span>
         ) : isCapturing ? (
-          <span className="text-white/40">
+          <span style={{ color: THEME.textMuted }}>
             Capturing the focused window of {appName}…
           </span>
         ) : state.isGenerating ? (
-          <span className="text-white/40">Generating a reply…</span>
+          <span style={{ color: THEME.textMuted }}>Generating a reply…</span>
         ) : (
-          <span className="text-white/40">No reply yet.</span>
+          <span style={{ color: THEME.textMuted }}>No reply yet.</span>
         )}
       </div>
 
+      {/* Error cards */}
       {captureError && (
         <ErrorCard kind="Other" message={`Capture failed\n${captureError}`} />
       )}
@@ -204,9 +293,20 @@ export function ReplyDraftView({
         <ErrorCard kind="Other" message={`Paste failed\n${pasteError}`} />
       )}
 
+      {/* Divider */}
+      <div style={{ height: 1, background: THEME.divider }} />
+
+      {/* Keyboard hints */}
       <div
         data-testid="reply-hints"
-        className="flex flex-wrap gap-4 text-[11px] text-white/45 pt-1 border-t border-white/5"
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 14,
+          fontSize: 11,
+          color: 'rgba(255,255,255,0.4)',
+          fontFamily: THEME.fontFamily,
+        }}
       >
         <ShortcutHint
           keys={['↵']}
@@ -230,22 +330,70 @@ interface ShortcutHintProps {
   disabled?: boolean;
 }
 
-/** Keybinding hint rendered at the bottom of the reply-draft card. */
+/**
+ * Keybinding hint rendered at the bottom of the card. Chip styling matches
+ * `IntroStep.KeyChip` so the two screens feel like the same family.
+ */
 function ShortcutHint({ keys, label, disabled }: ShortcutHintProps) {
   return (
     <div
       data-testid={`reply-hint-${label.replace(/\s+/g, '-')}`}
-      className={`flex items-center gap-1.5 ${disabled ? 'opacity-40' : ''}`}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        opacity: disabled ? 0.4 : 1,
+      }}
     >
       {keys.map((k) => (
         <kbd
           key={k}
-          className="font-mono text-[10px] bg-white/10 text-white/70 px-1.5 rounded min-w-[18px] text-center"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minWidth: 18,
+            padding: '1px 6px',
+            background: 'rgba(255,255,255,0.06)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderBottom: '2px solid rgba(255,255,255,0.08)',
+            borderRadius: 4,
+            fontSize: 10.5,
+            fontFamily: "'SF Mono', 'Fira Mono', monospace",
+            color: 'rgba(255,255,255,0.6)',
+            lineHeight: 1.5,
+          }}
         >
           {k}
         </kbd>
       ))}
-      <span>{label}</span>
+      <span style={{ letterSpacing: '-0.1px' }}>{label}</span>
     </div>
+  );
+}
+
+/** Small orange-tinted spinner for the capturing-phase thumbnail slot. */
+function Spinner() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <g style={{ transformOrigin: 'center', animation: 'spin 0.9s linear infinite' }}>
+        <circle
+          cx="9"
+          cy="9"
+          r="6.5"
+          fill="none"
+          stroke="rgba(255,141,92,0.22)"
+          strokeWidth="2"
+        />
+        <path
+          d="M9 2.5a6.5 6.5 0 0 1 6.5 6.5"
+          fill="none"
+          stroke="rgba(255,141,92,0.85)"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      </g>
+    </svg>
   );
 }
