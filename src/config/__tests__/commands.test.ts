@@ -301,10 +301,12 @@ describe('buildPrompt', () => {
     expect(result).toContain('Text: this is a test');
   });
 
-  it('/translate with only language code and selected text uses selected text as input', () => {
+  it('/translate with single word and selected text combines both as input', () => {
     const result = buildPrompt('/translate', 'vie', 'selected text here');
-    expect(result).toContain('Target language: vie');
-    expect(result).toContain('Text: selected text here');
+    // Single word is NOT parsed as lang — both become input
+    expect(result).toContain('Target language: ');
+    expect(result).toContain('selected text here');
+    expect(result).toContain('vie');
   });
 
   it('/translate with no language and selected text leaves $LANG empty', () => {
@@ -314,8 +316,12 @@ describe('buildPrompt', () => {
     expect(result).not.toContain('$LANG');
   });
 
-  it('/translate with only a language code and no selected text returns null', () => {
-    expect(buildPrompt('/translate', 'vie')).toBeNull();
+  it('/translate with a single word treats it as text to translate (default language)', () => {
+    const result = buildPrompt('/translate', 'vie');
+    expect(result).not.toBeNull();
+    expect(result).toContain('Text: vie');
+    // $LANG should be empty (default language)
+    expect(result).toContain('Target language: ');
   });
 
   it('/tldr populates template correctly', () => {

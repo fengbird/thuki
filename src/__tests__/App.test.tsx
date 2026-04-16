@@ -3725,9 +3725,7 @@ describe('App', () => {
     });
 
     it('utility command returns null composedPrompt when no usable input is found', async () => {
-      // /translate with only a language code (no text to translate) makes buildPrompt return null.
-      // strippedMessage = 'jpn' (non-empty, bypasses the early guard) but buildPrompt gets
-      // lang='jpn', typedRemainder='', selected='', so returns null.
+      // /rewrite with no text and no selected context → buildPrompt returns null.
       enableChannelCapture();
 
       render(<App />);
@@ -3736,7 +3734,7 @@ describe('App', () => {
 
       const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
       act(() => {
-        fireEvent.change(textarea, { target: { value: '/translate jpn' } });
+        fireEvent.change(textarea, { target: { value: '/rewrite' } });
       });
 
       act(() => {

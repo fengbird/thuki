@@ -227,12 +227,11 @@ export function buildPrompt(
   let typedRemainder = typed;
 
   // Detect $LANG placeholder in the template to decide language parsing.
+  // Only split when there are 2+ words (first = lang, rest = input).
+  // A single word is treated as text to translate with the default language.
   if (cmd.promptTemplate.includes('$LANG') && typed) {
     const spaceIdx = typed.indexOf(' ');
-    if (spaceIdx === -1) {
-      lang = typed;
-      typedRemainder = '';
-    } else {
+    if (spaceIdx !== -1) {
       lang = typed.slice(0, spaceIdx);
       typedRemainder = typed.slice(spaceIdx + 1).trim();
     }

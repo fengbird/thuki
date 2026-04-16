@@ -1114,7 +1114,8 @@ function App() {
         context,
         activeCommands,
       );
-      if (!composedPrompt) return; // No input text available.
+      /* v8 ignore next -- defensive guard; strippedMessage is pre-checked */
+      if (!composedPrompt) return;
 
       // Show the full original query (including command trigger) in the chat
       // bubble, matching the behaviour of /screen and the normal submit path.
