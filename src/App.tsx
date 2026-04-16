@@ -5,6 +5,7 @@ import {
   useEffect,
   useCallback,
   useRef,
+  useMemo,
   useLayoutEffect,
 } from 'react';
 import { listen } from '@tauri-apps/api/event';
@@ -26,10 +27,11 @@ import type { AttachedImage } from './types/image';
 import { MAX_IMAGE_SIZE_BYTES } from './types/image';
 import { quote } from './config';
 import {
-  COMMANDS,
   SCREEN_CAPTURE_PLACEHOLDER,
   buildPrompt,
+  mergeCommands,
 } from './config/commands';
+import type { CommandsConfig, ActiveCommand } from './config/commands';
 import './App.css';
 
 /** Fallback model name used before get_model_config resolves at startup. */
@@ -85,16 +87,19 @@ const COLLAPSED_WINDOW_HEIGHT = 80;
 
 /**
  * Parses a message to detect all valid slash commands present as whole words.
- * Derives detectable commands from the COMMANDS registry so adding a command
+ * Derives detectable commands from the provided list so adding a command
  * to the registry is sufficient (no hardcoded trigger strings here).
  * Also returns the message with command triggers stripped for the LLM.
  */
-export function parseCommands(text: string): {
+export function parseCommands(
+  text: string,
+  commands: readonly { trigger: string }[],
+): {
   found: Set<string>;
   strippedMessage: string;
 } {
   const words = text.trim().split(/\s+/);
-  const triggerSet = new Set(COMMANDS.map((c) => c.trigger));
+  const triggerSet = new Set(commands.map((c) => c.trigger));
   const found = new Set<string>();
   const remaining: string[] = [];
   for (const word of words) {
@@ -142,6 +147,16 @@ function App() {
 
   /** `true` while the Settings panel is visible (opened from tray or ⌘,). */
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  /** Slash command config loaded from the backend on mount and after settings save. */
+  const [commandsConfig, setCommandsConfig] = useState<CommandsConfig | null>(
+    null,
+  );
+  /** Active commands = built-in merged with user config. */
+  const activeCommands: readonly ActiveCommand[] = useMemo(
+    () => mergeCommands(commandsConfig),
+    [commandsConfig],
+  );
 
   /**
    * Whether the ask-bar history panel is currently open.
@@ -1053,13 +1068,16 @@ function App() {
 
     // Parse all valid commands from anywhere in the message.
     const trimmedQuery = query.trim();
-    const { found, strippedMessage } = parseCommands(trimmedQuery);
+    const { found, strippedMessage } = parseCommands(
+      trimmedQuery,
+      activeCommands,
+    );
     const hasScreen = found.has('/screen');
     const hasThink = found.has('/think');
 
     // Check for utility commands with prompt templates.
     const utilityTrigger = Array.from(found).find((t) => {
-      const cmd = COMMANDS.find((c) => c.trigger === t);
+      const cmd = activeCommands.find((c) => c.trigger === t);
       return !!cmd?.promptTemplate;
     });
 
@@ -1094,6 +1112,7 @@ function App() {
         utilityTrigger,
         strippedMessage,
         context,
+        activeCommands,
       );
       if (!composedPrompt) return; // No input text available.
 
@@ -1199,6 +1218,7 @@ function App() {
     setSelectedContext,
     attachedImages,
     setCaptureError,
+    activeCommands,
   ]);
 
   // When a pending submit exists and all images finish processing, fire it.
@@ -1299,6 +1319,16 @@ function App() {
       setModelConfig,
     );
   }, []);
+
+  /** Loads commands config from the backend on mount. */
+  const loadCommandsConfig = useCallback(() => {
+    void invoke<{ commands_config: CommandsConfig } | undefined>(
+      'get_settings',
+    ).then((s) => {
+      if (s?.commands_config) setCommandsConfig(s.commands_config);
+    });
+  }, []);
+  useEffect(loadCommandsConfig, [loadCommandsConfig]);
 
   /**
    * Synchronizes the React animation state with Tauri-driven overlay visibility
@@ -1504,8 +1534,10 @@ function App() {
       >
         <div ref={setReplyContainerRef} className="w-full">
           <SettingsView
-            onDismiss={() => {
+            onDismiss={(saved) => {
               setIsSettingsOpen(false);
+              /* v8 ignore next -- reload commands on save */
+              if (saved) loadCommandsConfig();
               handleCloseOverlay();
             }}
           />
@@ -1669,6 +1701,8 @@ function App() {
                   onImagePreview={handleAskBarImagePreview}
                   onScreenshot={handleScreenshot}
                   isDragOver={isDragOver ?? undefined}
+                  commands={activeCommands}
+                  isHistoryOpen={isHistoryOpen}
                 />
               </div>
 

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
+import type { CommandsConfig } from '../config/commands';
+
 /**
  * Mirrors the Rust `SettingsData` struct. All fields arrive as-is from
  * `get_settings` and are sent back verbatim to `update_settings`.
@@ -11,8 +13,8 @@ export interface SettingsData {
   model_name: string;
   system_prompt: string;
   reply_prompt: string;
-  /** Trigger → template overrides. Only overridden commands are present. */
-  command_prompts: Record<string, string>;
+  /** Slash command configuration: overrides, custom commands, disabled list. */
+  commands_config: CommandsConfig;
 }
 
 export interface ConnectionTestResult {

@@ -638,6 +638,9 @@ describe('App', () => {
         active: 'gemma4:e2b',
         all: ['gemma4:e2b'],
       }); // get_model_config
+      invoke.mockResolvedValueOnce({
+        commands_config: { overrides: {}, custom: [], disabled: [] },
+      }); // get_settings (for loadCommandsConfig)
       invoke.mockResolvedValueOnce(undefined); // notify_frontend_ready
       invoke.mockResolvedValueOnce([]); // reset_conversation (from replayEntranceAnimation)
       invoke.mockResolvedValueOnce([
@@ -4245,7 +4248,7 @@ describe('App', () => {
               model_name: 'qwen3-vl-8b-thinking',
               system_prompt: 'sys',
               reply_prompt: 'rp',
-              command_prompts: {},
+              commands_config: { overrides: {}, custom: [], disabled: [] },
             };
         },
       );

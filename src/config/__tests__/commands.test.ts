@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { COMMANDS, buildPrompt } from '../commands';
-import type { Command } from '../commands';
+import {
+  COMMANDS,
+  SYSTEM_TRIGGERS,
+  EMPTY_COMMANDS_CONFIG,
+  buildPrompt,
+  mergeCommands,
+} from '../commands';
+import type { Command, CommandsConfig, ActiveCommand } from '../commands';
 
 describe('COMMANDS registry', () => {
   it('is non-empty', () => {
@@ -109,6 +115,142 @@ describe('COMMANDS registry', () => {
   });
 });
 
+describe('SYSTEM_TRIGGERS', () => {
+  it('contains /screen and /think', () => {
+    expect(SYSTEM_TRIGGERS.has('/screen')).toBe(true);
+    expect(SYSTEM_TRIGGERS.has('/think')).toBe(true);
+  });
+
+  it('does not contain builtin commands', () => {
+    expect(SYSTEM_TRIGGERS.has('/translate')).toBe(false);
+    expect(SYSTEM_TRIGGERS.has('/rewrite')).toBe(false);
+  });
+});
+
+describe('EMPTY_COMMANDS_CONFIG', () => {
+  it('has empty overrides, custom, and disabled', () => {
+    expect(EMPTY_COMMANDS_CONFIG.overrides).toEqual({});
+    expect(EMPTY_COMMANDS_CONFIG.custom).toEqual([]);
+    expect(EMPTY_COMMANDS_CONFIG.disabled).toEqual([]);
+  });
+});
+
+describe('mergeCommands', () => {
+  it('returns all commands with categories when no config', () => {
+    const result = mergeCommands();
+    expect(result.length).toBe(COMMANDS.length);
+    const screen = result.find((c: ActiveCommand) => c.trigger === '/screen');
+    expect(screen?.category).toBe('system');
+    const translate = result.find(
+      (c: ActiveCommand) => c.trigger === '/translate',
+    );
+    expect(translate?.category).toBe('builtin');
+  });
+
+  it('returns all commands when config is null', () => {
+    const result = mergeCommands(null);
+    expect(result.length).toBe(COMMANDS.length);
+  });
+
+  it('filters out disabled built-in commands', () => {
+    const cfg: CommandsConfig = {
+      overrides: {},
+      custom: [],
+      disabled: ['/refine'],
+    };
+    const result = mergeCommands(cfg);
+    expect(result.find((c) => c.trigger === '/refine')).toBeUndefined();
+    // System commands are never filtered.
+    expect(result.find((c) => c.trigger === '/screen')).toBeDefined();
+  });
+
+  it('applies trigger override to built-in command', () => {
+    const cfg: CommandsConfig = {
+      overrides: { '/translate': { trigger: '/trans' } },
+      custom: [],
+      disabled: [],
+    };
+    const result = mergeCommands(cfg);
+    const trans = result.find((c) => c.trigger === '/trans');
+    expect(trans).toBeDefined();
+    expect(trans?.originalTrigger).toBe('/translate');
+    expect(trans?.label).toBe('/trans');
+    // Original trigger should no longer appear
+    expect(result.find((c) => c.trigger === '/translate')).toBeUndefined();
+  });
+
+  it('applies description and template overrides', () => {
+    const cfg: CommandsConfig = {
+      overrides: {
+        '/rewrite': {
+          description: 'Custom desc',
+          prompt_template: 'Custom: $INPUT',
+        },
+      },
+      custom: [],
+      disabled: [],
+    };
+    const result = mergeCommands(cfg);
+    const rw = result.find((c) => c.trigger === '/rewrite');
+    expect(rw?.description).toBe('Custom desc');
+    expect(rw?.promptTemplate).toBe('Custom: $INPUT');
+    expect(rw?.originalTrigger).toBeUndefined(); // trigger not changed
+  });
+
+  it('includes custom commands with category custom', () => {
+    const cfg: CommandsConfig = {
+      overrides: {},
+      custom: [
+        {
+          trigger: '/mycmd',
+          description: 'My cmd',
+          prompt_template: 'Do $INPUT',
+        },
+      ],
+      disabled: [],
+    };
+    const result = mergeCommands(cfg);
+    const custom = result.find((c) => c.trigger === '/mycmd');
+    expect(custom).toBeDefined();
+    expect(custom?.category).toBe('custom');
+    expect(custom?.promptTemplate).toBe('Do $INPUT');
+    expect(custom?.description).toBe('My cmd');
+    expect(custom?.label).toBe('/mycmd');
+  });
+
+  it('filters out disabled custom commands', () => {
+    const cfg: CommandsConfig = {
+      overrides: {},
+      custom: [{ trigger: '/mycmd', description: 'My cmd' }],
+      disabled: ['/mycmd'],
+    };
+    const result = mergeCommands(cfg);
+    expect(result.find((c) => c.trigger === '/mycmd')).toBeUndefined();
+  });
+
+  it('system commands cannot be disabled', () => {
+    const cfg: CommandsConfig = {
+      overrides: {},
+      custom: [],
+      disabled: ['/screen', '/think'],
+    };
+    const result = mergeCommands(cfg);
+    expect(result.find((c) => c.trigger === '/screen')).toBeDefined();
+    expect(result.find((c) => c.trigger === '/think')).toBeDefined();
+  });
+
+  it('custom commands without prompt_template have undefined promptTemplate', () => {
+    const cfg: CommandsConfig = {
+      overrides: {},
+      custom: [{ trigger: '/plain', description: 'No template' }],
+      disabled: [],
+    };
+    const result = mergeCommands(cfg);
+    const plain = result.find((c) => c.trigger === '/plain');
+    expect(plain?.promptTemplate).toBeUndefined();
+  });
+});
+
 describe('buildPrompt', () => {
   it('returns null for commands without a promptTemplate', () => {
     expect(buildPrompt('/screen', 'hello')).toBeNull();
@@ -198,5 +340,50 @@ describe('buildPrompt', () => {
     const result = buildPrompt('/todos', 'John should fix the bug by Friday');
     expect(result).toContain('- [ ] ');
     expect(result).toContain('Text: John should fix the bug by Friday');
+  });
+
+  it('accepts a custom commands list as 4th argument', () => {
+    const customCommands: Command[] = [
+      {
+        trigger: '/mycmd',
+        label: '/mycmd',
+        description: 'Custom',
+        promptTemplate: 'Custom prompt: $INPUT',
+      },
+    ];
+    const result = buildPrompt('/mycmd', 'hello', undefined, customCommands);
+    expect(result).toBe('Custom prompt: hello');
+  });
+
+  it('returns null for trigger not in custom commands list', () => {
+    const customCommands: Command[] = [
+      {
+        trigger: '/mycmd',
+        label: '/mycmd',
+        description: 'Custom',
+        promptTemplate: 'X $INPUT',
+      },
+    ];
+    expect(
+      buildPrompt('/other', 'hello', undefined, customCommands),
+    ).toBeNull();
+  });
+
+  it('parses $LANG from custom command template that contains $LANG', () => {
+    const customCommands: Command[] = [
+      {
+        trigger: '/mytrans',
+        label: '/mytrans',
+        description: 'Custom translate',
+        promptTemplate: 'Translate to $LANG: $INPUT',
+      },
+    ];
+    const result = buildPrompt(
+      '/mytrans',
+      'en hello world',
+      undefined,
+      customCommands,
+    );
+    expect(result).toBe('Translate to en: hello world');
   });
 });

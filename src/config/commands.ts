@@ -1,10 +1,20 @@
 /**
  * Registry of all slash commands supported by the ask bar.
  *
- * Each entry drives both the CommandSuggestion autocomplete UI and the
- * submit-time parser in App.tsx. Adding a command here is sufficient:
- * no other registration is needed.
+ * Commands are categorised into three tiers:
+ * - **system**: `/screen`, `/think` — hard-wired behaviour, not editable.
+ * - **builtin**: `/translate`, `/rewrite`, … — ships with the app, users may
+ *   override trigger / description / template, disable, or reset to defaults.
+ * - **custom**: user-created commands with full CRUD.
+ *
+ * At runtime, `mergeCommands(config)` produces the final `ActiveCommand[]`
+ * by layering user overrides and custom definitions on top of the built-in
+ * registry while filtering out disabled entries.
  */
+
+// ─── Core types ────────────────────────────────────────────────────────────
+
+export type CommandCategory = 'system' | 'builtin' | 'custom';
 
 export interface Command {
   /** The slash trigger, e.g. "/screen". Must start with "/". */
@@ -16,6 +26,50 @@ export interface Command {
   /** Prompt template with $INPUT / $LANG placeholders. Absent for non-template commands. */
   readonly promptTemplate?: string;
 }
+
+/** A command enriched with its category for the runtime pipeline. */
+export interface ActiveCommand extends Command {
+  readonly category: CommandCategory;
+  /** Original trigger before override (only set when trigger was changed). */
+  readonly originalTrigger?: string;
+}
+
+// ─── Config types (persisted as JSON in app_config) ────────────────────────
+
+/** Per-builtin override. Only present fields are changed; absent = keep default. */
+export interface CommandOverride {
+  trigger?: string;
+  description?: string;
+  prompt_template?: string;
+}
+
+/** A fully user-defined command. */
+export interface CustomCommandDef {
+  trigger: string;
+  description: string;
+  prompt_template?: string;
+}
+
+/** Persisted configuration blob — single DB key `settings.commands_config`. */
+export interface CommandsConfig {
+  /** Keyed by the *original* built-in trigger (e.g. "/translate"). */
+  overrides: Record<string, CommandOverride>;
+  /** User-created commands. */
+  custom: CustomCommandDef[];
+  /** Original triggers (built-in) or actual triggers (custom) that are disabled. */
+  disabled: string[];
+}
+
+export const EMPTY_COMMANDS_CONFIG: CommandsConfig = {
+  overrides: {},
+  custom: [],
+  disabled: [],
+};
+
+// ─── Built-in registry ─────────────────────────────────────────────────────
+
+/** Triggers that are hard-wired system commands (not editable / disableable). */
+export const SYSTEM_TRIGGERS = new Set(['/screen', '/think']);
 
 export const COMMANDS: readonly Command[] = [
   {
@@ -33,7 +87,7 @@ export const COMMANDS: readonly Command[] = [
     label: '/translate',
     description: 'Translate text to another language',
     promptTemplate:
-      'You are a translation assistant. Translate the following text to the specified target language. The user may specify the target language by its full name (e.g., "Vietnamese"), ISO code (e.g., "vi", "vie"), abbreviation, or informal shorthand. Interpret the language identifier flexibly and use your best judgment. If no target language is specified: translate to English if the text is non-English, or to Vietnamese if it is already in English. Output only the translation with no commentary or explanation.\n\nTarget language: $LANG\n\nText: $INPUT',
+      'You are a translation assistant. Translate the following text to the specified target language. The user may specify the target language by its full name (e.g., "Chinese"), ISO code (e.g., "zh", "zho"), abbreviation, or informal shorthand. Interpret the language identifier flexibly and use your best judgment. If no target language is specified: translate to Chinese (Simplified) if the text is non-Chinese, or to English if it is already in Chinese. Output only the translation with no commentary or explanation.\n\nTarget language: $LANG\n\nText: $INPUT',
   },
   {
     trigger: '/rewrite',
@@ -79,6 +133,63 @@ export const COMMANDS: readonly Command[] = [
  */
 export const SCREEN_CAPTURE_PLACEHOLDER = 'blob:screen-capture-loading';
 
+// ─── Runtime merge ─────────────────────────────────────────────────────────
+
+/**
+ * Merges the built-in command registry with user configuration to produce
+ * the runtime-active command list.
+ *
+ * Order: system commands first (always), then built-in (minus disabled),
+ * then custom (minus disabled).
+ */
+export function mergeCommands(config?: CommandsConfig | null): ActiveCommand[] {
+  const cfg = config ?? EMPTY_COMMANDS_CONFIG;
+  const result: ActiveCommand[] = [];
+
+  for (const cmd of COMMANDS) {
+    const isSystem = SYSTEM_TRIGGERS.has(cmd.trigger);
+    if (isSystem) {
+      result.push({ ...cmd, category: 'system' });
+      continue;
+    }
+
+    // Built-in: skip if disabled.
+    if (cfg.disabled.includes(cmd.trigger)) continue;
+
+    const override = cfg.overrides[cmd.trigger];
+    if (!override) {
+      result.push({ ...cmd, category: 'builtin' });
+      continue;
+    }
+
+    const newTrigger = override.trigger ?? cmd.trigger;
+    result.push({
+      trigger: newTrigger,
+      label: newTrigger,
+      description: override.description ?? cmd.description,
+      promptTemplate: override.prompt_template ?? cmd.promptTemplate,
+      category: 'builtin',
+      originalTrigger: override.trigger ? cmd.trigger : undefined,
+    });
+  }
+
+  // Custom commands.
+  for (const custom of cfg.custom) {
+    if (cfg.disabled.includes(custom.trigger)) continue;
+    result.push({
+      trigger: custom.trigger,
+      label: custom.trigger,
+      description: custom.description,
+      promptTemplate: custom.prompt_template,
+      category: 'custom',
+    });
+  }
+
+  return result;
+}
+
+// ─── Prompt builder ────────────────────────────────────────────────────────
+
 /**
  * Builds a fully composed prompt from a utility command's template.
  *
@@ -87,19 +198,26 @@ export const SCREEN_CAPTURE_PLACEHOLDER = 'blob:screen-capture-loading';
  * 2. No selected text, typed text present: typed text is $INPUT.
  * 3. Both present: selected text is $INPUT, typed text appended as instruction.
  *
- * For /translate, the first word of strippedMessage is treated as the target
+ * For /translate (or any command whose trigger resolves to the /translate
+ * template), the first word of strippedMessage is treated as the target
  * language identifier. The model interprets it flexibly (full name, ISO code,
  * abbreviation). If the language word is the only typed content and there is
  * no selected text, returns null (no input to translate).
  *
  * Returns null if the command has no template, is unknown, or input is empty.
+ *
+ * @param commands  The active command list (from `mergeCommands`). Falls back
+ *                  to the built-in `COMMANDS` when omitted (for backward compat
+ *                  in tests).
  */
 export function buildPrompt(
   trigger: string,
   strippedMessage: string,
   selectedText?: string,
+  commands?: readonly Command[],
 ): string | null {
-  const cmd = COMMANDS.find((c) => c.trigger === trigger);
+  const list = commands ?? COMMANDS;
+  const cmd = list.find((c) => c.trigger === trigger);
   if (!cmd?.promptTemplate) return null;
 
   const typed = strippedMessage.trim();
@@ -108,10 +226,10 @@ export function buildPrompt(
   let lang = '';
   let typedRemainder = typed;
 
-  if (trigger === '/translate' && typed) {
+  // Detect $LANG placeholder in the template to decide language parsing.
+  if (cmd.promptTemplate.includes('$LANG') && typed) {
     const spaceIdx = typed.indexOf(' ');
     if (spaceIdx === -1) {
-      // Single word: treat as language code only.
       lang = typed;
       typedRemainder = '';
     } else {

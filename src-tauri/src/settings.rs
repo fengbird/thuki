@@ -5,7 +5,6 @@
 //! the Mutex-wrapped in-memory states so every subsequent Tauri command picks
 //! up the new values immediately — no restart required.
 
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -27,10 +26,10 @@ pub struct SettingsData {
     pub model_name: String,
     pub system_prompt: String,
     pub reply_prompt: String,
-    /// Per-slash-command prompt template overrides. Keys are triggers
-    /// (e.g. `"/translate"`). Only overrides are stored — the frontend
-    /// merges them with built-in defaults.
-    pub command_prompts: HashMap<String, String>,
+    /// Slash command configuration stored as an opaque JSON value.
+    /// The frontend owns the schema (overrides, custom, disabled).
+    #[serde(default)]
+    pub commands_config: serde_json::Value,
 }
 
 // ─── DB keys ────────────────────────────────────────────────────────────────
@@ -40,7 +39,7 @@ const K_API_KEY: &str = "settings.api_key";
 const K_MODEL_NAME: &str = "settings.model_name";
 const K_SYSTEM_PROMPT: &str = "settings.system_prompt";
 const K_REPLY_PROMPT: &str = "settings.reply_prompt";
-const CMD_PREFIX: &str = "settings.cmd.";
+const K_COMMANDS_CONFIG: &str = "settings.commands_config";
 
 // ─── Load / Save ────────────────────────────────────────────────────────────
 
@@ -69,7 +68,7 @@ pub fn load_settings(conn: &rusqlite::Connection) -> SettingsData {
     let reply_prompt = db(K_REPLY_PROMPT)
         .or_else(|| env_nonempty("THUKI_REPLY_PROMPT"))
         .unwrap_or_else(crate::reply::load_reply_prompt);
-    let command_prompts = load_command_prompts(conn);
+    let commands_config = load_commands_config(conn);
 
     SettingsData {
         api_base_url,
@@ -77,7 +76,7 @@ pub fn load_settings(conn: &rusqlite::Connection) -> SettingsData {
         model_name,
         system_prompt,
         reply_prompt,
-        command_prompts,
+        commands_config,
     }
 }
 
@@ -92,9 +91,9 @@ pub fn save_settings(conn: &rusqlite::Connection, data: &SettingsData) -> Result
     set(K_MODEL_NAME, &data.model_name)?;
     set(K_SYSTEM_PROMPT, &data.system_prompt)?;
     set(K_REPLY_PROMPT, &data.reply_prompt)?;
-    for (trigger, template) in &data.command_prompts {
-        set(&format!("{CMD_PREFIX}{trigger}"), template)?;
-    }
+    let config_json = serde_json::to_string(&data.commands_config)
+        .map_err(|e| format!("Failed to serialize commands_config: {e}"))?;
+    set(K_COMMANDS_CONFIG, &config_json)?;
     Ok(())
 }
 
@@ -139,21 +138,16 @@ fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|s| !s.trim().is_empty())
 }
 
-#[cfg_attr(coverage_nightly, coverage(off))]
-fn load_command_prompts(conn: &rusqlite::Connection) -> HashMap<String, String> {
-    let pattern = format!("{CMD_PREFIX}%");
-    conn.prepare("SELECT key, value FROM app_config WHERE key LIKE ?1")
-        .and_then(|mut stmt| {
-            stmt.query_map(rusqlite::params![pattern], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map(|rows| {
-                rows.flatten()
-                    .filter_map(|(k, v)| k.strip_prefix(CMD_PREFIX).map(|t| (t.to_string(), v)))
-                    .collect()
-            })
-        })
-        .unwrap_or_default()
+fn load_commands_config(conn: &rusqlite::Connection) -> serde_json::Value {
+    database::get_config(conn, K_COMMANDS_CONFIG)
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::json!({
+            "overrides": {},
+            "custom": [],
+            "disabled": []
+        }))
 }
 
 // ─── Tauri commands ─────────────────────────────────────────────────────────
@@ -238,7 +232,13 @@ mod tests {
         assert_eq!(s.model_name, DEFAULT_MODEL_NAME);
         assert!(!s.system_prompt.is_empty());
         assert!(!s.reply_prompt.is_empty());
-        assert!(s.command_prompts.is_empty());
+        // Default commands_config has empty overrides/custom/disabled.
+        assert!(s.commands_config["overrides"]
+            .as_object()
+            .unwrap()
+            .is_empty());
+        assert!(s.commands_config["custom"].as_array().unwrap().is_empty());
+        assert!(s.commands_config["disabled"].as_array().unwrap().is_empty());
     }
 
     #[test]
@@ -250,14 +250,15 @@ mod tests {
             model_name: "llama3.1-8b".to_string(),
             system_prompt: "Be brief.".to_string(),
             reply_prompt: "Reply concisely.".to_string(),
-            command_prompts: {
-                let mut m = HashMap::new();
-                m.insert(
-                    "/translate".to_string(),
-                    "Custom translate template".to_string(),
-                );
-                m
-            },
+            commands_config: serde_json::json!({
+                "overrides": {
+                    "/translate": { "prompt_template": "Custom translate" }
+                },
+                "custom": [
+                    { "trigger": "/mycmd", "description": "My cmd", "prompt_template": "Do $INPUT" }
+                ],
+                "disabled": ["/refine"]
+            }),
         };
         save_settings(&conn, &data).unwrap();
 
@@ -268,9 +269,11 @@ mod tests {
         assert_eq!(loaded.system_prompt, "Be brief.");
         assert_eq!(loaded.reply_prompt, "Reply concisely.");
         assert_eq!(
-            loaded.command_prompts.get("/translate").map(|s| s.as_str()),
-            Some("Custom translate template")
+            loaded.commands_config["overrides"]["/translate"]["prompt_template"],
+            "Custom translate"
         );
+        assert_eq!(loaded.commands_config["custom"][0]["trigger"], "/mycmd");
+        assert_eq!(loaded.commands_config["disabled"][0], "/refine");
     }
 
     /// Guard to serialize tests that mutate environment variables.
@@ -325,7 +328,7 @@ mod tests {
             model_name: "new-model".to_string(),
             system_prompt: "new sys".to_string(),
             reply_prompt: "new reply".to_string(),
-            command_prompts: HashMap::new(),
+            commands_config: serde_json::json!({}),
         };
         let api = Mutex::new(ApiConfig {
             base_url: "old".to_string(),
@@ -362,11 +365,12 @@ mod tests {
             model_name: "m".to_string(),
             system_prompt: "s".to_string(),
             reply_prompt: "r".to_string(),
-            command_prompts: HashMap::new(),
+            commands_config: serde_json::json!({ "overrides": {}, "custom": [], "disabled": [] }),
         };
         let json = serde_json::to_value(&data).unwrap();
         assert_eq!(json["api_base_url"], "http://x");
         assert_eq!(json["model_name"], "m");
+        assert!(json["commands_config"]["overrides"].is_object());
     }
 
     #[test]
@@ -377,11 +381,33 @@ mod tests {
             "model_name": "m2",
             "system_prompt": "sp",
             "reply_prompt": "rp",
-            "command_prompts": {"/translate": "custom"}
+            "commands_config": {
+                "overrides": { "/translate": { "prompt_template": "custom" } },
+                "custom": [],
+                "disabled": []
+            }
         }"#;
         let data: SettingsData = serde_json::from_str(json).unwrap();
         assert_eq!(data.api_base_url, "http://y");
-        assert_eq!(data.command_prompts.get("/translate").unwrap(), "custom");
+        assert_eq!(
+            data.commands_config["overrides"]["/translate"]["prompt_template"],
+            "custom"
+        );
+    }
+
+    #[test]
+    fn settings_data_deserializes_without_commands_config() {
+        // commands_config absent → should default to null (serde default).
+        let json = r#"{
+            "api_base_url": "http://z",
+            "api_key": "k",
+            "model_name": "m",
+            "system_prompt": "s",
+            "reply_prompt": "r"
+        }"#;
+        let data: SettingsData = serde_json::from_str(json).unwrap();
+        assert_eq!(data.api_base_url, "http://z");
+        assert!(data.commands_config.is_null());
     }
 
     #[test]
@@ -409,24 +435,33 @@ mod tests {
     }
 
     #[test]
-    fn load_command_prompts_empty_on_fresh_db() {
+    fn load_commands_config_returns_defaults_on_fresh_db() {
         let conn = test_conn();
-        let prompts = load_command_prompts(&conn);
-        assert!(prompts.is_empty());
+        let cfg = load_commands_config(&conn);
+        assert!(cfg["overrides"].as_object().unwrap().is_empty());
+        assert!(cfg["custom"].as_array().unwrap().is_empty());
+        assert!(cfg["disabled"].as_array().unwrap().is_empty());
     }
 
     #[test]
-    fn load_command_prompts_reads_prefixed_keys() {
+    fn load_commands_config_reads_stored_json() {
         let conn = test_conn();
-        database::set_config(&conn, "settings.cmd./translate", "T prompt").unwrap();
-        database::set_config(&conn, "settings.cmd./rewrite", "R prompt").unwrap();
-        // Non-matching key should be excluded.
-        database::set_config(&conn, "settings.other", "X").unwrap();
+        let json = r#"{"overrides":{"/translate":{"prompt_template":"T"}},"custom":[],"disabled":["/refine"]}"#;
+        database::set_config(&conn, K_COMMANDS_CONFIG, json).unwrap();
 
-        let prompts = load_command_prompts(&conn);
-        assert_eq!(prompts.len(), 2);
-        assert_eq!(prompts.get("/translate").unwrap(), "T prompt");
-        assert_eq!(prompts.get("/rewrite").unwrap(), "R prompt");
+        let cfg = load_commands_config(&conn);
+        assert_eq!(cfg["overrides"]["/translate"]["prompt_template"], "T");
+        assert_eq!(cfg["disabled"][0], "/refine");
+    }
+
+    #[test]
+    fn load_commands_config_returns_defaults_on_invalid_json() {
+        let conn = test_conn();
+        database::set_config(&conn, K_COMMANDS_CONFIG, "not-valid-json").unwrap();
+
+        let cfg = load_commands_config(&conn);
+        // Falls back to defaults rather than panicking.
+        assert!(cfg["overrides"].as_object().unwrap().is_empty());
     }
 
     #[test]
@@ -438,7 +473,7 @@ mod tests {
             model_name: "m".to_string(),
             system_prompt: "s".to_string(),
             reply_prompt: "r".to_string(),
-            command_prompts: HashMap::new(),
+            commands_config: serde_json::json!({ "overrides": {}, "custom": [], "disabled": [] }),
         };
         save_settings(&conn, &data).unwrap();
 

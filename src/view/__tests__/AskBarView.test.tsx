@@ -1606,4 +1606,244 @@ describe('AskBarView', () => {
       expect(mirror.scrollTop).toBe(42);
     });
   });
+
+  describe('CommandPalette', () => {
+    it('shows the palette in ask-bar mode when input is idle', () => {
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query=""
+          setQuery={vi.fn()}
+          isChatMode={false}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+        />,
+      );
+      expect(screen.getByTestId('command-palette')).toBeInTheDocument();
+    });
+
+    it('hides the palette in chat mode', () => {
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query=""
+          setQuery={vi.fn()}
+          isChatMode={true}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+        />,
+      );
+      expect(screen.queryByTestId('command-palette')).toBeNull();
+    });
+
+    it('hides the palette when history is open', () => {
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query=""
+          setQuery={vi.fn()}
+          isChatMode={false}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+          isHistoryOpen={true}
+        />,
+      );
+      expect(screen.queryByTestId('command-palette')).toBeNull();
+    });
+
+    it('clicking a palette item inserts the trigger into empty query', () => {
+      const setQuery = vi.fn();
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query=""
+          setQuery={setQuery}
+          isChatMode={false}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+        />,
+      );
+
+      fireEvent.mouseDown(screen.getByTestId('palette-item-0'));
+      expect(setQuery).toHaveBeenCalledWith(expect.stringContaining('/screen'));
+    });
+
+    it('pressing a digit key inserts the corresponding command', () => {
+      const setQuery = vi.fn();
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query=""
+          setQuery={setQuery}
+          isChatMode={false}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      fireEvent.keyDown(textarea, { key: '1', ctrlKey: true });
+      expect(setQuery).toHaveBeenCalledWith(expect.stringContaining('/screen'));
+    });
+
+    it('bare digit without Ctrl types normally (no command inserted)', () => {
+      const setQuery = vi.fn();
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query=""
+          setQuery={setQuery}
+          isChatMode={false}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      // Without Ctrl, digit should NOT trigger palette
+      fireEvent.keyDown(textarea, { key: '1' });
+      expect(setQuery).not.toHaveBeenCalled();
+    });
+
+    it('palette hides once user types text so keys are not intercepted', () => {
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query="hello"
+          setQuery={vi.fn()}
+          isChatMode={false}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+        />,
+      );
+
+      // Palette should be hidden when query is non-empty
+      expect(screen.queryByTestId('command-palette')).toBeNull();
+    });
+
+    it('digit key does nothing when out of range', () => {
+      const setQuery = vi.fn();
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query=""
+          setQuery={setQuery}
+          isChatMode={false}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+          commands={[
+            {
+              trigger: '/only',
+              label: '/only',
+              description: 'Only one',
+            },
+          ]}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      fireEvent.keyDown(textarea, { key: '5', ctrlKey: true });
+      // Only 1 command, Ctrl+5 should not call setQuery
+      expect(setQuery).not.toHaveBeenCalled();
+    });
+
+    it('Cmd+digit is ignored (only Ctrl+digit triggers palette)', () => {
+      const setQuery = vi.fn();
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query=""
+          setQuery={setQuery}
+          isChatMode={false}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      fireEvent.keyDown(textarea, { key: '1', metaKey: true });
+      expect(setQuery).not.toHaveBeenCalled();
+    });
+
+    it('Ctrl+R triggers onScreenshot when palette is visible', () => {
+      const onScreenshot = vi.fn();
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query=""
+          setQuery={vi.fn()}
+          isChatMode={false}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+          onScreenshot={onScreenshot}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      fireEvent.keyDown(textarea, { key: 'r', ctrlKey: true });
+      expect(onScreenshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('bare R without Ctrl does not trigger screenshot', () => {
+      const onScreenshot = vi.fn();
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query=""
+          setQuery={vi.fn()}
+          isChatMode={false}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+          onScreenshot={onScreenshot}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      fireEvent.keyDown(textarea, { key: 'r' });
+      expect(onScreenshot).not.toHaveBeenCalled();
+    });
+
+    it('Ctrl+R does not trigger screenshot in chat mode', () => {
+      const onScreenshot = vi.fn();
+      render(
+        <AskBarView
+          {...IMAGE_DEFAULTS}
+          query=""
+          setQuery={vi.fn()}
+          isChatMode={true}
+          isGenerating={false}
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          inputRef={makeRef()}
+          onScreenshot={onScreenshot}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText('Reply...');
+      fireEvent.keyDown(textarea, { key: 'r', ctrlKey: true });
+      expect(onScreenshot).not.toHaveBeenCalled();
+    });
+  });
 });

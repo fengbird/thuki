@@ -43,12 +43,23 @@ export function getLastChannel(): Channel | null {
  *
  * IMPORTANT: Call resetChannelCapture() in afterEach to avoid state leaking between tests.
  */
+/** Default settings returned by the mock for `get_settings`. */
+const DEFAULT_MOCK_SETTINGS = {
+  api_base_url: 'http://10.0.0.4:1234/v1',
+  api_key: 'lm-studio',
+  model_name: 'qwen3-vl-8b-thinking',
+  system_prompt: 'Be helpful.',
+  reply_prompt: 'Reply concisely.',
+  commands_config: { overrides: {}, custom: [], disabled: [] },
+};
+
 export function enableChannelCapture() {
   invoke.mockImplementation(
-    async (_cmd: string, args?: Record<string, unknown>) => {
+    async (cmd: string, args?: Record<string, unknown>) => {
       if (args && 'onEvent' in args) {
         lastChannel = args.onEvent as Channel;
       }
+      if (cmd === 'get_settings') return { ...DEFAULT_MOCK_SETTINGS };
     },
   );
 }
@@ -80,6 +91,7 @@ export function enableChannelCaptureWithResponses(
       if (Object.prototype.hasOwnProperty.call(responses, cmd)) {
         return responses[cmd];
       }
+      if (cmd === 'get_settings') return { ...DEFAULT_MOCK_SETTINGS };
     },
   );
 }

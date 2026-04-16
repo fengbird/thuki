@@ -9,7 +9,7 @@ const MOCK_SETTINGS = {
   model_name: 'qwen3-vl-8b-thinking',
   system_prompt: 'Be helpful.',
   reply_prompt: 'Reply concisely.',
-  command_prompts: {},
+  commands_config: { overrides: {}, custom: [], disabled: [] },
 };
 
 describe('useSettings', () => {

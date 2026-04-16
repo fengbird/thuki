@@ -721,12 +721,12 @@ pub fn run() {
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let tray_menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
 
-            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png"))
+            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
                 .expect("Failed to load tray icon");
 
             let _tray = TrayIconBuilder::new()
                 .icon(tray_icon)
-                .icon_as_template(false)
+                .icon_as_template(true)
                 .tooltip("Thuki")
                 .menu(&tray_menu)
                 .show_menu_on_left_click(true)

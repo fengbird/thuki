@@ -5,9 +5,11 @@ import { formatQuotedText } from '../utils/formatQuote';
 import { quote } from '../config';
 import { ImageThumbnails } from '../components/ImageThumbnails';
 import { CommandSuggestion } from '../components/CommandSuggestion';
+import { CommandPalette } from '../components/CommandPalette';
 import { Tooltip } from '../components/Tooltip';
 import type { AttachedImage } from '../types/image';
 import { MAX_IMAGE_SIZE_BYTES } from '../types/image';
+import type { Command } from '../config/commands';
 import { COMMANDS } from '../config/commands';
 
 /**
@@ -144,7 +146,10 @@ const CAMERA_ICON = (
  * Renders text with command triggers highlighted in violet for the mirror div.
  * Only the first occurrence of each command is highlighted; duplicates render plain.
  */
-export function renderHighlightedText(text: string): React.ReactNode {
+export function renderHighlightedText(
+  text: string,
+  commands: readonly Command[] = COMMANDS,
+): React.ReactNode {
   const parts: React.ReactNode[] = [];
   let remaining = text;
   const highlighted = new Set<string>();
@@ -152,7 +157,7 @@ export function renderHighlightedText(text: string): React.ReactNode {
   while (remaining.length > 0) {
     let earliest = -1;
     let matchedTrigger = '';
-    for (const cmd of COMMANDS) {
+    for (const cmd of commands) {
       if (highlighted.has(cmd.trigger)) continue;
       const idx = remaining.indexOf(cmd.trigger);
       if (idx !== -1 && (earliest === -1 || idx < earliest)) {
@@ -236,6 +241,10 @@ interface AskBarViewProps {
    * "normal" = violet ring; "max" = red ring + label; undefined = no ring.
    */
   isDragOver?: 'normal' | 'max';
+  /** Active command list for autocomplete and highlighting. Falls back to built-in COMMANDS. */
+  commands?: readonly Command[];
+  /** Whether the history panel is currently open (hides the command palette). */
+  isHistoryOpen?: boolean;
 }
 
 /**
@@ -261,7 +270,11 @@ export function AskBarView({
   onImagePreview,
   onScreenshot,
   isDragOver,
+  commands: commandsProp,
+  isHistoryOpen = false,
 }: AskBarViewProps) {
+  /** Resolved command list — prop overrides the static registry. */
+  const commands = commandsProp ?? COMMANDS;
   /** Ref to the mirror div behind the textarea for command highlighting. */
   const mirrorRef = useRef<HTMLDivElement>(null);
 
@@ -311,6 +324,16 @@ export function AskBarView({
   const showSuggestions =
     !isBusy && lastSlashWord.length > 0 && lastSlashWord !== dismissedQuery;
 
+  /** Show the numbered command palette only when the input is empty
+   *  and idle in ask-bar mode. Once the user starts typing, the palette
+   *  hides so digit keys and R type normally into the textarea. */
+  const showPalette =
+    !isChatMode &&
+    !isBusy &&
+    !showSuggestions &&
+    !isHistoryOpen &&
+    query.trim().length === 0;
+
   /** The active command prefix (e.g. "/sc"). Empty when not suggesting. */
   const commandPrefix = showSuggestions ? lastSlashWord : '';
 
@@ -321,29 +344,31 @@ export function AskBarView({
       rawQuery.length - lastSlashWord.length,
     );
     return new Set(
-      COMMANDS.filter((cmd) => {
-        const idx = textBeforeSlash.indexOf(cmd.trigger);
-        if (idx === -1) return false;
-        const before = idx === 0 || textBeforeSlash[idx - 1] === ' ';
-        const after =
-          idx + cmd.trigger.length >= textBeforeSlash.length ||
-          textBeforeSlash[idx + cmd.trigger.length] === ' ';
-        return before && after;
-      }).map((cmd) => cmd.trigger),
+      commands
+        .filter((cmd) => {
+          const idx = textBeforeSlash.indexOf(cmd.trigger);
+          if (idx === -1) return false;
+          const before = idx === 0 || textBeforeSlash[idx - 1] === ' ';
+          const after =
+            idx + cmd.trigger.length >= textBeforeSlash.length ||
+            textBeforeSlash[idx + cmd.trigger.length] === ' ';
+          return before && after;
+        })
+        .map((cmd) => cmd.trigger),
     );
-  }, [rawQuery, lastSlashWord]);
+  }, [rawQuery, lastSlashWord, commands]);
 
   /** Commands that match the current prefix, excluding already-used ones. */
   const filteredCommands = useMemo(
     () =>
       showSuggestions
-        ? COMMANDS.filter(
+        ? commands.filter(
             (cmd) =>
               cmd.trigger.startsWith(commandPrefix) &&
               !usedCommands.has(cmd.trigger),
           )
         : [],
-    [showSuggestions, commandPrefix, usedCommands],
+    [showSuggestions, commandPrefix, usedCommands, commands],
   );
 
   // Reset the highlighted index whenever the command prefix changes
@@ -355,6 +380,18 @@ export function AskBarView({
     setHighlightedIndex(0);
   }, [commandPrefix]);
   /* eslint-enable @eslint-react/set-state-in-effect */
+
+  /**
+   * Inserts a command trigger at the front of the current query.
+   * Used by the CommandPalette (click or number-key shortcut).
+   */
+  const handlePaletteSelect = useCallback(
+    (trigger: string) => {
+      const trimmed = query.trimStart();
+      setQuery(trigger + ' ' + trimmed);
+    },
+    [setQuery, query],
+  );
 
   /**
    * Applies the selected trigger by replacing the partial slash word at the
@@ -406,6 +443,24 @@ export function AskBarView({
    */
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // Palette-mode shortcuts: Ctrl+1…9 inserts a command, Ctrl+R screenshots.
+      // Using Ctrl modifier avoids conflicts with normal text input.
+      if (showPalette && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (e.key >= '1' && e.key <= '9') {
+          const idx = parseInt(e.key, 10) - 1;
+          if (idx < commands.length) {
+            e.preventDefault();
+            handlePaletteSelect(commands[idx].trigger);
+            return;
+          }
+        }
+        if (e.key === 'r' || e.key === 'R') {
+          e.preventDefault();
+          onScreenshot();
+          return;
+        }
+      }
+
       if (showSuggestions) {
         if (e.key === 'ArrowDown') {
           e.preventDefault();
@@ -461,6 +516,10 @@ export function AskBarView({
       }
     },
     [
+      showPalette,
+      commands,
+      handlePaletteSelect,
+      onScreenshot,
       showSuggestions,
       filteredCommands,
       highlightedIndex,
@@ -611,7 +670,7 @@ export function AskBarView({
               aria-hidden="true"
               className="absolute inset-0 pointer-events-none bg-transparent text-text-primary text-sm py-2 px-1 leading-relaxed whitespace-pre-wrap break-words overflow-hidden"
             >
-              {renderHighlightedText(query)}
+              {renderHighlightedText(query, commands)}
             </div>
             <textarea
               ref={inputRef}
@@ -681,6 +740,32 @@ export function AskBarView({
           </motion.button>
         </div>
       </div>
+
+      {/* Command palette — numbered quick-access list below the input.
+          Visible in ask-bar mode when the CommandSuggestion popover and
+          history panel are both closed. AnimatePresence mirrors the
+          suggestion popover's height transition for visual consistency. */}
+      <AnimatePresence>
+        {showPalette && (
+          <motion.div
+            key="command-palette"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{
+              height: { duration: 0.2, ease: [0.16, 1, 0.3, 1] },
+              opacity: { duration: 0.15 },
+            }}
+            style={{ overflow: 'hidden' }}
+          >
+            <CommandPalette
+              commands={commands}
+              onSelect={handlePaletteSelect}
+              onScreenshot={onScreenshot}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
