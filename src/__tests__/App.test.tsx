@@ -4230,4 +4230,87 @@ describe('App', () => {
       );
     });
   });
+
+  describe('settings flow', () => {
+    beforeEach(() => {
+      invoke.mockImplementation(
+        async (cmd: string, args?: Record<string, unknown>) => {
+          if (args && 'onEvent' in args) {
+            // channel capture for reply tests, noop here
+          }
+          if (cmd === 'get_settings')
+            return {
+              api_base_url: 'http://10.0.0.4:1234/v1',
+              api_key: 'lm-studio',
+              model_name: 'qwen3-vl-8b-thinking',
+              system_prompt: 'sys',
+              reply_prompt: 'rp',
+              command_prompts: {},
+            };
+        },
+      );
+    });
+
+    it('opens SettingsView on thuki://settings-open event', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('thuki://settings-open', null);
+      });
+
+      expect(screen.getByTestId('settings-root')).toBeInTheDocument();
+      expect(screen.queryByPlaceholderText('Ask Thuki anything...')).toBeNull();
+    });
+
+    it('opens SettingsView on Cmd+, shortcut', async () => {
+      render(<App />);
+      await act(async () => {});
+      await showOverlay();
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: ',', metaKey: true });
+      });
+      await act(async () => {});
+
+      expect(screen.getByTestId('settings-root')).toBeInTheDocument();
+    });
+
+    it('dismisses SettingsView and returns to normal UI', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('thuki://settings-open', null);
+      });
+      expect(screen.getByTestId('settings-root')).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('settings-cancel-btn'));
+      });
+      await act(async () => {});
+
+      expect(screen.queryByTestId('settings-root')).toBeNull();
+    });
+
+    it('Esc inside settings-open guard prevents overlay Esc handler from firing', async () => {
+      render(<App />);
+      await act(async () => {});
+      await showOverlay();
+
+      await act(async () => {
+        emitTauriEvent('thuki://settings-open', null);
+      });
+
+      // Esc is handled by SettingsView's own handler, not App's global one.
+      invoke.mockClear();
+      await act(async () => {
+        fireEvent.keyDown(window, { key: 'Escape' });
+      });
+      await act(async () => {});
+
+      // Settings dismissed.
+      expect(screen.queryByTestId('settings-root')).toBeNull();
+    });
+  });
 });

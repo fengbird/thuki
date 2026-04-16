@@ -267,11 +267,22 @@ pub async fn generate_reply(
     on_event: Channel<StreamChunk>,
     client: State<'_, reqwest::Client>,
     generation: State<'_, GenerationState>,
-    model_config: State<'_, ModelConfig>,
-    api_config: State<'_, ApiConfig>,
-    reply_prompt: State<'_, ReplyPrompt>,
+    model_config: State<'_, std::sync::Mutex<ModelConfig>>,
+    api_config: State<'_, std::sync::Mutex<ApiConfig>>,
+    reply_prompt: State<'_, std::sync::Mutex<ReplyPrompt>>,
 ) -> Result<(), String> {
-    let endpoint = format!("{}/chat/completions", api_config.base_url);
+    let (endpoint, api_key, model, rp) = {
+        let a = api_config.lock().unwrap();
+        let m = model_config.lock().unwrap();
+        let r = reply_prompt.lock().unwrap();
+        (
+            format!("{}/chat/completions", a.base_url),
+            a.api_key.clone(),
+            m.active.clone(),
+            r.0.clone(),
+        )
+    };
+
     let cancel_token = CancellationToken::new();
     generation.set(cancel_token.clone());
 
@@ -281,7 +292,7 @@ pub async fn generate_reply(
     let messages = vec![
         ChatMessage {
             role: "system".to_string(),
-            content: reply_prompt.0.clone(),
+            content: rp,
             images: None,
         },
         ChatMessage {
@@ -293,8 +304,8 @@ pub async fn generate_reply(
 
     let _ = stream_ollama_chat(
         &endpoint,
-        &api_config.api_key,
-        &model_config.active,
+        &api_key,
+        &model,
         messages,
         &client,
         cancel_token.clone(),
@@ -404,10 +415,7 @@ mod tests {
 
     #[test]
     fn build_reply_user_content_falls_back_when_name_empty() {
-        assert_eq!(
-            build_reply_user_content(""),
-            "这是我当前的聊天窗口截图。"
-        );
+        assert_eq!(build_reply_user_content(""), "这是我当前的聊天窗口截图。");
     }
 
     #[test]

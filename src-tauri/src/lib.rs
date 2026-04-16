@@ -22,6 +22,7 @@ pub mod images;
 pub mod onboarding;
 pub mod reply;
 pub mod screenshot;
+pub mod settings;
 
 #[cfg(target_os = "macos")]
 mod activator;
@@ -715,8 +716,10 @@ pub fn run() {
 
             // ── System tray icon + menu ───────────────────────────────────
             let show_item = MenuItem::with_id(app, "show", "Open Thuki", true, None::<&str>)?;
+            let settings_item =
+                MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
 
             let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png"))
                 .expect("Failed to load tray icon");
@@ -729,6 +732,10 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
+                        show_overlay(app, crate::context::ActivationContext::empty());
+                    }
+                    "settings" => {
+                        let _ = app.emit("thuki://settings-open", ());
                         show_overlay(app, crate::context::ActivationContext::empty());
                     }
                     "quit" => {
@@ -815,10 +822,6 @@ pub fn run() {
             // ── Generation + conversation state ─────────────────────
             app.manage(commands::GenerationState::new());
             app.manage(commands::ConversationHistory::new());
-            app.manage(commands::SystemPrompt(commands::load_system_prompt()));
-            app.manage(commands::load_model_config());
-            app.manage(commands::load_api_config());
-            app.manage(reply::ReplyPrompt(reply::load_reply_prompt()));
 
             // ── SQLite database for conversation history ──────────
             let app_data_dir = app
@@ -828,6 +831,28 @@ pub fn run() {
             let db_conn = database::open_database(&app_data_dir)
                 .expect("failed to initialise SQLite database");
             app.manage(history::Database(std::sync::Mutex::new(db_conn)));
+
+            // ── Settings (must come AFTER the DB is registered) ──────
+            // Load persisted settings with fallback to env vars / defaults,
+            // then wrap each configuration slice in a Mutex so the settings
+            // UI can update them at runtime without a restart.
+            {
+                let db = app.state::<history::Database>();
+                let conn = db.0.lock().expect("db lock failed during settings init");
+                let s = settings::load_settings(&conn);
+                app.manage(std::sync::Mutex::new(commands::ApiConfig {
+                    base_url: s.api_base_url.trim_end_matches('/').to_string(),
+                    api_key: s.api_key,
+                }));
+                app.manage(std::sync::Mutex::new(commands::ModelConfig {
+                    active: s.model_name.clone(),
+                    all: vec![s.model_name],
+                }));
+                app.manage(std::sync::Mutex::new(commands::SystemPrompt(
+                    s.system_prompt,
+                )));
+                app.manage(std::sync::Mutex::new(reply::ReplyPrompt(s.reply_prompt)));
+            }
 
             // ── Orphaned image cleanup (startup + periodic) ─────────
             run_image_cleanup(app.handle());
@@ -872,6 +897,12 @@ pub fn run() {
             reply::generate_reply,
             #[cfg(not(coverage))]
             reply::paste_reply_and_hide,
+            #[cfg(not(coverage))]
+            settings::get_settings,
+            #[cfg(not(coverage))]
+            settings::update_settings,
+            #[cfg(not(coverage))]
+            settings::test_api_connection,
             notify_overlay_hidden,
             notify_frontend_ready,
             set_window_frame,

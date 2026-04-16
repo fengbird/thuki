@@ -404,8 +404,11 @@ pub fn load_api_config() -> ApiConfig {
 /// Returns the active model and full supported list to the frontend.
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg_attr(not(coverage), tauri::command)]
-pub fn get_model_config(model_config: tauri::State<'_, ModelConfig>) -> serde_json::Value {
-    serde_json::json!({ "active": model_config.active, "all": model_config.all })
+pub fn get_model_config(
+    model_config: tauri::State<'_, std::sync::Mutex<ModelConfig>>,
+) -> serde_json::Value {
+    let cfg = model_config.lock().unwrap();
+    serde_json::json!({ "active": cfg.active, "all": cfg.all })
 }
 
 /// Finds the end index of the next SSE event in `buffer`. Events are
@@ -593,11 +596,23 @@ pub async fn ask_ollama(
     client: State<'_, reqwest::Client>,
     generation: State<'_, GenerationState>,
     history: State<'_, ConversationHistory>,
-    system_prompt: State<'_, SystemPrompt>,
-    model_config: State<'_, ModelConfig>,
-    api_config: State<'_, ApiConfig>,
+    system_prompt: State<'_, std::sync::Mutex<SystemPrompt>>,
+    model_config: State<'_, std::sync::Mutex<ModelConfig>>,
+    api_config: State<'_, std::sync::Mutex<ApiConfig>>,
 ) -> Result<(), String> {
-    let endpoint = format!("{}/chat/completions", api_config.base_url);
+    // Extract all Mutex-guarded values in a sync block so every MutexGuard
+    // is dropped before the first .await — MutexGuard is not Send.
+    let (endpoint, api_key, model, sys_prompt) = {
+        let a = api_config.lock().unwrap();
+        let m = model_config.lock().unwrap();
+        let s = system_prompt.lock().unwrap();
+        (
+            format!("{}/chat/completions", a.base_url),
+            a.api_key.clone(),
+            m.active.clone(),
+            s.0.clone(),
+        )
+    };
     let cancel_token = CancellationToken::new();
     generation.set(cancel_token.clone());
 
@@ -634,7 +649,7 @@ pub async fn ask_ollama(
         let epoch = history.epoch.load(Ordering::SeqCst);
         let mut msgs = vec![ChatMessage {
             role: "system".to_string(),
-            content: system_prompt.0.clone(),
+            content: sys_prompt.clone(),
             images: None,
         }];
         msgs.extend(conv.clone());
@@ -644,8 +659,8 @@ pub async fn ask_ollama(
 
     let accumulated = stream_ollama_chat(
         &endpoint,
-        &api_config.api_key,
-        &model_config.active,
+        &api_key,
+        &model,
         messages,
         &client,
         cancel_token.clone(),

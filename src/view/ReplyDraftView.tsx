@@ -377,7 +377,12 @@ function Spinner() {
   return (
     <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      <g style={{ transformOrigin: 'center', animation: 'spin 0.9s linear infinite' }}>
+      <g
+        style={{
+          transformOrigin: 'center',
+          animation: 'spin 0.9s linear infinite',
+        }}
+      >
         <circle
           cx="9"
           cy="9"

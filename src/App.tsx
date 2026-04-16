@@ -19,6 +19,7 @@ import { AskBarView, MAX_IMAGES } from './view/AskBarView';
 import { OnboardingView } from './view/onboarding/index';
 import type { OnboardingStage } from './view/onboarding/index';
 import { ReplyDraftView } from './view/ReplyDraftView';
+import { SettingsView } from './view/SettingsView';
 import { HistoryPanel } from './components/HistoryPanel';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import type { AttachedImage } from './types/image';
@@ -38,6 +39,7 @@ const OVERLAY_VISIBILITY_EVENT = 'thuki://visibility';
 const ONBOARDING_EVENT = 'thuki://onboarding';
 const REPLY_DRAFT_OPEN_EVENT = 'thuki://reply-draft-open';
 const REPLY_DRAFT_IMAGE_EVENT = 'thuki://reply-draft-image';
+const SETTINGS_OPEN_EVENT = 'thuki://settings-open';
 
 /** Payload for `thuki://reply-draft-open` — app identity only; the
  * screenshot arrives in a separate image event once CG capture finishes. */
@@ -137,6 +139,9 @@ function App() {
    * two-phase reply events: `open` seeds it with app identity, `image`
    * fills in either `imagePath` on success or `captureError` on failure. */
   const [replyContext, setReplyContext] = useState<ReplyContext | null>(null);
+
+  /** `true` while the Settings panel is visible (opened from tray or ⌘,). */
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   /**
    * Whether the ask-bar history panel is currently open.
@@ -1304,6 +1309,7 @@ function App() {
     let unlistenOnboarding: (() => void) | undefined;
     let unlistenReplyDraftOpen: (() => void) | undefined;
     let unlistenReplyDraftImage: (() => void) | undefined;
+    let unlistenSettings: (() => void) | undefined;
 
     const attachListeners = async () => {
       unlistenVisibility = await listen<OverlayVisibilityPayload>(
@@ -1354,6 +1360,9 @@ function App() {
           );
         },
       );
+      unlistenSettings = await listen(SETTINGS_OPEN_EVENT, () => {
+        setIsSettingsOpen(true);
+      });
       // Listeners registered — safe to let Rust decide what to show on launch.
       await invoke('notify_frontend_ready');
     };
@@ -1364,6 +1373,7 @@ function App() {
       unlistenOnboarding?.();
       unlistenReplyDraftOpen?.();
       unlistenReplyDraftImage?.();
+      unlistenSettings?.();
     };
   }, [replayEntranceAnimation, requestHideOverlay]);
 
@@ -1377,9 +1387,15 @@ function App() {
     requestHideOverlay();
   }, [requestHideOverlay]);
 
-  /** Hide window on Escape or Cmd+W (macOS) / Ctrl+W. */
+  /** Hide window on Escape or Cmd+W; open settings on Cmd+, */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (replyContext || isSettingsOpen) return; // sub-views handle their own keys
+      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+        e.preventDefault();
+        setIsSettingsOpen(true);
+        return;
+      }
       if (((e.metaKey || e.ctrlKey) && e.key === 'w') || e.key === 'Escape') {
         e.preventDefault();
         handleCloseOverlay();
@@ -1387,7 +1403,7 @@ function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleCloseOverlay]);
+  }, [handleCloseOverlay, replyContext, isSettingsOpen]);
 
   /** Programmatic focus when the overlay becomes visible. */
   useEffect(() => {
@@ -1411,6 +1427,7 @@ function App() {
       void invoke('notify_overlay_hidden');
       setOverlayState('hidden');
       setReplyContext(null);
+      setIsSettingsOpen(false);
     }, HIDE_COMMIT_DELAY_MS);
 
     return () => clearTimeout(timer);
@@ -1476,6 +1493,24 @@ function App() {
         stage={onboardingStage}
         onComplete={() => setOnboardingStage(null)}
       />
+    );
+  }
+
+  if (isSettingsOpen) {
+    return (
+      <div
+        onMouseDown={handleDragStart}
+        className="flex flex-col items-center justify-start h-screen w-screen px-3 pt-2 pb-6 bg-transparent overflow-visible"
+      >
+        <div ref={setReplyContainerRef} className="w-full">
+          <SettingsView
+            onDismiss={() => {
+              setIsSettingsOpen(false);
+              handleCloseOverlay();
+            }}
+          />
+        </div>
+      </div>
     );
   }
 

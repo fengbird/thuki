@@ -206,9 +206,9 @@ pub async fn generate_title(
     messages: Vec<SaveMessagePayload>,
     db: State<'_, Database>,
     client: State<'_, reqwest::Client>,
-    system_prompt: State<'_, SystemPrompt>,
-    model_config: State<'_, ModelConfig>,
-    api_config: State<'_, ApiConfig>,
+    system_prompt: State<'_, std::sync::Mutex<SystemPrompt>>,
+    model_config: State<'_, std::sync::Mutex<ModelConfig>>,
+    api_config: State<'_, std::sync::Mutex<ApiConfig>>,
 ) -> Result<(), String> {
     // Build a condensed context for title generation.
     let mut context = String::new();
@@ -230,10 +230,21 @@ pub async fn generate_title(
         context
     );
 
+    let (endpoint, api_key, model, sys_prompt) = {
+        let a = api_config.lock().unwrap();
+        let m = model_config.lock().unwrap();
+        let s = system_prompt.lock().unwrap();
+        (
+            format!("{}/chat/completions", a.base_url),
+            a.api_key.clone(),
+            m.active.clone(),
+            s.0.clone(),
+        )
+    };
     let title_messages = vec![
         ChatMessage {
             role: "system".to_string(),
-            content: system_prompt.0.clone(),
+            content: sys_prompt,
             images: None,
         },
         ChatMessage {
@@ -243,13 +254,11 @@ pub async fn generate_title(
         },
     ];
 
-    let endpoint = format!("{}/chat/completions", api_config.base_url);
-
     let cancel_token = tokio_util::sync::CancellationToken::new();
     let accumulated = crate::commands::stream_ollama_chat(
         &endpoint,
-        &api_config.api_key,
-        &model_config.active,
+        &api_key,
+        &model,
         title_messages,
         &client,
         cancel_token,
