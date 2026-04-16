@@ -165,10 +165,13 @@ mod macos {
         let before = clipboard_text();
         // SAFETY: Accessibility permission is checked before the activator starts.
         unsafe { simulate_cmd_c() };
-        // Poll the pasteboard with exponential backoff instead of a fixed sleep.
-        // Fast machines return in ~10ms; slower machines get up to ~150ms total.
+        // Give the target app's event loop a tick to process the synthetic
+        // keystroke before we start polling the pasteboard.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        // Poll the pasteboard with exponential backoff. Fast machines return
+        // in ~15ms; Electron/Chromium apps may need up to ~350ms total.
         let mut after = before.clone();
-        for delay_ms in [10, 20, 40, 80] {
+        for delay_ms in [10, 20, 40, 80, 100, 100] {
             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             after = clipboard_text();
             if after != before {
