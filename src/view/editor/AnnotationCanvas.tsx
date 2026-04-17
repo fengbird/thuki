@@ -38,9 +38,31 @@ export interface AnnotationCanvasProps {
   annotations: readonly Annotation[];
   onCommit: (annotation: Annotation) => void;
   onStageReady?: (stage: Konva.Stage | null) => void;
-  /** Maximum logical canvas size — fills the main area of the editor. */
-  containerWidth: number;
-  containerHeight: number;
+  /** Maximum canvas size in CSS pixels — the actual stage dimensions are
+   *  derived from the image's aspect ratio, capped to these maxima. */
+  maxWidth: number;
+  maxHeight: number;
+}
+
+/**
+ * Computes the display size for an image inside a bounded container while
+ * preserving aspect ratio. Never up-scales; if the image is smaller than
+ * the container, it renders at natural size.
+ */
+export function computeDisplaySize(
+  naturalWidth: number,
+  naturalHeight: number,
+  maxWidth: number,
+  maxHeight: number,
+): { width: number; height: number } {
+  if (naturalWidth <= 0 || naturalHeight <= 0) {
+    return { width: maxWidth, height: maxHeight };
+  }
+  const scale = Math.min(maxWidth / naturalWidth, maxHeight / naturalHeight, 1);
+  return {
+    width: Math.round(naturalWidth * scale),
+    height: Math.round(naturalHeight * scale),
+  };
 }
 
 export function AnnotationCanvas({
@@ -49,12 +71,24 @@ export function AnnotationCanvas({
   annotations,
   onCommit,
   onStageReady,
-  containerWidth,
-  containerHeight,
+  maxWidth,
+  maxHeight,
 }: AnnotationCanvasProps) {
   const stageRef = useRef<Konva.Stage | null>(null);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [draft, setDraft] = useState<DraftState | null>(null);
+
+  // Derive the display size from the image's natural dimensions so the
+  // image is never distorted. Before the image loads, fall back to the
+  // maxima so the stage still has a valid size.
+  const { width: containerWidth, height: containerHeight } = image
+    ? computeDisplaySize(
+        image.naturalWidth,
+        image.naturalHeight,
+        maxWidth,
+        maxHeight,
+      )
+    : { width: maxWidth, height: maxHeight };
 
   // Load the background image as an HTMLImageElement so Konva.Image can paint it.
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AnnotationCanvas } from '../AnnotationCanvas';
+import { AnnotationCanvas, computeDisplaySize } from '../AnnotationCanvas';
 import type { Annotation } from '../types';
 import { __mockKonvaSetPointerQueue } from '../../../testUtils/mocks/react-konva';
 
@@ -10,13 +10,65 @@ const defaults = {
   tool: 'select' as const,
   annotations: [] as Annotation[],
   onCommit: vi.fn(),
-  containerWidth: 400,
-  containerHeight: 300,
+  maxWidth: 400,
+  maxHeight: 300,
 };
 
 beforeEach(() => {
   defaults.onCommit.mockClear();
   __mockKonvaSetPointerQueue([]);
+});
+
+describe('computeDisplaySize', () => {
+  it('returns natural size when image fits within max', () => {
+    expect(computeDisplaySize(400, 300, 800, 600)).toEqual({
+      width: 400,
+      height: 300,
+    });
+  });
+
+  it('scales down landscape image to fit max width', () => {
+    // 1600x900 in 800x600 — limited by width
+    const { width, height } = computeDisplaySize(1600, 900, 800, 600);
+    expect(width).toBe(800);
+    expect(height).toBe(450);
+  });
+
+  it('scales down portrait image to fit max height', () => {
+    // 900x1600 in 800x600 — limited by height
+    const { width, height } = computeDisplaySize(900, 1600, 800, 600);
+    expect(height).toBe(600);
+    // Aspect preserved
+    expect(width).toBeLessThan(800);
+  });
+
+  it('never up-scales — small image stays small', () => {
+    expect(computeDisplaySize(100, 80, 800, 600)).toEqual({
+      width: 100,
+      height: 80,
+    });
+  });
+
+  it('falls back to max size for zero-dimension images', () => {
+    expect(computeDisplaySize(0, 0, 400, 300)).toEqual({
+      width: 400,
+      height: 300,
+    });
+  });
+
+  it('falls back to max size for negative dimensions', () => {
+    expect(computeDisplaySize(-1, 100, 400, 300)).toEqual({
+      width: 400,
+      height: 300,
+    });
+  });
+
+  it('preserves square aspect when max is square', () => {
+    expect(computeDisplaySize(2000, 2000, 500, 500)).toEqual({
+      width: 500,
+      height: 500,
+    });
+  });
 });
 
 describe('AnnotationCanvas — rendering', () => {

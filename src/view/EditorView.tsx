@@ -20,8 +20,8 @@ export interface EditorViewProps {
   imagePath: string;
 }
 
-const CANVAS_WIDTH = 860;
-const CANVAS_HEIGHT = 500;
+const CANVAS_MAX_WIDTH = 860;
+const CANVAS_MAX_HEIGHT = 500;
 
 export function EditorView({ imagePath }: EditorViewProps) {
   const [tool, setTool] = useState<Tool>('select');
@@ -199,11 +199,10 @@ export function EditorView({ imagePath }: EditorViewProps) {
         {imagePath ? (
           <div
             style={{
-              width: CANVAS_WIDTH,
-              height: CANVAS_HEIGHT,
               boxShadow: '0 6px 32px rgba(0,0,0,0.5)',
               borderRadius: 4,
               overflow: 'hidden',
+              display: 'inline-block',
             }}
           >
             <AnnotationCanvas
@@ -214,8 +213,8 @@ export function EditorView({ imagePath }: EditorViewProps) {
               onStageReady={(s) => {
                 stageRef.current = s;
               }}
-              containerWidth={CANVAS_WIDTH}
-              containerHeight={CANVAS_HEIGHT}
+              maxWidth={CANVAS_MAX_WIDTH}
+              maxHeight={CANVAS_MAX_HEIGHT}
             />
           </div>
         ) : (
