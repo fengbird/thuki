@@ -17,9 +17,11 @@
 
 pub mod commands;
 pub mod database;
+pub mod editor;
 pub mod history;
 pub mod images;
 pub mod onboarding;
+pub mod pasteboard;
 pub mod reply;
 pub mod screenshot;
 pub mod settings;
@@ -334,6 +336,35 @@ fn toggle_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::Activation
     } else {
         show_overlay(app_handle, ctx);
     }
+}
+
+/// Runs an interactive screencapture region-select and, if the user completed
+/// the selection, writes the PNG to the editor temp dir and opens the editor
+/// window pointing at it. Runs off the main thread so the blocking
+/// `screencapture` subprocess doesn't stall the tray menu loop.
+#[cfg(target_os = "macos")]
+fn capture_and_open_editor(app_handle: &tauri::AppHandle) {
+    let tmp_path = crate::screenshot::temp_screenshot_path();
+    let path_str = match tmp_path.to_str() {
+        Some(s) => s.to_string(),
+        None => return,
+    };
+
+    // `screencapture -i -x <path>` blocks until the user selects a region or
+    // presses Escape (Escape creates no file). Not using `unwrap` — a failed
+    // invocation just produces no file and we bail silently.
+    let _ = std::process::Command::new("screencapture")
+        .args(["-i", "-x", &path_str])
+        .status();
+
+    if !tmp_path.exists() {
+        return; // user cancelled
+    }
+
+    let handle = app_handle.clone();
+    let _ = app_handle.run_on_main_thread(move || {
+        let _ = crate::editor::open_editor_window(handle, path_str);
+    });
 }
 
 /// Repositions and resizes the main window atomically.
@@ -716,13 +747,19 @@ pub fn run() {
 
             // ── System tray icon + menu ───────────────────────────────────
             let show_item = MenuItem::with_id(app, "show", "Open Thuki", true, None::<&str>)?;
+            let screenshot_item =
+                MenuItem::with_id(app, "screenshot", "New Screenshot…", true, None::<&str>)?;
             let settings_item =
                 MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
+            let tray_menu = Menu::with_items(
+                app,
+                &[&show_item, &screenshot_item, &settings_item, &quit_item],
+            )?;
 
-            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
-                .expect("Failed to load tray icon");
+            let tray_icon =
+                tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
+                    .expect("Failed to load tray icon");
 
             let _tray = TrayIconBuilder::new()
                 .icon(tray_icon)
@@ -733,6 +770,12 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         show_overlay(app, crate::context::ActivationContext::empty());
+                    }
+                    "screenshot" => {
+                        let handle = app.clone();
+                        std::thread::spawn(move || {
+                            capture_and_open_editor(&handle);
+                        });
                     }
                     "settings" => {
                         let _ = app.emit("thuki://settings-open", ());
@@ -897,6 +940,12 @@ pub fn run() {
             reply::generate_reply,
             #[cfg(not(coverage))]
             reply::paste_reply_and_hide,
+            #[cfg(not(coverage))]
+            editor::open_editor_window,
+            #[cfg(not(coverage))]
+            editor::close_editor_window,
+            #[cfg(not(coverage))]
+            pasteboard::copy_image_to_clipboard,
             #[cfg(not(coverage))]
             settings::get_settings,
             #[cfg(not(coverage))]

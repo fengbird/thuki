@@ -1,14 +1,13 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App';
+import { pickRoot } from './main-root';
 
 /**
  * Entry point for the React application.
  *
- * Mounts the root App component into the DOM container with ID 'root'.
+ * Delegates root selection to `main-root.tsx` so the routing logic can be
+ * tested in isolation without triggering `createRoot` as a module side-effect.
  */
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
+  <React.StrictMode>{pickRoot(window.location.search)}</React.StrictMode>,
 );
