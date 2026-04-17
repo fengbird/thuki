@@ -49,4 +49,16 @@ describe('pickRoot', () => {
     render(pickRoot('?editor=0'));
     expect(screen.queryByTestId('editor-root')).toBeNull();
   });
+
+  it('mounts PinView when pin=1 is set', () => {
+    render(pickRoot('?pin=1&path=/tmp/shot.png&label=pin-abc'));
+    expect(screen.getByTestId('pin-root')).toBeInTheDocument();
+    expect(screen.getByTestId('pin-image')).toBeInTheDocument();
+  });
+
+  it('mounts PinView with defaults when path/label missing', () => {
+    render(pickRoot('?pin=1'));
+    expect(screen.getByTestId('pin-root')).toBeInTheDocument();
+    expect(screen.getByTestId('pin-empty')).toBeInTheDocument();
+  });
 });

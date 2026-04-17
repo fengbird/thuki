@@ -11,6 +11,7 @@ const defaultProps = {
   onRedo: vi.fn(),
   onClear: vi.fn(),
   onCopy: vi.fn(),
+  onPin: vi.fn(),
   onClose: vi.fn(),
 };
 
@@ -25,7 +26,15 @@ describe('Toolbar', () => {
     expect(screen.getByTestId('editor-redo')).toBeInTheDocument();
     expect(screen.getByTestId('editor-clear')).toBeInTheDocument();
     expect(screen.getByTestId('editor-copy')).toBeInTheDocument();
+    expect(screen.getByTestId('editor-pin')).toBeInTheDocument();
     expect(screen.getByTestId('editor-close')).toBeInTheDocument();
+  });
+
+  it('clicking Pin triggers onPin', () => {
+    const onPin = vi.fn();
+    render(<Toolbar {...defaultProps} onPin={onPin} />);
+    fireEvent.click(screen.getByTestId('editor-pin'));
+    expect(onPin).toHaveBeenCalledOnce();
   });
 
   it('clicking a tool button calls onToolChange', () => {

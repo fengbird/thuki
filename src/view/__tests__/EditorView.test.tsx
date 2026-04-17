@@ -176,6 +176,59 @@ describe('EditorView', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
+  it('Pin button invokes pin_base64_png with exported canvas', async () => {
+    render(<EditorView imagePath="/tmp/shot.png" />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-pin'));
+    });
+    expect(invoke).toHaveBeenCalledWith('pin_base64_png', {
+      base64Data: 'TEST',
+    });
+    expect(screen.getByTestId('editor-status').textContent).toContain(
+      'Pinned to desktop',
+    );
+  });
+
+  it('Pin does nothing when no image is provided', async () => {
+    render(<EditorView imagePath="" />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-pin'));
+    });
+    // Handler guards on imagePath: no pin command invoked
+    expect(invoke).not.toHaveBeenCalledWith(
+      'pin_base64_png',
+      expect.anything(),
+    );
+    expect(invoke).not.toHaveBeenCalledWith(
+      'open_pin_window',
+      expect.anything(),
+    );
+  });
+
+  it('Pin surfaces error from backend', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'pin_base64_png') throw 'Failed to write pin';
+    });
+    render(<EditorView imagePath="/tmp/shot.png" />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-pin'));
+    });
+    expect(screen.getByTestId('editor-status').textContent).toContain(
+      'Failed to write pin',
+    );
+  });
+
+  it('Pin surfaces non-string error via String()', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'pin_base64_png') throw { code: 99 };
+    });
+    render(<EditorView imagePath="/tmp/shot.png" />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-pin'));
+    });
+    expect(screen.getByTestId('editor-status').textContent).toContain('object');
+  });
+
   it('switching tools updates active button', async () => {
     render(<EditorView imagePath="/tmp/shot.png" />);
     await act(async () => {

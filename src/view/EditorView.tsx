@@ -68,6 +68,28 @@ export function EditorView({ imagePath }: EditorViewProps) {
     }
   }, []);
 
+  const handlePin = useCallback(async () => {
+    if (!imagePath) return;
+    const dataUrl = exportStageToDataURL(stageRef.current);
+    /* v8 ignore next -- stage is always ready when pin is reachable */
+    const b64 = dataUrl ? dataUrlToBase64(dataUrl) : null;
+    try {
+      /* v8 ignore start -- fallback only reachable when stage export fails */
+      if (b64) {
+        await invoke('pin_base64_png', { base64Data: b64 });
+      } else {
+        await invoke('open_pin_window', { imagePath });
+      }
+      /* v8 ignore stop */
+      setStatus({ kind: 'success', message: 'Pinned to desktop' });
+    } catch (e) {
+      setStatus({
+        kind: 'error',
+        message: typeof e === 'string' ? e : String(e),
+      });
+    }
+  }, [imagePath]);
+
   // Auto-dismiss success toast.
   useEffect(() => {
     if (status.kind !== 'success') return;
@@ -119,6 +141,7 @@ export function EditorView({ imagePath }: EditorViewProps) {
         onRedo={redo}
         onClear={clear}
         onCopy={() => void handleCopy()}
+        onPin={() => void handlePin()}
         onClose={() => void handleClose()}
       />
 

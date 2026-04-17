@@ -15,6 +15,7 @@ interface ToolbarProps {
   onRedo: () => void;
   onClear: () => void;
   onCopy: () => void;
+  onPin: () => void;
   onClose: () => void;
 }
 
@@ -34,6 +35,7 @@ export function Toolbar({
   onRedo,
   onClear,
   onCopy,
+  onPin,
   onClose,
 }: ToolbarProps) {
   return (
@@ -94,6 +96,14 @@ export function Toolbar({
         </button>
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          data-testid="editor-pin"
+          onClick={onPin}
+          style={secondaryButtonStyle}
+          title="Pin to desktop"
+        >
+          Pin
+        </button>
         <button
           data-testid="editor-copy"
           onClick={onCopy}

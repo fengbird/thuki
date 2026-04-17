@@ -22,6 +22,7 @@ pub mod history;
 pub mod images;
 pub mod onboarding;
 pub mod pasteboard;
+pub mod pin;
 pub mod reply;
 pub mod screenshot;
 pub mod settings;
@@ -948,6 +949,14 @@ pub fn run() {
             pasteboard::copy_image_to_clipboard,
             #[cfg(not(coverage))]
             pasteboard::copy_base64_png_to_clipboard,
+            #[cfg(not(coverage))]
+            pin::open_pin_window,
+            #[cfg(not(coverage))]
+            pin::pin_base64_png,
+            #[cfg(not(coverage))]
+            pin::close_pin_window,
+            #[cfg(not(coverage))]
+            pin::close_all_pin_windows,
             #[cfg(not(coverage))]
             settings::get_settings,
             #[cfg(not(coverage))]
