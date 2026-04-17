@@ -427,6 +427,15 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
           onMouseDown={(e) => e.stopPropagation()}
           onMouseMove={(e) => e.stopPropagation()}
           onMouseUp={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => {
+            // In text mode the text-zone covers this host and handles its
+            // own dblclick (word-select in the textarea), so this branch
+            // only fires for non-text tools. Copies the current composite
+            // and closes the overlay — matches Xnip's double-click-to-copy
+            // behavior.
+            e.stopPropagation();
+            void handleCopy();
+          }}
           style={{
             position: 'absolute',
             left: selection.x,
@@ -464,6 +473,13 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
         <div
           data-testid="overlay-move-zone"
           onMouseDown={fit ? (e) => void startWindowDrag(e) : startMove}
+          onDoubleClick={(e) => {
+            // Shortcut: double-click in select mode copies the composite
+            // to the clipboard and closes the overlay. Same behavior as
+            // the "Copy" button.
+            e.stopPropagation();
+            void handleCopy();
+          }}
           style={{
             position: 'absolute',
             left: selection.x,

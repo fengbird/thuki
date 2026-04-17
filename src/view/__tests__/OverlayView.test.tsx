@@ -416,6 +416,42 @@ describe('OverlayView — toolbar actions', () => {
     }
   });
 
+  it('double-click on the move-zone (select mode) copies and closes', async () => {
+    const restore = await setupWithSelection();
+    try {
+      fireEvent.doubleClick(screen.getByTestId('overlay-move-zone'));
+      await act(async () => {});
+      expect(invoke).toHaveBeenCalledWith(
+        'copy_base64_png_to_clipboard',
+        expect.objectContaining({ base64Data: 'TEST' }),
+      );
+      // Auto-close fires after a ~400ms success toast.
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 450));
+      });
+      expect(invoke).toHaveBeenCalledWith('close_overlay_window');
+    } finally {
+      restore();
+    }
+  });
+
+  it('double-click on the stage-host (drawing mode) copies and closes', async () => {
+    const restore = await setupWithSelection();
+    try {
+      // Switch to rect tool so the move-zone goes away and stage-host is
+      // the top element at the selection area.
+      fireEvent.click(screen.getByTestId('overlay-tool-rect'));
+      fireEvent.doubleClick(screen.getByTestId('overlay-stage-host'));
+      await act(async () => {});
+      expect(invoke).toHaveBeenCalledWith(
+        'copy_base64_png_to_clipboard',
+        expect.objectContaining({ base64Data: 'TEST' }),
+      );
+    } finally {
+      restore();
+    }
+  });
+
   it('Close button calls close_overlay_window', async () => {
     const restore = await setupWithSelection();
     try {
