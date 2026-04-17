@@ -4314,4 +4314,87 @@ describe('App', () => {
       expect(screen.queryByTestId('settings-root')).toBeNull();
     });
   });
+
+  describe('editor-submit bridge', () => {
+    it('attaches the image and pre-fills the prompt when received', async () => {
+      render(<App />);
+      await act(async () => {});
+      await showOverlay();
+
+      await act(async () => {
+        emitTauriEvent('thuki://editor-submit', {
+          imagePath: '/tmp/editor-shot.png',
+          prompt: 'What is in this image?',
+          autoSubmit: false,
+        });
+      });
+
+      const textarea = screen.getByPlaceholderText(
+        'Ask Thuki anything...',
+      ) as HTMLTextAreaElement;
+      expect(textarea.value).toBe('What is in this image?');
+    });
+
+    it('ignores events with empty imagePath', async () => {
+      render(<App />);
+      await act(async () => {});
+      await showOverlay();
+
+      await act(async () => {
+        emitTauriEvent('thuki://editor-submit', {
+          imagePath: '',
+          prompt: 'hi',
+          autoSubmit: false,
+        });
+      });
+
+      const textarea = screen.getByPlaceholderText(
+        'Ask Thuki anything...',
+      ) as HTMLTextAreaElement;
+      // Prompt not filled because the event was a no-op.
+      expect(textarea.value).toBe('');
+    });
+
+    it('attaches image without modifying query when prompt is omitted', async () => {
+      render(<App />);
+      await act(async () => {});
+      await showOverlay();
+
+      await act(async () => {
+        emitTauriEvent('thuki://editor-submit', {
+          imagePath: '/tmp/editor-shot.png',
+          autoSubmit: false,
+        });
+      });
+
+      const textarea = screen.getByPlaceholderText(
+        'Ask Thuki anything...',
+      ) as HTMLTextAreaElement;
+      expect(textarea.value).toBe('');
+    });
+
+    it('auto-submits when autoSubmit is true', async () => {
+      enableChannelCapture();
+      render(<App />);
+      await act(async () => {});
+      await showOverlay();
+
+      await act(async () => {
+        emitTauriEvent('thuki://editor-submit', {
+          imagePath: '/tmp/editor-shot.png',
+          prompt: '提取图中文字',
+          autoSubmit: true,
+        });
+      });
+      // Flush requestAnimationFrame
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(r));
+      });
+      // Chat mode should have been entered (ask_ollama dispatched)
+      const askCalls = invoke.mock.calls.filter(
+        ([cmd]) => cmd === 'ask_ollama',
+      );
+      expect(askCalls.length).toBeGreaterThan(0);
+    });
+  });
 });

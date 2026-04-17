@@ -68,6 +68,41 @@ export function EditorView({ imagePath }: EditorViewProps) {
     }
   }, []);
 
+  const sendToChat = useCallback(
+    async (prompt: string | undefined, autoSubmit: boolean) => {
+      if (!imagePath) return;
+      const dataUrl = exportStageToDataURL(stageRef.current);
+      /* v8 ignore next -- stage is ready when bridge is reachable */
+      const b64 = dataUrl ? dataUrlToBase64(dataUrl) : null;
+      /* v8 ignore next -- b64 is never null in practice */
+      if (!b64) return;
+      try {
+        await invoke('send_image_to_chat', {
+          base64Data: b64,
+          prompt,
+          autoSubmit,
+        });
+        await invoke('close_editor_window');
+      } catch (e) {
+        setStatus({
+          kind: 'error',
+          message: typeof e === 'string' ? e : String(e),
+        });
+      }
+    },
+    [imagePath],
+  );
+
+  const handleAskAi = useCallback(
+    () => void sendToChat(undefined, false),
+    [sendToChat],
+  );
+
+  const handleRecognizeText = useCallback(
+    () => void sendToChat('请提取图中所有文字，原样输出。', true),
+    [sendToChat],
+  );
+
   const handlePin = useCallback(async () => {
     if (!imagePath) return;
     const dataUrl = exportStageToDataURL(stageRef.current);
@@ -142,6 +177,8 @@ export function EditorView({ imagePath }: EditorViewProps) {
         onClear={clear}
         onCopy={() => void handleCopy()}
         onPin={() => void handlePin()}
+        onAskAi={handleAskAi}
+        onRecognizeText={handleRecognizeText}
         onClose={() => void handleClose()}
       />
 

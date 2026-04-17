@@ -229,6 +229,72 @@ describe('EditorView', () => {
     expect(screen.getByTestId('editor-status').textContent).toContain('object');
   });
 
+  it('Ask AI sends image to chat without auto-submit and closes editor', async () => {
+    render(<EditorView imagePath="/tmp/shot.png" />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-ask-ai'));
+    });
+    expect(invoke).toHaveBeenCalledWith('send_image_to_chat', {
+      base64Data: 'TEST',
+      prompt: undefined,
+      autoSubmit: false,
+    });
+    expect(invoke).toHaveBeenCalledWith('close_editor_window');
+  });
+
+  it('OCR sends image with extract prompt and auto-submits', async () => {
+    render(<EditorView imagePath="/tmp/shot.png" />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-recognize'));
+    });
+    const call = invoke.mock.calls.find(
+      ([cmd]) => cmd === 'send_image_to_chat',
+    );
+    expect(call?.[1]).toMatchObject({
+      base64Data: 'TEST',
+      autoSubmit: true,
+    });
+    expect(String(call?.[1]?.prompt)).toContain('提取');
+  });
+
+  it('Ask AI/OCR does nothing when no image is provided', async () => {
+    render(<EditorView imagePath="" />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-ask-ai'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-recognize'));
+    });
+    expect(invoke).not.toHaveBeenCalledWith(
+      'send_image_to_chat',
+      expect.anything(),
+    );
+  });
+
+  it('Ask AI surfaces error from backend', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'send_image_to_chat') throw 'emit failed';
+    });
+    render(<EditorView imagePath="/tmp/shot.png" />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-ask-ai'));
+    });
+    expect(screen.getByTestId('editor-status').textContent).toContain(
+      'emit failed',
+    );
+  });
+
+  it('Ask AI surfaces non-string error via String()', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'send_image_to_chat') throw { code: 1 };
+    });
+    render(<EditorView imagePath="/tmp/shot.png" />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-ask-ai'));
+    });
+    expect(screen.getByTestId('editor-status').textContent).toContain('object');
+  });
+
   it('switching tools updates active button', async () => {
     render(<EditorView imagePath="/tmp/shot.png" />);
     await act(async () => {

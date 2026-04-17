@@ -12,6 +12,8 @@ const defaultProps = {
   onClear: vi.fn(),
   onCopy: vi.fn(),
   onPin: vi.fn(),
+  onAskAi: vi.fn(),
+  onRecognizeText: vi.fn(),
   onClose: vi.fn(),
 };
 
@@ -35,6 +37,20 @@ describe('Toolbar', () => {
     render(<Toolbar {...defaultProps} onPin={onPin} />);
     fireEvent.click(screen.getByTestId('editor-pin'));
     expect(onPin).toHaveBeenCalledOnce();
+  });
+
+  it('clicking Ask AI triggers onAskAi', () => {
+    const onAskAi = vi.fn();
+    render(<Toolbar {...defaultProps} onAskAi={onAskAi} />);
+    fireEvent.click(screen.getByTestId('editor-ask-ai'));
+    expect(onAskAi).toHaveBeenCalledOnce();
+  });
+
+  it('clicking OCR triggers onRecognizeText', () => {
+    const onRecognizeText = vi.fn();
+    render(<Toolbar {...defaultProps} onRecognizeText={onRecognizeText} />);
+    fireEvent.click(screen.getByTestId('editor-recognize'));
+    expect(onRecognizeText).toHaveBeenCalledOnce();
   });
 
   it('clicking a tool button calls onToolChange', () => {

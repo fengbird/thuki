@@ -42,6 +42,15 @@ const ONBOARDING_EVENT = 'thuki://onboarding';
 const REPLY_DRAFT_OPEN_EVENT = 'thuki://reply-draft-open';
 const REPLY_DRAFT_IMAGE_EVENT = 'thuki://reply-draft-image';
 const SETTINGS_OPEN_EVENT = 'thuki://settings-open';
+const EDITOR_SUBMIT_EVENT = 'thuki://editor-submit';
+
+/** Payload for `thuki://editor-submit` — image-bridge from the editor window
+ *  to the main chat. `autoSubmit` is true for the "OCR" shortcut. */
+interface EditorSubmitPayload {
+  imagePath: string;
+  prompt?: string | null;
+  autoSubmit: boolean;
+}
 
 /** Payload for `thuki://reply-draft-open` — app identity only; the
  * screenshot arrives in a separate image event once CG capture finishes. */
@@ -1222,6 +1231,17 @@ function App() {
     activeCommands,
   ]);
 
+  /** When true, an editor-submit event requested auto-submission. Cleared
+   *  by the effect below once handleSubmit runs with the fresh state. */
+  const [pendingEditorSubmit, setPendingEditorSubmit] = useState(false);
+  useEffect(() => {
+    if (!pendingEditorSubmit) return;
+    // State from the event has been committed; query is populated and the
+    // image is in attachedImages. Safe to trigger submission now.
+    setPendingEditorSubmit(false);
+    handleSubmit();
+  }, [pendingEditorSubmit, handleSubmit]);
+
   // When a pending submit exists and all images finish processing, fire it.
   // Reads `attachedImages` directly (not via `executeSubmit` closure) to
   // guarantee the effect always sees the freshest file paths.
@@ -1341,6 +1361,31 @@ function App() {
     let unlistenReplyDraftOpen: (() => void) | undefined;
     let unlistenReplyDraftImage: (() => void) | undefined;
     let unlistenSettings: (() => void) | undefined;
+    let unlistenEditorSubmit: (() => void) | undefined;
+
+    /**
+     * Handle an `editor-submit` event: add the image to the ask bar and
+     * either pre-fill the prompt for user review or auto-submit immediately.
+     * The image path is already a real file on disk (Rust wrote it before
+     * emitting), so we can skip the FileReader+save_image_command dance.
+     * Auto-submit is deferred to a flag + effect combo so the submit runs
+     * after React has committed the new query/attachedImages state.
+     */
+    const handleEditorSubmit = (payload: EditorSubmitPayload) => {
+      if (!payload.imagePath) return;
+      const newImage: AttachedImage = {
+        id: crypto.randomUUID(),
+        blobUrl: convertFileSrc(payload.imagePath),
+        filePath: payload.imagePath,
+      };
+      setAttachedImages((prev) => [...prev, newImage]);
+      if (payload.prompt) {
+        setQuery(payload.prompt);
+      }
+      if (payload.autoSubmit) {
+        setPendingEditorSubmit(true);
+      }
+    };
 
     const attachListeners = async () => {
       unlistenVisibility = await listen<OverlayVisibilityPayload>(
@@ -1394,6 +1439,12 @@ function App() {
       unlistenSettings = await listen(SETTINGS_OPEN_EVENT, () => {
         setIsSettingsOpen(true);
       });
+      unlistenEditorSubmit = await listen<EditorSubmitPayload>(
+        EDITOR_SUBMIT_EVENT,
+        ({ payload }) => {
+          handleEditorSubmit(payload);
+        },
+      );
       // Listeners registered — safe to let Rust decide what to show on launch.
       await invoke('notify_frontend_ready');
     };
@@ -1405,6 +1456,7 @@ function App() {
       unlistenReplyDraftOpen?.();
       unlistenReplyDraftImage?.();
       unlistenSettings?.();
+      unlistenEditorSubmit?.();
     };
   }, [replayEntranceAnimation, requestHideOverlay]);
 

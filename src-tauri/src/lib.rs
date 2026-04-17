@@ -18,6 +18,7 @@
 pub mod commands;
 pub mod database;
 pub mod editor;
+pub mod editor_bridge;
 pub mod history;
 pub mod images;
 pub mod onboarding;
@@ -949,6 +950,8 @@ pub fn run() {
             pasteboard::copy_image_to_clipboard,
             #[cfg(not(coverage))]
             pasteboard::copy_base64_png_to_clipboard,
+            #[cfg(not(coverage))]
+            editor_bridge::send_image_to_chat,
             #[cfg(not(coverage))]
             pin::open_pin_window,
             #[cfg(not(coverage))]

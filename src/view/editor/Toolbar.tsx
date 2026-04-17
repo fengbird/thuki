@@ -16,6 +16,8 @@ interface ToolbarProps {
   onClear: () => void;
   onCopy: () => void;
   onPin: () => void;
+  onAskAi: () => void;
+  onRecognizeText: () => void;
   onClose: () => void;
 }
 
@@ -36,6 +38,8 @@ export function Toolbar({
   onClear,
   onCopy,
   onPin,
+  onAskAi,
+  onRecognizeText,
   onClose,
 }: ToolbarProps) {
   return (
@@ -96,6 +100,22 @@ export function Toolbar({
         </button>
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          data-testid="editor-recognize"
+          onClick={onRecognizeText}
+          style={secondaryButtonStyle}
+          title="Extract text from image via AI"
+        >
+          OCR
+        </button>
+        <button
+          data-testid="editor-ask-ai"
+          onClick={onAskAi}
+          style={secondaryButtonStyle}
+          title="Ask AI about this image"
+        >
+          Ask AI
+        </button>
         <button
           data-testid="editor-pin"
           onClick={onPin}
