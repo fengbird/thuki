@@ -1,5 +1,6 @@
 import React from 'react';
 import App from './App';
+import { LongShotHudView } from './view/LongShotHudView';
 import { OverlayView } from './view/OverlayView';
 import { PinView } from './view/PinView';
 
@@ -18,6 +19,9 @@ export function pickRoot(search: string): React.ReactElement {
     const imagePath = params.get('path') ?? '';
     const fit = params.get('fit') === '1';
     return <OverlayView imagePath={imagePath} fit={fit} />;
+  }
+  if (params.get('longhud') === '1') {
+    return <LongShotHudView />;
   }
   if (params.get('pin') === '1') {
     const imagePath = params.get('path') ?? '';

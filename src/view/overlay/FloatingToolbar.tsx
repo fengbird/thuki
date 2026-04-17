@@ -32,18 +32,23 @@ interface FloatingToolbarProps {
   onAskAi: () => void;
   onOcr: () => void;
   onClose: () => void;
+  onLongShot: () => void;
+  longShotBusy?: boolean;
+  /** Hide the "Long" button in edit-pin flow — scroll-capture on an
+   *  already-stitched image makes no sense. */
+  hideLongShot?: boolean;
 }
 
 const TOOLS: { key: Tool; label: string; hint: string }[] = [
-  { key: 'select', label: '↖', hint: '选择' },
-  { key: 'rect', label: '▭', hint: '矩形' },
-  { key: 'arrow', label: '→', hint: '箭头' },
-  { key: 'pen', label: '✎', hint: '画笔' },
-  { key: 'mosaic', label: '▦', hint: '马赛克' },
-  { key: 'text', label: 'T', hint: '文字' },
+  { key: 'select', label: '↖', hint: 'Select' },
+  { key: 'rect', label: '▭', hint: 'Rectangle' },
+  { key: 'arrow', label: '→', hint: 'Arrow' },
+  { key: 'pen', label: '✎', hint: 'Pen' },
+  { key: 'mosaic', label: '▦', hint: 'Mosaic' },
+  { key: 'text', label: 'T', hint: 'Text' },
 ];
 
-const TOOLBAR_WIDTH = 620;
+const TOOLBAR_WIDTH = 720;
 const TOOLBAR_ROW_HEIGHT = 44;
 const TOOLBAR_SECOND_ROW_HEIGHT = 40;
 
@@ -66,6 +71,9 @@ export function FloatingToolbar({
   onAskAi,
   onOcr,
   onClose,
+  onLongShot,
+  longShotBusy = false,
+  hideLongShot = false,
 }: FloatingToolbarProps) {
   const showColor = tool !== 'select' && tool !== 'mosaic';
   const showFontSize = tool === 'text';
@@ -138,8 +146,8 @@ export function FloatingToolbar({
         <div style={dividerStyle} />
         <button
           data-testid="overlay-undo"
-          aria-label="撤销"
-          title="撤销"
+          aria-label="Undo"
+          title="Undo"
           disabled={!canUndo}
           onClick={onUndo}
           style={iconButtonStyle(canUndo)}
@@ -148,8 +156,8 @@ export function FloatingToolbar({
         </button>
         <button
           data-testid="overlay-redo"
-          aria-label="重做"
-          title="重做"
+          aria-label="Redo"
+          title="Redo"
           disabled={!canRedo}
           onClick={onRedo}
           style={iconButtonStyle(canRedo)}
@@ -158,8 +166,8 @@ export function FloatingToolbar({
         </button>
         <button
           data-testid="overlay-clear"
-          aria-label="清除标注"
-          title="清除标注"
+          aria-label="Clear annotations"
+          title="Clear annotations"
           onClick={onClear}
           style={iconButtonStyle(true)}
         >
@@ -170,7 +178,7 @@ export function FloatingToolbar({
           data-testid="overlay-ocr"
           onClick={onOcr}
           style={actionButtonStyle()}
-          title="识别文字"
+          title="Extract text from image"
         >
           OCR
         </button>
@@ -178,15 +186,30 @@ export function FloatingToolbar({
           data-testid="overlay-ask-ai"
           onClick={onAskAi}
           style={actionButtonStyle()}
-          title="交给 AI"
+          title="Send to AI chat"
         >
           Ask AI
         </button>
+        {!hideLongShot && (
+          <button
+            data-testid="overlay-long"
+            onClick={onLongShot}
+            disabled={longShotBusy}
+            style={{
+              ...actionButtonStyle(),
+              opacity: longShotBusy ? 0.5 : 1,
+              cursor: longShotBusy ? 'not-allowed' : 'pointer',
+            }}
+            title="Scroll-capture the area beneath the selection and stitch"
+          >
+            {longShotBusy ? 'Capturing…' : 'Long'}
+          </button>
+        )}
         <button
           data-testid="overlay-pin"
           onClick={onPin}
           style={actionButtonStyle()}
-          title="贴图到桌面"
+          title="Pin to desktop"
         >
           Pin
         </button>
@@ -194,7 +217,7 @@ export function FloatingToolbar({
           data-testid="overlay-copy"
           onClick={onCopy}
           style={primaryButtonStyle}
-          title="复制到剪贴板"
+          title="Copy to clipboard"
         >
           Copy
         </button>
@@ -202,7 +225,7 @@ export function FloatingToolbar({
           data-testid="overlay-close"
           onClick={onClose}
           style={iconButtonStyle(true)}
-          title="关闭 (Esc)"
+          title="Close (Esc)"
         >
           ✕
         </button>
@@ -226,7 +249,7 @@ export function FloatingToolbar({
               marginRight: 2,
             }}
           >
-            颜色
+            Color
           </span>
           <ColorDropdown value={color} onChange={onColorChange} />
           <div style={dividerStyle} />
@@ -237,7 +260,7 @@ export function FloatingToolbar({
               marginRight: 2,
             }}
           >
-            字号
+            Size
           </span>
           <FontSizeDropdown value={fontSize} onChange={onFontSizeChange} />
         </div>
@@ -263,8 +286,8 @@ function ColorDropdown({
       trigger={(open, toggle) => (
         <button
           data-testid="overlay-color-trigger"
-          aria-label="描边颜色"
-          title="描边颜色"
+          aria-label="Stroke color"
+          title="Stroke color"
           onClick={toggle}
           style={colorTriggerStyle(value, open)}
         />
@@ -308,8 +331,8 @@ function FontSizeDropdown({
       trigger={(open, toggle) => (
         <button
           data-testid="overlay-font-size-trigger"
-          aria-label="字号"
-          title="字号"
+          aria-label="Font size"
+          title="Font size"
           onClick={toggle}
           style={fontTriggerStyle(open)}
         >

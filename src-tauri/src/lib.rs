@@ -19,6 +19,7 @@ pub mod commands;
 pub mod database;
 pub mod history;
 pub mod images;
+pub mod long_shot;
 pub mod onboarding;
 pub mod overlay;
 pub mod overlay_bridge;
@@ -1003,6 +1004,12 @@ pub fn run() {
             pasteboard::copy_base64_png_to_clipboard,
             #[cfg(not(coverage))]
             overlay_bridge::send_image_to_chat,
+            #[cfg(not(coverage))]
+            long_shot::start_manual_long_capture,
+            #[cfg(not(coverage))]
+            long_shot::finish_manual_long_capture,
+            #[cfg(not(coverage))]
+            long_shot::cancel_manual_long_capture,
             #[cfg(not(coverage))]
             pin::open_pin_window,
             #[cfg(not(coverage))]

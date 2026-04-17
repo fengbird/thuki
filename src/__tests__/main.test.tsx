@@ -56,6 +56,11 @@ describe('pickRoot', () => {
     // directly; presence of the root is enough for the routing branch.
   });
 
+  it('mounts LongShotHudView when longhud=1 is set', () => {
+    render(pickRoot('?longhud=1'));
+    expect(screen.getByTestId('longhud-root')).toBeInTheDocument();
+  });
+
   it('mounts PinView when pin=1 is set', () => {
     render(pickRoot('?pin=1&path=/tmp/shot.png&label=pin-abc'));
     expect(screen.getByTestId('pin-root')).toBeInTheDocument();

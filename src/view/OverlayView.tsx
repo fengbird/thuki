@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type Konva from 'konva';
 import type { Tool } from './editor/types';
@@ -90,6 +91,7 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
     kind: 'idle' | 'success' | 'error';
     message: string;
   }>({ kind: 'idle', message: '' });
+  const [longShotBusy, setLongShotBusy] = useState(false);
   const stageRef = useRef<Konva.Stage | null>(null);
   const { annotations, canUndo, canRedo, add, clear, undo, redo } =
     useAnnotations();
@@ -309,7 +311,7 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
     if (!b64) return;
     try {
       await invoke('copy_base64_png_to_clipboard', { base64Data: b64 });
-      setStatus({ kind: 'success', message: '已复制到剪贴板' });
+      setStatus({ kind: 'success', message: 'Copied to clipboard' });
       window.setTimeout(() => {
         void handleClose();
       }, 400);
@@ -384,6 +386,77 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
     () => void sendToChat('请提取图中所有文字，原样输出。', true),
     [sendToChat],
   );
+
+  // Xnip-style manual long screenshot. Clicking "Long" hides the overlay,
+  // opens a small HUD window (Save / Cancel + live frame counter), and
+  // starts a backend polling loop. The user scrolls the target app
+  // themselves; each time the selection's content changes the backend
+  // appends a frame. When the user clicks Save in the HUD, the backend
+  // stitches + copies the PNG to the clipboard in the backend, then emits
+  // `thuki://long-capture-done` so we can show success and close the overlay.
+  const handleLongShot = useCallback(async () => {
+    /* v8 ignore next -- button only renders when selection is set and is
+       disabled while busy; these guards are defensive. */
+    if (!selection || longShotBusy) return;
+    setLongShotBusy(true);
+    setStatus({ kind: 'success', message: 'Scroll to capture…' });
+    try {
+      const win = getCurrentWindow();
+      const [phys, sf] = await Promise.all([
+        win.innerPosition(),
+        win.scaleFactor(),
+      ]);
+      const winX = phys.x / sf;
+      const winY = phys.y / sf;
+      await invoke('start_manual_long_capture', {
+        x: winX + selection.x,
+        y: winY + selection.y,
+        width: selection.width,
+        height: selection.height,
+      });
+    } catch (e) {
+      setStatus({
+        kind: 'error',
+        message: typeof e === 'string' ? e : String(e),
+      });
+      setLongShotBusy(false);
+    }
+  }, [selection, longShotBusy]);
+
+  // Listen for the HUD-driven save / cancel events so the overlay can
+  // react: show success on save, reset busy state on cancel. The live
+  // preview lives in the HUD window, so
+  // we don't need a progress listener here.
+  useEffect(() => {
+    let unlistenDone: (() => void) | undefined;
+    let unlistenCancelled: (() => void) | undefined;
+    let unlistenError: (() => void) | undefined;
+    void (async () => {
+      unlistenDone = await listen<string>(
+        'thuki://long-capture-done',
+        async () => {
+          setStatus({ kind: 'success', message: 'Long screenshot copied' });
+          window.setTimeout(() => {
+            void handleClose();
+          }, 500);
+          setLongShotBusy(false);
+        },
+      );
+      unlistenCancelled = await listen('thuki://long-capture-cancelled', () => {
+        setLongShotBusy(false);
+        setStatus({ kind: 'idle', message: '' });
+      });
+      unlistenError = await listen<string>('thuki://long-capture-error', (e) => {
+        setLongShotBusy(false);
+        setStatus({ kind: 'error', message: e.payload });
+      });
+    })();
+    return () => {
+      unlistenDone?.();
+      unlistenCancelled?.();
+      unlistenError?.();
+    };
+  }, [handleClose]);
 
   const scale = image ? imageScaleFor(image.naturalWidth, viewport.width) : 1;
   const isAdjusting = !!(moving || resizing);
@@ -556,6 +629,9 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
           onAskAi={handleAskAi}
           onOcr={handleOcr}
           onClose={() => void handleClose()}
+          onLongShot={() => void handleLongShot()}
+          longShotBusy={longShotBusy}
+          hideLongShot={fit}
         />
       )}
 
@@ -882,7 +958,8 @@ function HintBar({
 }) {
   const isError = status.kind === 'error';
   const isSuccess = status.kind === 'success';
-  const text = status.message || (selection ? null : '拖拽选择区域 · Esc 退出');
+  const text =
+    status.message || (selection ? null : 'Drag to select · Esc to exit');
   if (!text) return null;
   return (
     <div

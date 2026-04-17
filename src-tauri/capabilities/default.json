@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "windows": ["main", "overlay", "pin-*"],
+  "windows": ["main", "overlay", "longshot-hud", "pin-*"],
   "permissions": [
     "core:default",
     "core:window:allow-hide",

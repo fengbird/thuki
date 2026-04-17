@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { OverlayView } from '../OverlayView';
 import { __mockKonvaSetPointerQueue } from '../../testUtils/mocks/react-konva';
 import {
@@ -7,21 +7,15 @@ import {
   PhysicalSize,
   __mockWindow,
 } from '../../testUtils/mocks/tauri-window';
-
-// ─── Tauri core stub ────────────────────────────────────────────────────────
-const { invoke, convertFileSrc } = vi.hoisted(() => ({
-  invoke: vi.fn(),
-  convertFileSrc: vi.fn((p: string) => `asset://${p}`),
-}));
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => invoke(...args),
-  convertFileSrc,
-}));
+import {
+  clearEventHandlers,
+  emitTauriEvent,
+  invoke,
+} from '../../testUtils/mocks/tauri';
 
 beforeEach(() => {
   invoke.mockReset();
   invoke.mockResolvedValue(undefined);
-  convertFileSrc.mockImplementation((p: string) => `asset://${p}`);
   __mockKonvaSetPointerQueue([]);
   __mockWindow.startDragging.mockClear();
   __mockWindow.innerPosition.mockReset();
@@ -30,6 +24,7 @@ beforeEach(() => {
   __mockWindow.innerSize.mockResolvedValue(new PhysicalSize(1920, 1080));
   __mockWindow.scaleFactor.mockReset();
   __mockWindow.scaleFactor.mockResolvedValue(1);
+  clearEventHandlers();
 });
 
 // Helper to drag-select a region inside the overlay root.
@@ -257,6 +252,11 @@ describe('OverlayView — toolbar actions', () => {
         'copy_base64_png_to_clipboard',
         expect.objectContaining({ base64Data: 'TEST' }),
       );
+      // Copy schedules an auto-close via setTimeout(handleClose, 400).
+      // Drain it inside the test so it cannot leak into the next one.
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 450));
+      });
     } finally {
       restore();
     }
@@ -447,6 +447,163 @@ describe('OverlayView — toolbar actions', () => {
         'copy_base64_png_to_clipboard',
         expect.objectContaining({ base64Data: 'TEST' }),
       );
+      // Drain the 400ms auto-close timer so it does not leak to the next test.
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 450));
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it('Long-shot button starts a manual capture session with the selection rect', async () => {
+    const restore = await setupWithSelection();
+    try {
+      fireEvent.click(screen.getByTestId('overlay-long'));
+      await act(async () => {});
+      expect(invoke).toHaveBeenCalledWith(
+        'start_manual_long_capture',
+        expect.objectContaining({
+          width: expect.any(Number),
+          height: expect.any(Number),
+        }),
+      );
+      // Start returns void — the hint bar reflects the "Scroll to capture"
+      // prompt; the HUD window drives the rest of the flow.
+      expect(screen.getByTestId('overlay-hint').textContent).toContain(
+        'Scroll to capture',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('Long-shot error at session-start surfaces in the hint bar (string throw)', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_manual_long_capture')
+        throw 'capture permission denied';
+      return undefined;
+    });
+    const restore = await setupWithSelection();
+    try {
+      fireEvent.click(screen.getByTestId('overlay-long'));
+      await act(async () => {});
+      expect(screen.getByTestId('overlay-hint').textContent).toContain(
+        'capture permission denied',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('Long-shot error at session-start surfaces in the hint bar (Error object)', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_manual_long_capture')
+        throw new Error('native capture failed');
+      return undefined;
+    });
+    const restore = await setupWithSelection();
+    try {
+      fireEvent.click(screen.getByTestId('overlay-long'));
+      await act(async () => {});
+      expect(screen.getByTestId('overlay-hint').textContent).toContain(
+        'native capture failed',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('long-capture-done event shows success and closes overlay', async () => {
+    const restore = await setupWithSelection();
+    try {
+      fireEvent.click(screen.getByTestId('overlay-long'));
+      await act(async () => {});
+      await act(async () => {
+        emitTauriEvent('thuki://long-capture-done', '/tmp/long.png');
+      });
+      expect(screen.getByTestId('overlay-hint').textContent).toContain(
+        'Long screenshot copied',
+      );
+      // On success we schedule setTimeout(handleClose, 500). Drain it.
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 550));
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it('long-capture-done does not invoke clipboard copy again in the overlay', async () => {
+    const restore = await setupWithSelection();
+    try {
+      fireEvent.click(screen.getByTestId('overlay-long'));
+      await act(async () => {});
+      await act(async () => {
+        emitTauriEvent('thuki://long-capture-done', '/tmp/long.png');
+      });
+      expect(invoke).not.toHaveBeenCalledWith(
+        'copy_image_to_clipboard',
+        expect.anything(),
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('long-capture-cancelled event clears busy state and status', async () => {
+    const restore = await setupWithSelection();
+    try {
+      fireEvent.click(screen.getByTestId('overlay-long'));
+      await act(async () => {});
+      expect(
+        (screen.getByTestId('overlay-long') as HTMLButtonElement).disabled,
+      ).toBe(true);
+      await act(async () => {
+        emitTauriEvent('thuki://long-capture-cancelled', null);
+      });
+      expect(
+        (screen.getByTestId('overlay-long') as HTMLButtonElement).disabled,
+      ).toBe(false);
+      expect(screen.queryByTestId('overlay-hint')).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it('long-capture-error event clears busy state and surfaces the message', async () => {
+    const restore = await setupWithSelection();
+    try {
+      fireEvent.click(screen.getByTestId('overlay-long'));
+      await act(async () => {});
+      expect(
+        (screen.getByTestId('overlay-long') as HTMLButtonElement).disabled,
+      ).toBe(true);
+      await act(async () => {
+        emitTauriEvent(
+          'thuki://long-capture-error',
+          'no frames captured — click the target window and scroll first',
+        );
+      });
+      expect(
+        (screen.getByTestId('overlay-long') as HTMLButtonElement).disabled,
+      ).toBe(false);
+      expect(screen.getByTestId('overlay-hint').textContent).toContain(
+        'no frames captured',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('Long-shot button is hidden in fit mode (edit-pin)', async () => {
+    const restore = installImageStub();
+    try {
+      render(<OverlayView imagePath="/tmp/shot.png" fit />);
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expect(screen.queryByTestId('overlay-long')).toBeNull();
     } finally {
       restore();
     }
@@ -527,11 +684,7 @@ describe('OverlayView — keyboard shortcuts', () => {
       fireEvent.keyDown(window, { key: 'Escape' });
     });
     expect(screen.queryByTestId('overlay-selection-frame')).toBeNull();
-    // close_overlay_window must NOT have been called.
-    const closeCalls = invoke.mock.calls.filter(
-      ([c]) => c === 'close_overlay_window',
-    );
-    expect(closeCalls.length).toBe(0);
+    expect(invoke).not.toHaveBeenCalledWith('close_overlay_window');
   });
 
   it('Cmd+Z without a selection is inert (no undo history to apply)', () => {

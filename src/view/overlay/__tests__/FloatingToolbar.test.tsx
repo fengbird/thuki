@@ -15,6 +15,7 @@ function setup(overrides: Partial<Parameters<typeof FloatingToolbar>[0]> = {}) {
     onAskAi: vi.fn(),
     onOcr: vi.fn(),
     onClose: vi.fn(),
+    onLongShot: vi.fn(),
   };
   const props = {
     selection: { x: 100, y: 100, width: 400, height: 200 },
@@ -168,6 +169,7 @@ describe('FloatingToolbar', () => {
         onAskAi={() => {}}
         onOcr={() => {}}
         onClose={() => {}}
+        onLongShot={() => {}}
       />,
     );
     // Open + unmount + fire body mousedown — should not crash.
@@ -223,6 +225,28 @@ describe('FloatingToolbar', () => {
     expect(handlers.onClose).toHaveBeenCalled();
   });
 
+  it('renders the long-shot button by default and fires onLongShot', () => {
+    const { handlers } = setup();
+    const btn = screen.getByTestId('overlay-long');
+    expect(btn.textContent).toContain('Long');
+    fireEvent.click(btn);
+    expect(handlers.onLongShot).toHaveBeenCalled();
+  });
+
+  it('long-shot button shows busy state and is disabled during capture', () => {
+    const { handlers } = setup({ longShotBusy: true });
+    const btn = screen.getByTestId('overlay-long') as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent).toContain('Capturing');
+    fireEvent.click(btn);
+    expect(handlers.onLongShot).not.toHaveBeenCalled();
+  });
+
+  it('long-shot button is hidden when hideLongShot is true (edit-pin flow)', () => {
+    setup({ hideLongShot: true });
+    expect(screen.queryByTestId('overlay-long')).toBeNull();
+  });
+
   it('stops mouse events from bubbling to the parent overlay', () => {
     const parentDown = vi.fn();
     const parentMove = vi.fn();
@@ -252,6 +276,7 @@ describe('FloatingToolbar', () => {
           onAskAi={() => {}}
           onOcr={() => {}}
           onClose={() => {}}
+          onLongShot={() => {}}
         />
       </div>,
     );
