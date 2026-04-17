@@ -1,9 +1,32 @@
 import { describe, it, expect } from 'vitest';
-import { beginDraft, extendDraft, finalizeDraft } from '../drawingLogic';
+import {
+  beginDraft,
+  extendDraft,
+  finalizeDraft,
+  isDragTool,
+} from '../drawingLogic';
+
+describe('isDragTool', () => {
+  it('returns true for drag-based tools', () => {
+    expect(isDragTool('rect')).toBe(true);
+    expect(isDragTool('arrow')).toBe(true);
+    expect(isDragTool('pen')).toBe(true);
+    expect(isDragTool('mosaic')).toBe(true);
+  });
+
+  it('returns false for select and text', () => {
+    expect(isDragTool('select')).toBe(false);
+    expect(isDragTool('text')).toBe(false);
+  });
+});
 
 describe('beginDraft', () => {
   it('returns null for select tool', () => {
     expect(beginDraft('select', 10, 20)).toBeNull();
+  });
+
+  it('returns null for text tool (text uses its own entry flow)', () => {
+    expect(beginDraft('text', 10, 20)).toBeNull();
   });
 
   it('creates a draft for rect tool', () => {
@@ -25,6 +48,11 @@ describe('beginDraft', () => {
     const d = beginDraft('pen', 5, 15);
     expect(d?.tool).toBe('pen');
   });
+
+  it('creates a draft for mosaic tool', () => {
+    const d = beginDraft('mosaic', 5, 15);
+    expect(d?.tool).toBe('mosaic');
+  });
 });
 
 describe('extendDraft', () => {
@@ -45,6 +73,14 @@ describe('extendDraft', () => {
     const a = extendDraft(d, 10, 10);
     const b = extendDraft(a, 20, 30);
     expect(b.points).toEqual([0, 0, 10, 10, 20, 30]);
+  });
+
+  it('replaces end point for mosaic (rectangle drag)', () => {
+    const d = beginDraft('mosaic', 0, 0)!;
+    const a = extendDraft(d, 10, 10);
+    const b = extendDraft(a, 20, 30);
+    // Mosaic uses the rect-drag pattern: only start + latest end point.
+    expect(b.points).toEqual([0, 0, 20, 30]);
   });
 
   it('preserves start coordinates for rect', () => {
@@ -117,6 +153,38 @@ describe('finalizeDraft — pen', () => {
 
   it('returns null for a pen path with only one point (no drag)', () => {
     const d = beginDraft('pen', 5, 5)!;
+    expect(finalizeDraft(d)).toBeNull();
+  });
+});
+
+describe('finalizeDraft — options', () => {
+  it('threads a custom color and strokeWidth through rect', () => {
+    const draft = extendDraft(beginDraft('rect', 0, 0)!, 30, 30);
+    const ann = finalizeDraft(draft, { color: '#22c55e', strokeWidth: 5 });
+    expect(ann).toMatchObject({
+      type: 'rect',
+      stroke: '#22c55e',
+      strokeWidth: 5,
+    });
+  });
+
+  it('threads a custom color through arrow', () => {
+    const draft = extendDraft(beginDraft('arrow', 0, 0)!, 100, 100);
+    const ann = finalizeDraft(draft, { color: '#3b82f6' });
+    expect(ann).toMatchObject({ type: 'arrow', stroke: '#3b82f6' });
+  });
+
+  it('threads a custom color through pen', () => {
+    let d = beginDraft('pen', 0, 0)!;
+    d = extendDraft(d, 10, 10);
+    d = extendDraft(d, 20, 20);
+    const ann = finalizeDraft(d, { color: '#f5c518' });
+    expect(ann).toMatchObject({ type: 'pen', stroke: '#f5c518' });
+  });
+
+  it('mosaic draft returns null (mosaic finalization is handled separately)', () => {
+    let d = beginDraft('mosaic', 0, 0)!;
+    d = extendDraft(d, 10, 10);
     expect(finalizeDraft(d)).toBeNull();
   });
 });

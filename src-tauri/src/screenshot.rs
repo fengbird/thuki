@@ -380,13 +380,13 @@ fn capture_full_screen_raw() -> Result<(u32, u32, Vec<u8>), String> {
 /// Returns `(width, height, rgba_bytes)` on success.
 #[cfg(target_os = "macos")]
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn capture_full_screen_pixels() -> Result<(u32, u32, Vec<u8>), String> {
+pub fn capture_full_screen_pixels() -> Result<(u32, u32, Vec<u8>), String> {
     capture_full_screen_raw()
 }
 
 /// Non-macOS stub: full-screen capture is macOS-only.
 #[cfg(not(target_os = "macos"))]
-fn capture_full_screen_pixels() -> Result<(u32, u32, Vec<u8>), String> {
+pub fn capture_full_screen_pixels() -> Result<(u32, u32, Vec<u8>), String> {
     Err("full-screen capture is only supported on macOS".to_string())
 }
 

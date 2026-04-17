@@ -17,11 +17,11 @@
 
 pub mod commands;
 pub mod database;
-pub mod editor;
-pub mod editor_bridge;
 pub mod history;
 pub mod images;
 pub mod onboarding;
+pub mod overlay;
+pub mod overlay_bridge;
 pub mod pasteboard;
 pub mod pin;
 pub mod reply;
@@ -205,7 +205,7 @@ fn monitor_info_fallback() -> (f64, f64, f64, f64) {
 /// monitor-local coordinates for the positioning math, then convert the result
 /// back to global coordinates for `set_position`.
 #[cfg(target_os = "macos")]
-fn show_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::ActivationContext) {
+pub fn show_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::ActivationContext) {
     let already_visible = OVERLAY_INTENDED_VISIBLE.swap(true, Ordering::SeqCst);
     if already_visible {
         return;
@@ -310,7 +310,7 @@ fn request_overlay_hide(app_handle: &tauri::AppHandle) {
 /// but no positioning logic is applied until platform-specific activators
 /// (e.g. Windows global hotkey) are implemented.
 #[cfg(not(target_os = "macos"))]
-fn show_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::ActivationContext) {
+pub fn show_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::ActivationContext) {
     if OVERLAY_INTENDED_VISIBLE.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -340,32 +340,85 @@ fn toggle_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::Activation
     }
 }
 
-/// Runs an interactive screencapture region-select and, if the user completed
-/// the selection, writes the PNG to the editor temp dir and opens the editor
-/// window pointing at it. Runs off the main thread so the blocking
-/// `screencapture` subprocess doesn't stall the tray menu loop.
+/// Captures the full screen silently via CoreGraphics and opens the Xnip-style
+/// overlay window on the main display. The overlay lets the user drag to
+/// select a region, annotate it, and then copy / pin / hand it to the chat.
+///
+/// Runs on its own async task so the CG capture + disk encode don't stall the
+/// tray menu loop or the hotkey callback thread.
 #[cfg(target_os = "macos")]
-fn capture_and_open_editor(app_handle: &tauri::AppHandle) {
-    let tmp_path = crate::screenshot::temp_screenshot_path();
-    let path_str = match tmp_path.to_str() {
-        Some(s) => s.to_string(),
-        None => return,
-    };
-
-    // `screencapture -i -x <path>` blocks until the user selects a region or
-    // presses Escape (Escape creates no file). Not using `unwrap` — a failed
-    // invocation just produces no file and we bail silently.
-    let _ = std::process::Command::new("screencapture")
-        .args(["-i", "-x", &path_str])
-        .status();
-
-    if !tmp_path.exists() {
-        return; // user cancelled
-    }
-
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn capture_and_open_overlay(app_handle: &tauri::AppHandle) {
     let handle = app_handle.clone();
-    let _ = app_handle.run_on_main_thread(move || {
-        let _ = crate::editor::open_editor_window(handle, path_str);
+    tauri::async_runtime::spawn(async move {
+        // Phase 1: capture pixels on the main thread (CG requirement).
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<(u32, u32, Vec<u8>), String>>();
+        if let Err(e) = handle.run_on_main_thread(move || {
+            tx.send(crate::screenshot::capture_full_screen_pixels())
+                .ok();
+        }) {
+            eprintln!("thuki: [overlay] failed to dispatch capture: {e}");
+            return;
+        }
+        let (width, height, rgba) = match rx.await {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => {
+                eprintln!("thuki: [overlay] capture failed: {e}");
+                return;
+            }
+            Err(e) => {
+                eprintln!("thuki: [overlay] capture channel closed: {e}");
+                return;
+            }
+        };
+
+        // Phase 2: encode lossless PNG at native resolution on a blocking
+        // thread. The overlay must show pixel-perfect pixels, not a
+        // JPEG-downscaled facsimile.
+        let saved_path = match tauri::async_runtime::spawn_blocking(move || {
+            crate::images::save_rgba_png_to_tmp(width, height, rgba)
+        })
+        .await
+        {
+            Ok(Ok(p)) => p,
+            Ok(Err(e)) => {
+                eprintln!("thuki: [overlay] png encode failed: {e}");
+                return;
+            }
+            Err(e) => {
+                eprintln!("thuki: [overlay] encode task failed: {e}");
+                return;
+            }
+        };
+
+        // Phase 3: resolve main-display bounds on the main thread, then open the
+        // overlay window covering the entire display.
+        let (tx2, rx2) = tokio::sync::oneshot::channel::<(f64, f64, f64, f64)>();
+        if handle
+            .run_on_main_thread(move || {
+                tx2.send(cg_displays::main_display()).ok();
+            })
+            .is_err()
+        {
+            return;
+        }
+        let bounds = match rx2.await {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+
+        let open_handle = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            let _ = crate::overlay::open_overlay_window(
+                open_handle,
+                saved_path,
+                bounds.0,
+                bounds.1,
+                bounds.2,
+                bounds.3,
+                None,
+            );
+        });
     });
 }
 
@@ -774,10 +827,8 @@ pub fn run() {
                         show_overlay(app, crate::context::ActivationContext::empty());
                     }
                     "screenshot" => {
-                        let handle = app.clone();
-                        std::thread::spawn(move || {
-                            capture_and_open_editor(&handle);
-                        });
+                        #[cfg(target_os = "macos")]
+                        capture_and_open_overlay(app);
                     }
                     "settings" => {
                         let _ = app.emit("thuki://settings-open", ());
@@ -943,21 +994,23 @@ pub fn run() {
             #[cfg(not(coverage))]
             reply::paste_reply_and_hide,
             #[cfg(not(coverage))]
-            editor::open_editor_window,
+            overlay::open_overlay_window,
             #[cfg(not(coverage))]
-            editor::close_editor_window,
+            overlay::close_overlay_window,
             #[cfg(not(coverage))]
             pasteboard::copy_image_to_clipboard,
             #[cfg(not(coverage))]
             pasteboard::copy_base64_png_to_clipboard,
             #[cfg(not(coverage))]
-            editor_bridge::send_image_to_chat,
+            overlay_bridge::send_image_to_chat,
             #[cfg(not(coverage))]
             pin::open_pin_window,
             #[cfg(not(coverage))]
             pin::pin_base64_png,
             #[cfg(not(coverage))]
             pin::close_pin_window,
+            #[cfg(not(coverage))]
+            pin::edit_pin_window,
             #[cfg(not(coverage))]
             pin::close_all_pin_windows,
             #[cfg(not(coverage))]

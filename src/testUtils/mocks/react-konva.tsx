@@ -49,13 +49,13 @@ export const Stage = forwardRef<unknown, AnyProps>(function Stage(
 
   useImperativeHandle(ref, () => stageRef.current, []);
 
-  const wrap = <E,>(
+  const wrap = (
     handler:
       | ((e: { target: { getStage: () => FakeStage } }) => void)
       | undefined,
   ) =>
     handler
-      ? (_e: React.MouseEvent<E>) => {
+      ? () => {
           handler({ target: { getStage: () => stageRef.current } });
         }
       : undefined;
@@ -93,7 +93,7 @@ export function Layer(props: AnyProps) {
   );
 }
 
-export function Image(_props: AnyProps) {
+export function Image() {
   return <div data-testid="mock-konva-image" />;
 }
 
@@ -118,5 +118,24 @@ export function Arrow(props: AnyProps) {
 export function Line(props: AnyProps) {
   return (
     <div data-testid="mock-line" data-points={JSON.stringify(props.points)} />
+  );
+}
+
+export function Text(props: AnyProps) {
+  return (
+    <div
+      data-testid="mock-text"
+      data-text={props.text as string}
+      data-x={props.x as number}
+      data-y={props.y as number}
+      data-font-size={props.fontSize as number}
+      data-fill={props.fill as string}
+    />
+  );
+}
+
+export function Group(props: AnyProps) {
+  return (
+    <div data-testid="mock-group">{props.children as React.ReactNode}</div>
   );
 }

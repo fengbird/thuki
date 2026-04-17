@@ -42,11 +42,11 @@ const ONBOARDING_EVENT = 'thuki://onboarding';
 const REPLY_DRAFT_OPEN_EVENT = 'thuki://reply-draft-open';
 const REPLY_DRAFT_IMAGE_EVENT = 'thuki://reply-draft-image';
 const SETTINGS_OPEN_EVENT = 'thuki://settings-open';
-const EDITOR_SUBMIT_EVENT = 'thuki://editor-submit';
+const OVERLAY_SUBMIT_EVENT = 'thuki://overlay-submit';
 
-/** Payload for `thuki://editor-submit` — image-bridge from the editor window
- *  to the main chat. `autoSubmit` is true for the "OCR" shortcut. */
-interface EditorSubmitPayload {
+/** Payload for `thuki://overlay-submit` — image-bridge from the overlay
+ *  window to the main chat. `autoSubmit` is true for the "OCR" shortcut. */
+interface OverlaySubmitPayload {
   imagePath: string;
   prompt?: string | null;
   autoSubmit: boolean;
@@ -1231,16 +1231,16 @@ function App() {
     activeCommands,
   ]);
 
-  /** When true, an editor-submit event requested auto-submission. Cleared
+  /** When true, an overlay-submit event requested auto-submission. Cleared
    *  by the effect below once handleSubmit runs with the fresh state. */
-  const [pendingEditorSubmit, setPendingEditorSubmit] = useState(false);
+  const [pendingOverlaySubmit, setPendingOverlaySubmit] = useState(false);
   useEffect(() => {
-    if (!pendingEditorSubmit) return;
+    if (!pendingOverlaySubmit) return;
     // State from the event has been committed; query is populated and the
     // image is in attachedImages. Safe to trigger submission now.
-    setPendingEditorSubmit(false);
+    setPendingOverlaySubmit(false);
     handleSubmit();
-  }, [pendingEditorSubmit, handleSubmit]);
+  }, [pendingOverlaySubmit, handleSubmit]);
 
   // When a pending submit exists and all images finish processing, fire it.
   // Reads `attachedImages` directly (not via `executeSubmit` closure) to
@@ -1361,17 +1361,17 @@ function App() {
     let unlistenReplyDraftOpen: (() => void) | undefined;
     let unlistenReplyDraftImage: (() => void) | undefined;
     let unlistenSettings: (() => void) | undefined;
-    let unlistenEditorSubmit: (() => void) | undefined;
+    let unlistenOverlaySubmit: (() => void) | undefined;
 
     /**
-     * Handle an `editor-submit` event: add the image to the ask bar and
+     * Handle an `overlay-submit` event: add the image to the ask bar and
      * either pre-fill the prompt for user review or auto-submit immediately.
      * The image path is already a real file on disk (Rust wrote it before
      * emitting), so we can skip the FileReader+save_image_command dance.
      * Auto-submit is deferred to a flag + effect combo so the submit runs
      * after React has committed the new query/attachedImages state.
      */
-    const handleEditorSubmit = (payload: EditorSubmitPayload) => {
+    const handleOverlaySubmit = (payload: OverlaySubmitPayload) => {
       if (!payload.imagePath) return;
       const newImage: AttachedImage = {
         id: crypto.randomUUID(),
@@ -1383,7 +1383,7 @@ function App() {
         setQuery(payload.prompt);
       }
       if (payload.autoSubmit) {
-        setPendingEditorSubmit(true);
+        setPendingOverlaySubmit(true);
       }
     };
 
@@ -1439,10 +1439,10 @@ function App() {
       unlistenSettings = await listen(SETTINGS_OPEN_EVENT, () => {
         setIsSettingsOpen(true);
       });
-      unlistenEditorSubmit = await listen<EditorSubmitPayload>(
-        EDITOR_SUBMIT_EVENT,
+      unlistenOverlaySubmit = await listen<OverlaySubmitPayload>(
+        OVERLAY_SUBMIT_EVENT,
         ({ payload }) => {
-          handleEditorSubmit(payload);
+          handleOverlaySubmit(payload);
         },
       );
       // Listeners registered — safe to let Rust decide what to show on launch.
@@ -1456,7 +1456,7 @@ function App() {
       unlistenReplyDraftOpen?.();
       unlistenReplyDraftImage?.();
       unlistenSettings?.();
-      unlistenEditorSubmit?.();
+      unlistenOverlaySubmit?.();
     };
   }, [replayEntranceAnimation, requestHideOverlay]);
 

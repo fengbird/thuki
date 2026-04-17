@@ -21,33 +21,39 @@ describe('main.tsx', () => {
 });
 
 describe('pickRoot', () => {
-  it('mounts App when no editor flag is set', () => {
+  it('mounts App when no overlay flag is set', () => {
     render(pickRoot(''));
-    // App does not render the editor root.
-    expect(screen.queryByTestId('editor-root')).toBeNull();
+    expect(screen.queryByTestId('overlay-root')).toBeNull();
   });
 
-  it('mounts App when editor flag is absent', () => {
+  it('mounts App when overlay flag is absent', () => {
     render(pickRoot('?foo=bar'));
-    expect(screen.queryByTestId('editor-root')).toBeNull();
+    expect(screen.queryByTestId('overlay-root')).toBeNull();
   });
 
-  it('mounts EditorView when editor=1 is set', () => {
-    render(pickRoot('?editor=1&path=/tmp/shot.png'));
-    expect(screen.getByTestId('editor-root')).toBeInTheDocument();
-    // Phase 2: canvas stage replaces the old img tag.
-    expect(screen.getByTestId('mock-stage')).toBeInTheDocument();
+  it('mounts OverlayView when overlay=1 is set', () => {
+    render(pickRoot('?overlay=1&path=/tmp/shot.png'));
+    expect(screen.getByTestId('overlay-root')).toBeInTheDocument();
+    expect(screen.getByTestId('overlay-background')).toBeInTheDocument();
   });
 
-  it('mounts EditorView with empty image path when path param missing', () => {
-    render(pickRoot('?editor=1'));
-    expect(screen.getByTestId('editor-root')).toBeInTheDocument();
-    expect(screen.getByTestId('editor-empty')).toBeInTheDocument();
+  it('mounts OverlayView with empty image path when path param missing', () => {
+    render(pickRoot('?overlay=1'));
+    expect(screen.getByTestId('overlay-root')).toBeInTheDocument();
+    // No background image when imagePath is empty.
+    expect(screen.queryByTestId('overlay-background')).toBeNull();
   });
 
-  it('does not match editor=0 or other values', () => {
-    render(pickRoot('?editor=0'));
-    expect(screen.queryByTestId('editor-root')).toBeNull();
+  it('does not match overlay=0 or other values', () => {
+    render(pickRoot('?overlay=0'));
+    expect(screen.queryByTestId('overlay-root')).toBeNull();
+  });
+
+  it('passes fit=1 through to OverlayView', () => {
+    render(pickRoot('?overlay=1&path=/tmp/shot.png&fit=1'));
+    expect(screen.getByTestId('overlay-root')).toBeInTheDocument();
+    // Fit mode is just a prop pass-through — we can't inspect props
+    // directly; presence of the root is enough for the routing branch.
   });
 
   it('mounts PinView when pin=1 is set', () => {

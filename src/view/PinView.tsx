@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { LogicalSize, getCurrentWindow } from '@tauri-apps/api/window';
+import { computeZoomedSize } from './pin/zoomLogic';
 
 /**
  * Pin window — a floating always-on-top screenshot sticker.
@@ -42,12 +43,70 @@ export function PinView({ imagePath, label }: PinViewProps) {
     }
   }, [imagePath]);
 
+  // Re-open the overlay editor on the pinned image so the user can add
+  // more annotations / run OCR / Ask AI / Copy. Reads the current pin
+  // window bounds, then dispatches a single atomic backend command that
+  // opens the overlay in `fit` mode at those coords AND closes the pin.
+  // Splitting this into two separate `invoke`s from the frontend would
+  // race — `close_pin_window` tears down the pin's WebView, and the
+  // pending `open_overlay_window` request never reaches Rust.
+  const handleEdit = useCallback(async () => {
+    if (!imagePath) return;
+    try {
+      const win = getCurrentWindow();
+      const [phys, size, sf] = await Promise.all([
+        win.innerPosition(),
+        win.innerSize(),
+        win.scaleFactor(),
+      ]);
+      const x = phys.x / sf;
+      const y = phys.y / sf;
+      const width = size.width / sf;
+      const height = size.height / sf;
+      await invoke('edit_pin_window', {
+        label,
+        imagePath,
+        x,
+        y,
+        width,
+        height,
+      });
+    } catch {
+      // Pin may already be closing or overlay open; nothing actionable.
+    }
+  }, [imagePath, label]);
+
   const handleMouseDown = useCallback(async (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     try {
       await getCurrentWindow().startDragging();
     } catch {
       // Ignore: drag can fail harmlessly if the user releases mid-flight.
+    }
+  }, []);
+
+  // Scroll to zoom: resize the native window proportionally, so the pin
+  // image scales up/down in place. Aspect ratio is preserved by
+  // `computeZoomedSize`.
+  const handleWheel = useCallback(async (e: React.WheelEvent) => {
+    if (e.deltaY === 0) return;
+    const win = getCurrentWindow();
+    try {
+      const [phys, sf] = await Promise.all([
+        win.innerSize(),
+        win.scaleFactor(),
+      ]);
+      const logical = {
+        width: phys.width / sf,
+        height: phys.height / sf,
+      };
+      const next = computeZoomedSize(logical, e.deltaY);
+      if (next.width === logical.width && next.height === logical.height) {
+        return;
+      }
+      await win.setSize(new LogicalSize(next.width, next.height));
+    } catch {
+      // Ignore — window may be closing.
     }
   }, []);
 
@@ -77,6 +136,7 @@ export function PinView({ imagePath, label }: PinViewProps) {
       onMouseDown={handleMouseDown}
       onContextMenu={handleContextMenu}
       onClick={() => menuOpen && closeMenu()}
+      onWheel={(e) => void handleWheel(e)}
       style={{
         position: 'fixed',
         inset: 0,
@@ -120,6 +180,10 @@ export function PinView({ imagePath, label }: PinViewProps) {
             void handleCopy();
             closeMenu();
           }}
+          onEdit={() => {
+            void handleEdit();
+            closeMenu();
+          }}
           onClose={() => {
             void handleClose();
           }}
@@ -136,6 +200,7 @@ interface PinContextMenuProps {
   opacity: number;
   onOpacity: (v: number) => void;
   onCopy: () => void;
+  onEdit: () => void;
   onClose: () => void;
   onDismiss: () => void;
 }
@@ -146,6 +211,7 @@ function PinContextMenu({
   opacity,
   onOpacity,
   onCopy,
+  onEdit,
   onClose,
   onDismiss,
 }: PinContextMenuProps) {
@@ -169,6 +235,9 @@ function PinContextMenu({
         fontSize: 12,
       }}
     >
+      <MenuItem testId="pin-menu-edit" onClick={onEdit}>
+        Edit…
+      </MenuItem>
       <MenuItem testId="pin-menu-copy" onClick={onCopy}>
         Copy image
       </MenuItem>

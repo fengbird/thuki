@@ -1,10 +1,10 @@
 import React from 'react';
 import App from './App';
-import { EditorView } from './view/EditorView';
+import { OverlayView } from './view/OverlayView';
 import { PinView } from './view/PinView';
 
 /**
- * Routes between the main chat app, the screenshot editor, and pin windows
+ * Routes between the main chat app, the screenshot overlay, and pin windows
  * based on URL flags injected by the Rust window-builder commands. Each
  * window loads `index.html?<flag>=1&…` and is routed to the matching
  * React root by this helper.
@@ -14,9 +14,10 @@ import { PinView } from './view/PinView';
  */
 export function pickRoot(search: string): React.ReactElement {
   const params = new URLSearchParams(search);
-  if (params.get('editor') === '1') {
+  if (params.get('overlay') === '1') {
     const imagePath = params.get('path') ?? '';
-    return <EditorView imagePath={imagePath} />;
+    const fit = params.get('fit') === '1';
+    return <OverlayView imagePath={imagePath} fit={fit} />;
   }
   if (params.get('pin') === '1') {
     const imagePath = params.get('path') ?? '';

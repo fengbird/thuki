@@ -4315,14 +4315,14 @@ describe('App', () => {
     });
   });
 
-  describe('editor-submit bridge', () => {
+  describe('overlay-submit bridge', () => {
     it('attaches the image and pre-fills the prompt when received', async () => {
       render(<App />);
       await act(async () => {});
       await showOverlay();
 
       await act(async () => {
-        emitTauriEvent('thuki://editor-submit', {
+        emitTauriEvent('thuki://overlay-submit', {
           imagePath: '/tmp/editor-shot.png',
           prompt: 'What is in this image?',
           autoSubmit: false,
@@ -4341,7 +4341,7 @@ describe('App', () => {
       await showOverlay();
 
       await act(async () => {
-        emitTauriEvent('thuki://editor-submit', {
+        emitTauriEvent('thuki://overlay-submit', {
           imagePath: '',
           prompt: 'hi',
           autoSubmit: false,
@@ -4361,7 +4361,7 @@ describe('App', () => {
       await showOverlay();
 
       await act(async () => {
-        emitTauriEvent('thuki://editor-submit', {
+        emitTauriEvent('thuki://overlay-submit', {
           imagePath: '/tmp/editor-shot.png',
           autoSubmit: false,
         });
@@ -4380,7 +4380,7 @@ describe('App', () => {
       await showOverlay();
 
       await act(async () => {
-        emitTauriEvent('thuki://editor-submit', {
+        emitTauriEvent('thuki://overlay-submit', {
           imagePath: '/tmp/editor-shot.png',
           prompt: '提取图中文字',
           autoSubmit: true,

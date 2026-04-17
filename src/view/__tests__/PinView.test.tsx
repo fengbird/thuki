@@ -2,13 +2,24 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { PinView } from '../PinView';
 import { invoke } from '../../testUtils/mocks/tauri';
-import { __mockWindow } from '../../testUtils/mocks/tauri-window';
+import {
+  PhysicalPosition,
+  PhysicalSize,
+  __mockWindow,
+} from '../../testUtils/mocks/tauri-window';
 
 describe('PinView', () => {
   beforeEach(() => {
     invoke.mockClear();
     invoke.mockImplementation(async () => undefined);
     __mockWindow.startDragging.mockClear();
+    __mockWindow.setSize.mockClear();
+    __mockWindow.innerSize.mockReset();
+    __mockWindow.innerSize.mockResolvedValue(new PhysicalSize(420, 300));
+    __mockWindow.innerPosition.mockReset();
+    __mockWindow.innerPosition.mockResolvedValue(new PhysicalPosition(100, 80));
+    __mockWindow.scaleFactor.mockReset();
+    __mockWindow.scaleFactor.mockResolvedValue(1);
   });
 
   it('renders the image when path is provided', () => {
@@ -57,6 +68,7 @@ describe('PinView', () => {
       });
     });
     expect(screen.getByTestId('pin-context-menu')).toBeInTheDocument();
+    expect(screen.getByTestId('pin-menu-edit')).toBeInTheDocument();
     expect(screen.getByTestId('pin-menu-copy')).toBeInTheDocument();
     expect(screen.getByTestId('pin-menu-close')).toBeInTheDocument();
   });
@@ -225,5 +237,153 @@ describe('PinView', () => {
       fireEvent.keyDown(window, { key: 'Escape' });
     });
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  describe('edit menu', () => {
+    it('Edit dispatches edit_pin_window with label + image path + pin bounds', async () => {
+      render(<PinView imagePath="/tmp/shot.png" label="pin-abc" />);
+      await act(async () => {
+        fireEvent.contextMenu(screen.getByTestId('pin-root'));
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('pin-menu-edit'));
+      });
+      expect(invoke).toHaveBeenCalledWith('edit_pin_window', {
+        label: 'pin-abc',
+        imagePath: '/tmp/shot.png',
+        x: 100,
+        y: 80,
+        width: 420,
+        height: 300,
+      });
+      // Menu closed.
+      expect(screen.queryByTestId('pin-context-menu')).toBeNull();
+    });
+
+    it('Edit converts physical → logical coords using scale factor', async () => {
+      __mockWindow.innerPosition.mockResolvedValueOnce(
+        new PhysicalPosition(200, 160),
+      );
+      __mockWindow.innerSize.mockResolvedValueOnce(new PhysicalSize(840, 600));
+      __mockWindow.scaleFactor.mockResolvedValueOnce(2);
+      render(<PinView imagePath="/tmp/shot.png" label="pin-abc" />);
+      await act(async () => {
+        fireEvent.contextMenu(screen.getByTestId('pin-root'));
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('pin-menu-edit'));
+      });
+      const call = invoke.mock.calls.find(([c]) => c === 'edit_pin_window');
+      expect(call?.[1]).toMatchObject({
+        x: 100,
+        y: 80,
+        width: 420,
+        height: 300,
+      });
+    });
+
+    it('Edit is a no-op when imagePath is blank', async () => {
+      render(<PinView imagePath="" label="pin-abc" />);
+      await act(async () => {
+        fireEvent.contextMenu(screen.getByTestId('pin-root'));
+      });
+      invoke.mockClear();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('pin-menu-edit'));
+      });
+      expect(invoke).not.toHaveBeenCalledWith(
+        'open_overlay_window',
+        expect.anything(),
+      );
+    });
+
+    it('Edit swallows errors from the window-geometry APIs', async () => {
+      __mockWindow.innerPosition.mockRejectedValueOnce('window gone');
+      render(<PinView imagePath="/tmp/shot.png" label="pin-abc" />);
+      await act(async () => {
+        fireEvent.contextMenu(screen.getByTestId('pin-root'));
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('pin-menu-edit'));
+      });
+      // No rethrow — test reaches this line.
+    });
+  });
+
+  describe('wheel zoom', () => {
+    it('scroll up resizes the window larger while preserving aspect', async () => {
+      render(<PinView imagePath="/tmp/shot.png" label="pin-abc" />);
+      await act(async () => {
+        fireEvent.wheel(screen.getByTestId('pin-root'), { deltaY: -120 });
+      });
+      expect(__mockWindow.setSize).toHaveBeenCalledOnce();
+      const arg = (__mockWindow.setSize.mock.calls[0] as unknown[])[0] as {
+        width: number;
+        height: number;
+      };
+      // 420 * 1.1 = 462; 300 * 1.1 = 330
+      expect(arg.width).toBe(462);
+      expect(arg.height).toBe(330);
+    });
+
+    it('scroll down resizes the window smaller', async () => {
+      render(<PinView imagePath="/tmp/shot.png" label="pin-abc" />);
+      await act(async () => {
+        fireEvent.wheel(screen.getByTestId('pin-root'), { deltaY: 120 });
+      });
+      expect(__mockWindow.setSize).toHaveBeenCalledOnce();
+      const arg = (__mockWindow.setSize.mock.calls[0] as unknown[])[0] as {
+        width: number;
+        height: number;
+      };
+      // 420 / 1.1 ≈ 381.8 → round 382
+      expect(arg.width).toBe(382);
+      expect(arg.height).toBe(273);
+    });
+
+    it('deltaY of 0 does nothing', async () => {
+      render(<PinView imagePath="/tmp/shot.png" label="pin-abc" />);
+      await act(async () => {
+        fireEvent.wheel(screen.getByTestId('pin-root'), { deltaY: 0 });
+      });
+      expect(__mockWindow.setSize).not.toHaveBeenCalled();
+    });
+
+    it('handles retina scale factors correctly', async () => {
+      __mockWindow.innerSize.mockResolvedValueOnce(new PhysicalSize(840, 600));
+      __mockWindow.scaleFactor.mockResolvedValueOnce(2);
+      render(<PinView imagePath="/tmp/shot.png" label="pin-abc" />);
+      await act(async () => {
+        fireEvent.wheel(screen.getByTestId('pin-root'), { deltaY: -120 });
+      });
+      const arg = (__mockWindow.setSize.mock.calls[0] as unknown[])[0] as {
+        width: number;
+        height: number;
+      };
+      // logical size is 420x300; zoomed = 462x330
+      expect(arg.width).toBe(462);
+      expect(arg.height).toBe(330);
+    });
+
+    it('swallows window API errors without crashing', async () => {
+      __mockWindow.innerSize.mockRejectedValueOnce('window closed');
+      render(<PinView imagePath="/tmp/shot.png" label="pin-abc" />);
+      await act(async () => {
+        fireEvent.wheel(screen.getByTestId('pin-root'), { deltaY: -120 });
+      });
+      expect(__mockWindow.setSize).not.toHaveBeenCalled();
+    });
+
+    it('skips setSize when the clamped size equals current', async () => {
+      // Already at max — zoom-in clamps back to the same size.
+      __mockWindow.innerSize.mockResolvedValueOnce(
+        new PhysicalSize(4000, 4000),
+      );
+      render(<PinView imagePath="/tmp/shot.png" label="pin-abc" />);
+      await act(async () => {
+        fireEvent.wheel(screen.getByTestId('pin-root'), { deltaY: -120 });
+      });
+      expect(__mockWindow.setSize).not.toHaveBeenCalled();
+    });
   });
 });

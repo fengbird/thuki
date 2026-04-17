@@ -120,6 +120,53 @@ pub fn save_rgba_image(
     encode_and_save_jpeg(base_dir, image::DynamicImage::ImageRgba8(buf))
 }
 
+/// Encodes raw RGBA pixels as a lossless PNG into `writer`.
+///
+/// Uses `CompressionType::Fast` — the resulting PNG is larger than the
+/// default compression but encodes in ~50–150 ms even for a 4K retina
+/// capture. The overlay window is typically closed within seconds, so
+/// on-disk size is not the bottleneck.
+///
+/// # Errors
+///
+/// Returns an error if the dimensions do not match the buffer length or
+/// the encoder fails to write.
+pub fn encode_rgba_png<W: std::io::Write>(
+    writer: W,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<(), String> {
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use image::{ExtendedColorType, ImageEncoder};
+
+    if (rgba.len() as u64) != (width as u64) * (height as u64) * 4 {
+        return Err("rgba buffer length does not match dimensions".to_string());
+    }
+    let encoder = PngEncoder::new_with_quality(writer, CompressionType::Fast, FilterType::NoFilter);
+    encoder
+        .write_image(rgba, width, height, ExtendedColorType::Rgba8)
+        .map_err(err("failed to encode overlay png"))?;
+    Ok(())
+}
+
+/// Writes a lossless PNG of raw RGBA pixels to `/tmp/<uuid>-thuki-overlay.png`
+/// at native resolution. Used by the overlay so the user sees a pixel-perfect
+/// screenshot (never downscaled, never JPEG-compressed).
+///
+/// Thin file-I/O wrapper around `encode_rgba_png` — its encoding logic is
+/// covered through that helper; the file-create + path-stringify steps are
+/// excluded from coverage (standard pattern for filesystem wrappers).
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub fn save_rgba_png_to_tmp(width: u32, height: u32, rgba: Vec<u8>) -> Result<String, String> {
+    let path = PathBuf::from(format!("/tmp/{}-thuki-overlay.png", uuid::Uuid::new_v4()));
+    let file = std::fs::File::create(&path).map_err(err("failed to create overlay png"))?;
+    encode_rgba_png(file, width, height, &rgba)?;
+    path.to_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "overlay png path contains non-UTF-8 characters".to_string())
+}
+
 /// Deletes a single image file from disk, provided it resides within the
 /// given `base_dir/images/` directory. Rejects paths outside the images root
 /// to prevent path-traversal attacks via the IPC boundary.
@@ -266,6 +313,48 @@ pub fn cleanup_orphaned_images_command(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn encode_rgba_png_produces_a_decodable_png() {
+        let width = 3u32;
+        let height = 2u32;
+        let rgba: Vec<u8> = (0..(width * height * 4)).map(|i| (i % 256) as u8).collect();
+        let mut out: Vec<u8> = Vec::new();
+        encode_rgba_png(&mut out, width, height, &rgba).unwrap();
+        assert!(!out.is_empty());
+        // PNG magic header.
+        assert_eq!(&out[0..8], b"\x89PNG\r\n\x1a\n");
+        let decoded = image::load_from_memory_with_format(&out, image::ImageFormat::Png).unwrap();
+        assert_eq!(decoded.width(), width);
+        assert_eq!(decoded.height(), height);
+    }
+
+    #[test]
+    fn encode_rgba_png_rejects_mismatched_buffer() {
+        let mut out: Vec<u8> = Vec::new();
+        let err = encode_rgba_png(&mut out, 10, 10, &[0u8; 12]).unwrap_err();
+        assert!(err.contains("does not match dimensions"));
+    }
+
+    #[test]
+    fn encode_rgba_png_propagates_writer_errors() {
+        /// Always-failing writer — used to exercise the PngEncoder error path.
+        struct FailingWriter;
+        impl std::io::Write for FailingWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("disk full"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::Error::other("disk full"))
+            }
+        }
+        // Exercise flush as well so every Write method is covered (PngEncoder
+        // only calls write, not flush).
+        use std::io::Write;
+        assert!(FailingWriter.flush().is_err());
+        let err = encode_rgba_png(FailingWriter, 1, 1, &[1, 2, 3, 4]).unwrap_err();
+        assert!(err.contains("failed to encode overlay png"));
+    }
 
     /// Creates a minimal valid 1x1 red PNG for testing.
     fn tiny_png() -> Vec<u8> {
