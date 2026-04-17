@@ -34,6 +34,7 @@ export default defineConfig({
         'src/testUtils/mocks/tauri-window.ts',
       ),
       'framer-motion': resolve(__dirname, 'src/testUtils/mocks/framer-motion.tsx'),
+      'react-konva': resolve(__dirname, 'src/testUtils/mocks/react-konva.tsx'),
     },
   },
 });

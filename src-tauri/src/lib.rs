@@ -947,6 +947,8 @@ pub fn run() {
             #[cfg(not(coverage))]
             pasteboard::copy_image_to_clipboard,
             #[cfg(not(coverage))]
+            pasteboard::copy_base64_png_to_clipboard,
+            #[cfg(not(coverage))]
             settings::get_settings,
             #[cfg(not(coverage))]
             settings::update_settings,

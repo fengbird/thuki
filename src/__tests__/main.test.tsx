@@ -35,7 +35,8 @@ describe('pickRoot', () => {
   it('mounts EditorView when editor=1 is set', () => {
     render(pickRoot('?editor=1&path=/tmp/shot.png'));
     expect(screen.getByTestId('editor-root')).toBeInTheDocument();
-    expect(screen.getByTestId('editor-image')).toBeInTheDocument();
+    // Phase 2: canvas stage replaces the old img tag.
+    expect(screen.getByTestId('mock-stage')).toBeInTheDocument();
   });
 
   it('mounts EditorView with empty image path when path param missing', () => {

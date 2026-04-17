@@ -55,6 +55,15 @@ fn write_to_pasteboard(bytes: &[u8], pb_type: &str) -> Result<(), String> {
     }
 }
 
+/// Decodes a base64 image payload. Extracted so the failure path (malformed
+/// payload) can be exercised in tests.
+pub fn decode_base64_image(b64: &str) -> Result<Vec<u8>, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    STANDARD
+        .decode(b64)
+        .map_err(|e| format!("Invalid base64: {e}"))
+}
+
 /// Tauri command: copy an image file to the clipboard. The file must
 /// exist on disk; its bytes are sent verbatim with a UTI derived from
 /// the extension.
@@ -66,6 +75,15 @@ pub fn copy_image_to_clipboard(image_path: String) -> Result<(), String> {
     let ext = extension_or_default(path);
     let pb_type = pasteboard_type_for_extension(ext);
     write_to_pasteboard(&bytes, pb_type)
+}
+
+/// Tauri command: copy a base64-encoded PNG (e.g. from a canvas export) to
+/// the clipboard. The payload is always treated as PNG.
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn copy_base64_png_to_clipboard(base64_data: String) -> Result<(), String> {
+    let bytes = decode_base64_image(&base64_data)?;
+    write_to_pasteboard(&bytes, "public.png")
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -131,5 +149,24 @@ mod tests {
         let missing = Path::new("/tmp/nonexistent-thuki-pasteboard-test-12345.png");
         let err = read_image_bytes(missing).unwrap_err();
         assert!(err.contains("Failed to read image"));
+    }
+
+    #[test]
+    fn decode_base64_image_decodes_valid_payload() {
+        // "Hello" → "SGVsbG8="
+        let decoded = decode_base64_image("SGVsbG8=").unwrap();
+        assert_eq!(decoded, b"Hello");
+    }
+
+    #[test]
+    fn decode_base64_image_errors_on_malformed() {
+        let err = decode_base64_image("!!!not_base64!!!").unwrap_err();
+        assert!(err.contains("Invalid base64"));
+    }
+
+    #[test]
+    fn decode_base64_image_accepts_empty_string() {
+        let decoded = decode_base64_image("").unwrap();
+        assert_eq!(decoded, Vec::<u8>::new());
     }
 }

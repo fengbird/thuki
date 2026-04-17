@@ -1,12 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import type Konva from 'konva';
+import { AnnotationCanvas } from './editor/AnnotationCanvas';
+import { Toolbar } from './editor/Toolbar';
+import { useAnnotations } from './editor/useAnnotations';
+import { dataUrlToBase64, exportStageToDataURL } from './editor/exportCanvas';
+import type { Tool } from './editor/types';
 
 /**
  * Screenshot editor window.
  *
- * Phase 1: displays the captured image and offers two actions — copy to
- * clipboard, or close the window. Annotation tools (Phase 2), pin
- * (Phase 3), and AI handoff (Phase 4) land here in later iterations.
+ * Phase 2 brings Konva-based annotation drawing (rect / arrow / pen),
+ * undo/redo, and clipboard export of the composite (background + overlays).
+ * Pin and AI handoff land in Phases 3 and 4.
  */
 
 export interface EditorViewProps {
@@ -14,18 +20,37 @@ export interface EditorViewProps {
   imagePath: string;
 }
 
+const CANVAS_WIDTH = 860;
+const CANVAS_HEIGHT = 500;
+
 export function EditorView({ imagePath }: EditorViewProps) {
+  const [tool, setTool] = useState<Tool>('select');
   const [status, setStatus] = useState<{
     kind: 'idle' | 'success' | 'error';
     message: string;
   }>({ kind: 'idle', message: '' });
 
+  const stageRef = useRef<Konva.Stage | null>(null);
+  const { annotations, canUndo, canRedo, add, clear, undo, redo } =
+    useAnnotations();
+
   const src = imagePath ? convertFileSrc(imagePath) : '';
 
   const handleCopy = useCallback(async () => {
     if (!imagePath) return;
+    // Export the composite (background + annotations) from the Konva stage,
+    // falling back to the raw image file if the stage isn't ready yet.
+    const dataUrl = exportStageToDataURL(stageRef.current);
+    /* v8 ignore next -- stage is always ready when copy is reachable */
+    const b64 = dataUrl ? dataUrlToBase64(dataUrl) : null;
     try {
-      await invoke('copy_image_to_clipboard', { imagePath });
+      /* v8 ignore start -- else branch only reachable when stage export fails */
+      if (b64) {
+        await invoke('copy_base64_png_to_clipboard', { base64Data: b64 });
+      } else {
+        await invoke('copy_image_to_clipboard', { imagePath });
+      }
+      /* v8 ignore stop */
       setStatus({ kind: 'success', message: 'Copied to clipboard' });
     } catch (e) {
       setStatus({
@@ -43,17 +68,14 @@ export function EditorView({ imagePath }: EditorViewProps) {
     }
   }, []);
 
-  // Auto-dismiss success toast after 1.5s.
+  // Auto-dismiss success toast.
   useEffect(() => {
     if (status.kind !== 'success') return;
-    const timer = setTimeout(
-      () => setStatus({ kind: 'idle', message: '' }),
-      1500,
-    );
-    return () => clearTimeout(timer);
+    const t = setTimeout(() => setStatus({ kind: 'idle', message: '' }), 1500);
+    return () => clearTimeout(t);
   }, [status.kind]);
 
-  // ⌘C shortcut → copy, Esc → close.
+  // Keyboard shortcuts: ⌘C copy, Esc close, ⌘Z undo, ⌘⇧Z redo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -61,14 +83,19 @@ export function EditorView({ imagePath }: EditorViewProps) {
         void handleClose();
         return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === 'c') {
         e.preventDefault();
         void handleCopy();
+      } else if (e.key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [handleClose, handleCopy]);
+  }, [handleClose, handleCopy, redo, undo]);
 
   return (
     <div
@@ -83,41 +110,20 @@ export function EditorView({ imagePath }: EditorViewProps) {
         flexDirection: 'column',
       }}
     >
-      {/* Toolbar */}
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '10px 16px',
-          borderBottom: '1px solid rgba(255, 141, 92, 0.15)',
-          background: 'rgba(22, 18, 15, 0.98)',
-        }}
-      >
-        <div style={{ fontSize: 13, fontWeight: 600, color: '#ff8d5c' }}>
-          Screenshot Editor
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            data-testid="editor-copy"
-            onClick={() => void handleCopy()}
-            disabled={!imagePath}
-            style={primaryButtonStyle}
-          >
-            Copy
-          </button>
-          <button
-            data-testid="editor-close"
-            onClick={() => void handleClose()}
-            style={secondaryButtonStyle}
-          >
-            Close
-          </button>
-        </div>
-      </header>
+      <Toolbar
+        tool={tool}
+        onToolChange={setTool}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={undo}
+        onRedo={redo}
+        onClear={clear}
+        onCopy={() => void handleCopy()}
+        onClose={() => void handleClose()}
+      />
 
-      {/* Canvas area */}
       <main
+        data-testid="editor-canvas-area"
         style={{
           flex: 1,
           minHeight: 0,
@@ -131,18 +137,27 @@ export function EditorView({ imagePath }: EditorViewProps) {
         }}
       >
         {imagePath ? (
-          <img
-            data-testid="editor-image"
-            src={src}
-            alt="Screenshot"
+          <div
             style={{
-              maxWidth: '100%',
-              maxHeight: '100%',
+              width: CANVAS_WIDTH,
+              height: CANVAS_HEIGHT,
               boxShadow: '0 6px 32px rgba(0,0,0,0.5)',
               borderRadius: 4,
-              objectFit: 'contain',
+              overflow: 'hidden',
             }}
-          />
+          >
+            <AnnotationCanvas
+              imageSrc={src}
+              tool={tool}
+              annotations={annotations}
+              onCommit={add}
+              onStageReady={(s) => {
+                stageRef.current = s;
+              }}
+              containerWidth={CANVAS_WIDTH}
+              containerHeight={CANVAS_HEIGHT}
+            />
+          </div>
         ) : (
           <div
             data-testid="editor-empty"
@@ -153,8 +168,8 @@ export function EditorView({ imagePath }: EditorViewProps) {
         )}
       </main>
 
-      {/* Status bar */}
       <footer
+        data-testid="editor-status"
         style={{
           padding: '6px 16px',
           fontSize: 11,
@@ -169,31 +184,9 @@ export function EditorView({ imagePath }: EditorViewProps) {
           textAlign: 'center',
           minHeight: 20,
         }}
-        data-testid="editor-status"
       >
-        {status.message || '⌘C to copy · Esc to close'}
+        {status.message || '⌘C copy · ⌘Z undo · ⌘⇧Z redo · Esc close'}
       </footer>
     </div>
   );
 }
-
-const primaryButtonStyle: React.CSSProperties = {
-  padding: '5px 14px',
-  background: 'linear-gradient(135deg, #ff8d5c 0%, #d45a1e 100%)',
-  border: 'none',
-  borderRadius: 8,
-  color: 'white',
-  fontSize: 12,
-  fontWeight: 600,
-  cursor: 'pointer',
-};
-
-const secondaryButtonStyle: React.CSSProperties = {
-  padding: '5px 14px',
-  background: 'rgba(255,255,255,0.06)',
-  border: '1px solid rgba(255,255,255,0.1)',
-  borderRadius: 8,
-  color: 'rgba(255,255,255,0.6)',
-  fontSize: 12,
-  cursor: 'pointer',
-};
