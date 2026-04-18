@@ -40,6 +40,10 @@ const KC_PRIMARY_R: i64 = 0x3e;
 
 /// Keycode for the letter R. Used to detect the reply hotkey (⌃⇧R).
 const KC_R: i64 = 0x0f;
+/// Keycode for the letter C. Used to detect Cmd+C clipboard intent.
+const KC_C: i64 = 0x08;
+/// Keycode for the letter X. Used to detect the screenshot hotkey (⌘⇧X).
+const KC_X: i64 = 0x07;
 
 /// Returns true when `keycode` + `flags` match the reply hotkey (⌃⇧R with
 /// **no** ⌘ or ⌥). Extracted as a pure function so the modifier-set check
@@ -53,6 +57,32 @@ fn is_reply_hotkey(keycode: i64, flags: CGEventFlags) -> bool {
     let has_cmd = flags.contains(CGEventFlags::CGEventFlagCommand);
     let has_alt = flags.contains(CGEventFlags::CGEventFlagAlternate);
     has_ctrl && has_shift && !has_cmd && !has_alt
+}
+
+/// Returns true when `keycode` + `flags` match the screenshot hotkey
+/// (⌘⇧X with **no** Ctrl or ⌥). Kept pure for unit tests.
+fn is_screenshot_hotkey(keycode: i64, flags: CGEventFlags) -> bool {
+    if keycode != KC_X {
+        return false;
+    }
+    let has_cmd = flags.contains(CGEventFlags::CGEventFlagCommand);
+    let has_shift = flags.contains(CGEventFlags::CGEventFlagShift);
+    let has_ctrl = flags.contains(CGEventFlags::CGEventFlagControl);
+    let has_alt = flags.contains(CGEventFlags::CGEventFlagAlternate);
+    has_cmd && has_shift && !has_ctrl && !has_alt
+}
+
+/// Returns true when `keycode` + `flags` indicate a standard clipboard copy or
+/// cut gesture (`⌘C` / `⌘X`) without extra Ctrl / Option modifiers.
+fn is_clipboard_hotkey(keycode: i64, flags: CGEventFlags) -> bool {
+    if keycode != KC_C && keycode != KC_X {
+        return false;
+    }
+    let has_cmd = flags.contains(CGEventFlags::CGEventFlagCommand);
+    let has_shift = flags.contains(CGEventFlags::CGEventFlagShift);
+    let has_ctrl = flags.contains(CGEventFlags::CGEventFlagControl);
+    let has_alt = flags.contains(CGEventFlags::CGEventFlagAlternate);
+    has_cmd && !has_ctrl && !has_alt && !has_shift
 }
 
 /// Maximum number of attempts to establish the event tap while waiting for system permissions.
@@ -114,30 +144,33 @@ struct ActivationState {
 /// Implements a state machine that filters for state transitions (press/release)
 /// and enforces temporal constraints defined by [`ACTIVATION_WINDOW`].
 fn evaluate_activation(state: &mut ActivationState, is_press: bool) -> bool {
-    if is_press && !state.is_pressed {
-        state.is_pressed = true;
-        let now = Instant::now();
-
-        // Enforce cooldown period after a successful activation to prevent
-        // rapid tapping from triggering multiple toggles.
-        if let Some(last_act) = state.last_activation {
-            if now.duration_since(last_act) < ACTIVATION_COOLDOWN {
-                return false;
-            }
+    if is_press {
+        if !state.is_pressed {
+            state.is_pressed = true;
         }
-
-        if let Some(last) = state.last_trigger {
-            if now.duration_since(last) < ACTIVATION_WINDOW {
-                state.last_trigger = None;
-                state.last_activation = Some(now);
-                return true;
-            }
-        }
-        state.last_trigger = Some(now);
-    } else if !is_press {
-        state.is_pressed = false;
+        return false;
     }
 
+    if !state.is_pressed {
+        return false;
+    }
+    state.is_pressed = false;
+
+    let now = Instant::now();
+    if let Some(last_act) = state.last_activation {
+        if now.duration_since(last_act) < ACTIVATION_COOLDOWN {
+            return false;
+        }
+    }
+
+    if let Some(last) = state.last_trigger {
+        if now.duration_since(last) < ACTIVATION_WINDOW {
+            state.last_trigger = None;
+            state.last_activation = Some(now);
+            return true;
+        }
+    }
+    state.last_trigger = Some(now);
     false
 }
 
@@ -166,11 +199,20 @@ impl OverlayActivator {
     ///
     /// * `on_activation` — invoked on double-tap Control (toggles the overlay).
     /// * `on_reply_hotkey` — invoked on ⌃⇧R (triggers smart-reply capture).
+    /// * `on_screenshot_hotkey` — invoked on ⌘⇧X (triggers free-form screenshot).
+    /// * `on_clipboard_hotkey` — invoked on ⌘C / ⌘X (clipboard monitor hint).
     #[cfg_attr(coverage_nightly, coverage(off))]
-    pub fn start<F, G>(&self, on_activation: F, on_reply_hotkey: G)
-    where
+    pub fn start<F, G, H, I>(
+        &self,
+        on_activation: F,
+        on_reply_hotkey: G,
+        on_screenshot_hotkey: H,
+        on_clipboard_hotkey: I,
+    ) where
         F: Fn() + Send + Sync + 'static,
         G: Fn() + Send + Sync + 'static,
+        H: Fn() + Send + Sync + 'static,
+        I: Fn() + Send + Sync + 'static,
     {
         if self.is_active.load(Ordering::SeqCst) {
             return;
@@ -185,9 +227,17 @@ impl OverlayActivator {
         let is_active = self.is_active.clone();
         let on_activation = Arc::new(on_activation);
         let on_reply_hotkey = Arc::new(on_reply_hotkey);
+        let on_screenshot_hotkey = Arc::new(on_screenshot_hotkey);
+        let on_clipboard_hotkey = Arc::new(on_clipboard_hotkey);
 
         std::thread::spawn(move || {
-            run_loop_with_retry(is_active, on_activation, on_reply_hotkey);
+            run_loop_with_retry(
+                is_active,
+                on_activation,
+                on_reply_hotkey,
+                on_screenshot_hotkey,
+                on_clipboard_hotkey,
+            );
         });
     }
 }
@@ -216,13 +266,17 @@ enum TapExitReason {
 ///   `TapDisabledByTimeout`). Retries immediately with no attempt limit so the
 ///   listener recovers as fast as possible.
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn run_loop_with_retry<F, G>(
+fn run_loop_with_retry<F, G, H, I>(
     is_active: Arc<AtomicBool>,
     on_activation: Arc<F>,
     on_reply_hotkey: Arc<G>,
+    on_screenshot_hotkey: Arc<H>,
+    on_clipboard_hotkey: Arc<I>,
 ) where
     F: Fn() + Send + Sync + 'static,
     G: Fn() + Send + Sync + 'static,
+    H: Fn() + Send + Sync + 'static,
+    I: Fn() + Send + Sync + 'static,
 {
     let mut permission_failures: u32 = 0;
 
@@ -231,7 +285,13 @@ fn run_loop_with_retry<F, G>(
             return;
         }
 
-        match try_initialize_tap(&is_active, &on_activation, &on_reply_hotkey) {
+        match try_initialize_tap(
+            &is_active,
+            &on_activation,
+            &on_reply_hotkey,
+            &on_screenshot_hotkey,
+            &on_clipboard_hotkey,
+        ) {
             TapExitReason::Deactivated => return,
 
             TapExitReason::TapDied => {
@@ -266,14 +326,18 @@ fn run_loop_with_retry<F, G>(
 /// Returns the reason the run loop exited so the caller can decide whether
 /// to retry.
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn try_initialize_tap<F, G>(
+fn try_initialize_tap<F, G, H, I>(
     is_active: &Arc<AtomicBool>,
     on_activation: &Arc<F>,
     on_reply_hotkey: &Arc<G>,
+    on_screenshot_hotkey: &Arc<H>,
+    on_clipboard_hotkey: &Arc<I>,
 ) -> TapExitReason
 where
     F: Fn() + Send + Sync + 'static,
     G: Fn() + Send + Sync + 'static,
+    H: Fn() + Send + Sync + 'static,
+    I: Fn() + Send + Sync + 'static,
 {
     let state = Arc::new(Mutex::new(ActivationState {
         last_trigger: None,
@@ -284,6 +348,8 @@ where
     let cb_active = is_active.clone();
     let cb_on_activation = on_activation.clone();
     let cb_on_reply_hotkey = on_reply_hotkey.clone();
+    let cb_on_screenshot_hotkey = on_screenshot_hotkey.clone();
+    let cb_on_clipboard_hotkey = on_clipboard_hotkey.clone();
     let cb_state = state.clone();
 
     // Create the event tap at HID level — the lowest level before events reach
@@ -338,6 +404,10 @@ where
                 CGEventType::KeyDown => {
                     if is_reply_hotkey(keycode, flags) {
                         cb_on_reply_hotkey();
+                    } else if is_screenshot_hotkey(keycode, flags) {
+                        cb_on_screenshot_hotkey();
+                    } else if is_clipboard_hotkey(keycode, flags) {
+                        cb_on_clipboard_hotkey();
                     }
                 }
                 CGEventType::FlagsChanged => {
@@ -363,7 +433,9 @@ where
 
     match tap_result {
         Ok(tap) => {
-            eprintln!("thuki: [activator] event tap created (HID level) — listening for double-tap Control");
+            eprintln!(
+                "thuki: [activator] event tap created (HID level) — listening for double-tap Control, ⌃⇧R, ⌘⇧X, and clipboard intents"
+            );
             unsafe {
                 let loop_source = tap
                     .mach_port()
@@ -413,12 +485,13 @@ mod tests {
             last_activation: None,
         };
 
-        // First event
+        // First tap only arms the sequence on key-up.
         assert!(!evaluate_activation(&mut state, true));
-        evaluate_activation(&mut state, false);
+        assert!(!evaluate_activation(&mut state, false));
 
-        // Sequence completion
-        assert!(evaluate_activation(&mut state, true));
+        // Sequence completes on the second release, not the second press.
+        assert!(!evaluate_activation(&mut state, true));
+        assert!(evaluate_activation(&mut state, false));
     }
 
     #[test]
@@ -430,12 +503,13 @@ mod tests {
         };
 
         evaluate_activation(&mut state, true);
-        evaluate_activation(&mut state, false);
+        assert!(!evaluate_activation(&mut state, false));
 
         // Simulate temporal drift beyond window
         state.last_trigger = Some(Instant::now() - Duration::from_millis(500));
 
         assert!(!evaluate_activation(&mut state, true));
+        assert!(!evaluate_activation(&mut state, false));
     }
 
     #[test]
@@ -448,15 +522,16 @@ mod tests {
 
         // Complete first activation
         evaluate_activation(&mut state, true);
-        evaluate_activation(&mut state, false);
-        assert!(evaluate_activation(&mut state, true));
-        evaluate_activation(&mut state, false);
+        assert!(!evaluate_activation(&mut state, false));
+        assert!(!evaluate_activation(&mut state, true));
+        assert!(evaluate_activation(&mut state, false));
 
         // Try to activate again immediately — within 600ms cooldown
         evaluate_activation(&mut state, true);
-        evaluate_activation(&mut state, false);
+        assert!(!evaluate_activation(&mut state, false));
         // This should be rejected by cooldown
         assert!(!evaluate_activation(&mut state, true));
+        assert!(!evaluate_activation(&mut state, false));
     }
 
     #[test]
@@ -469,43 +544,44 @@ mod tests {
 
         // Complete first activation
         evaluate_activation(&mut state, true);
-        evaluate_activation(&mut state, false);
-        assert!(evaluate_activation(&mut state, true));
-        evaluate_activation(&mut state, false);
+        assert!(!evaluate_activation(&mut state, false));
+        assert!(!evaluate_activation(&mut state, true));
+        assert!(evaluate_activation(&mut state, false));
 
         // Simulate cooldown expiry
         state.last_activation = Some(Instant::now() - Duration::from_millis(700));
 
         // Should work now
         evaluate_activation(&mut state, true);
-        evaluate_activation(&mut state, false);
-        assert!(evaluate_activation(&mut state, true));
+        assert!(!evaluate_activation(&mut state, false));
+        assert!(!evaluate_activation(&mut state, true));
+        assert!(evaluate_activation(&mut state, false));
     }
 
     #[test]
     fn boundary_timing_at_exactly_400ms_is_rejected() {
         let mut state = ActivationState {
             last_trigger: Some(Instant::now() - Duration::from_millis(400)),
-            is_pressed: false,
+            is_pressed: true,
             last_activation: None,
         };
 
-        assert!(!evaluate_activation(&mut state, true));
+        assert!(!evaluate_activation(&mut state, false));
     }
 
     #[test]
     fn boundary_timing_at_399ms_is_accepted() {
         let mut state = ActivationState {
             last_trigger: Some(Instant::now() - Duration::from_millis(399)),
-            is_pressed: false,
+            is_pressed: true,
             last_activation: None,
         };
 
-        assert!(evaluate_activation(&mut state, true));
+        assert!(evaluate_activation(&mut state, false));
     }
 
     #[test]
-    fn first_tap_records_timestamp() {
+    fn first_release_records_timestamp() {
         let mut state = ActivationState {
             last_trigger: None,
             is_pressed: false,
@@ -513,6 +589,8 @@ mod tests {
         };
 
         assert!(!evaluate_activation(&mut state, true));
+        assert!(state.last_trigger.is_none());
+        assert!(!evaluate_activation(&mut state, false));
         assert!(state.last_trigger.is_some());
     }
 
@@ -525,8 +603,9 @@ mod tests {
         };
 
         evaluate_activation(&mut state, true);
-        evaluate_activation(&mut state, false);
-        assert!(evaluate_activation(&mut state, true));
+        assert!(!evaluate_activation(&mut state, false));
+        assert!(!evaluate_activation(&mut state, true));
+        assert!(evaluate_activation(&mut state, false));
 
         assert!(state.last_trigger.is_none());
         assert!(state.last_activation.is_some());
@@ -611,5 +690,83 @@ mod tests {
             | CGEventFlags::CGEventFlagShift
             | CGEventFlags::CGEventFlagAlphaShift;
         assert!(is_reply_hotkey(KC_R, flags));
+    }
+
+    // ─── is_screenshot_hotkey ───────────────────────────────────────────────
+
+    #[test]
+    fn screenshot_hotkey_matches_cmd_shift_x() {
+        let flags = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagShift;
+        assert!(is_screenshot_hotkey(KC_X, flags));
+    }
+
+    #[test]
+    fn screenshot_hotkey_rejects_wrong_keycode() {
+        let flags = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagShift;
+        assert!(!is_screenshot_hotkey(KC_R, flags));
+    }
+
+    #[test]
+    fn screenshot_hotkey_rejects_missing_command() {
+        let flags = CGEventFlags::CGEventFlagShift;
+        assert!(!is_screenshot_hotkey(KC_X, flags));
+    }
+
+    #[test]
+    fn screenshot_hotkey_rejects_missing_shift() {
+        let flags = CGEventFlags::CGEventFlagCommand;
+        assert!(!is_screenshot_hotkey(KC_X, flags));
+    }
+
+    #[test]
+    fn screenshot_hotkey_rejects_extra_ctrl() {
+        let flags = CGEventFlags::CGEventFlagCommand
+            | CGEventFlags::CGEventFlagShift
+            | CGEventFlags::CGEventFlagControl;
+        assert!(!is_screenshot_hotkey(KC_X, flags));
+    }
+
+    #[test]
+    fn screenshot_hotkey_rejects_extra_option() {
+        let flags = CGEventFlags::CGEventFlagCommand
+            | CGEventFlags::CGEventFlagShift
+            | CGEventFlags::CGEventFlagAlternate;
+        assert!(!is_screenshot_hotkey(KC_X, flags));
+    }
+
+    #[test]
+    fn screenshot_hotkey_ignores_unrelated_modifier_bits() {
+        let flags = CGEventFlags::CGEventFlagCommand
+            | CGEventFlags::CGEventFlagShift
+            | CGEventFlags::CGEventFlagAlphaShift;
+        assert!(is_screenshot_hotkey(KC_X, flags));
+    }
+
+    // ─── is_clipboard_hotkey ────────────────────────────────────────────────
+
+    #[test]
+    fn clipboard_hotkey_matches_cmd_c() {
+        let flags = CGEventFlags::CGEventFlagCommand;
+        assert!(is_clipboard_hotkey(KC_C, flags));
+    }
+
+    #[test]
+    fn clipboard_hotkey_matches_cmd_x() {
+        let flags = CGEventFlags::CGEventFlagCommand;
+        assert!(is_clipboard_hotkey(KC_X, flags));
+    }
+
+    #[test]
+    fn clipboard_hotkey_rejects_screenshot_shortcut() {
+        let flags = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagShift;
+        assert!(!is_clipboard_hotkey(KC_X, flags));
+    }
+
+    #[test]
+    fn clipboard_hotkey_rejects_extra_ctrl_or_option() {
+        let ctrl_flags = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagControl;
+        let alt_flags = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagAlternate;
+        assert!(!is_clipboard_hotkey(KC_C, ctrl_flags));
+        assert!(!is_clipboard_hotkey(KC_C, alt_flags));
     }
 }

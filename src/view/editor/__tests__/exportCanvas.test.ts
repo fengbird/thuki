@@ -30,4 +30,16 @@ describe('exportStageToDataURL', () => {
       mimeType: 'image/png',
     });
   });
+
+  it('passes a custom pixel ratio through to stage export', () => {
+    const toDataURL = vi.fn().mockReturnValue('data:image/png;base64,CUSTOM');
+    const stage = { toDataURL } as unknown as Konva.Stage;
+    expect(exportStageToDataURL(stage, 0.5)).toBe(
+      'data:image/png;base64,CUSTOM',
+    );
+    expect(toDataURL).toHaveBeenCalledWith({
+      pixelRatio: 0.5,
+      mimeType: 'image/png',
+    });
+  });
 });

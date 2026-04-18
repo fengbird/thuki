@@ -6,10 +6,13 @@ import type Konva from 'konva';
  *
  * Extracted so the export path can be unit-tested with a minimal stage stub.
  */
-export function exportStageToDataURL(stage: Konva.Stage | null): string | null {
+export function exportStageToDataURL(
+  stage: Konva.Stage | null,
+  pixelRatio = 2,
+): string | null {
   if (!stage) return null;
   try {
-    return stage.toDataURL({ pixelRatio: 2, mimeType: 'image/png' });
+    return stage.toDataURL({ pixelRatio, mimeType: 'image/png' });
   } catch {
     /* v8 ignore next -- Konva throws on empty/invalid stage; defensive */
     return null;

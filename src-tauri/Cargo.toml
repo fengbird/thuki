@@ -48,6 +48,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std",
     "NSPasteboard",
+    "NSPasteboardItem",
     "NSRunningApplication",
     "NSWorkspace",
 ] }
@@ -55,4 +56,3 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 [dev-dependencies]
 mockito = "1"
 tokio = { version = "1", features = ["rt", "macros", "net", "io-util"] }
-

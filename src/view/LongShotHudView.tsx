@@ -33,7 +33,9 @@ type ProgressPayload = {
  */
 export function LongShotHudView() {
   const [preview, setPreview] = useState<PreviewState | null>(null);
-  const [busy, setBusy] = useState<'idle' | 'saving' | 'cancelling'>('idle');
+  const [busy, setBusy] = useState<
+    'idle' | 'saving' | 'editing' | 'cancelling'
+  >('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -66,6 +68,18 @@ export function LongShotHudView() {
     setErrorMessage('');
     try {
       await invoke('finish_manual_long_capture');
+      void getCurrentWindow().hide();
+    } catch (error) {
+      setBusy('idle');
+      setErrorMessage(typeof error === 'string' ? error : String(error));
+    }
+  }, []);
+
+  const handleEdit = useCallback(async () => {
+    setBusy('editing');
+    setErrorMessage('');
+    try {
+      await invoke('edit_manual_long_capture');
       void getCurrentWindow().hide();
     } catch (error) {
       setBusy('idle');
@@ -192,6 +206,26 @@ export function LongShotHudView() {
           }}
         >
           Cancel
+        </button>
+        <button
+          data-testid="longhud-edit"
+          onClick={() => void handleEdit()}
+          disabled={busy !== 'idle' || !preview}
+          style={{
+            padding: '6px 16px',
+            height: 30,
+            background: 'rgba(255,255,255,0.08)',
+            border: '1px solid rgba(255,255,255,0.16)',
+            borderRadius: 6,
+            color: 'rgba(255,255,255,0.88)',
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: busy !== 'idle' || !preview ? 'not-allowed' : 'pointer',
+            opacity: busy !== 'idle' || !preview ? 0.5 : 1,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {busy === 'editing' ? 'Opening…' : 'Edit'}
         </button>
         <button
           data-testid="longhud-save"

@@ -10,11 +10,15 @@ import {
 } from '../testUtils/mocks/tauri';
 import { __mockWindow } from '../testUtils/mocks/tauri-window';
 
-async function showOverlay(selectedText: string | null = null) {
+async function showOverlay(
+  selectedText: string | null = null,
+  selectedSource: 'selection' | 'clipboard' | null = null,
+) {
   await act(async () => {
     emitTauriEvent('thuki://visibility', {
       state: 'show',
       selected_text: selectedText,
+      selected_source: selectedSource,
       window_x: null,
       window_y: null,
       screen_bottom_y: null,
@@ -179,6 +183,16 @@ describe('App', () => {
     await showOverlay('some code snippet');
 
     expect(screen.getByText(/some code snippet/)).toBeInTheDocument();
+  });
+
+  it('shows the clipboard source badge when clipboard context is provided', async () => {
+    render(<App />);
+    await act(async () => {});
+
+    await showOverlay('copied snippet', 'clipboard');
+
+    expect(screen.getByText('Clipboard')).toBeInTheDocument();
+    expect(screen.getByText(/copied snippet/)).toBeInTheDocument();
   });
 
   it('enters hiding state on hide-request visibility event', async () => {

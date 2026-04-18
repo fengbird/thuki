@@ -446,10 +446,13 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
         setLongShotBusy(false);
         setStatus({ kind: 'idle', message: '' });
       });
-      unlistenError = await listen<string>('thuki://long-capture-error', (e) => {
-        setLongShotBusy(false);
-        setStatus({ kind: 'error', message: e.payload });
-      });
+      unlistenError = await listen<string>(
+        'thuki://long-capture-error',
+        (e) => {
+          setLongShotBusy(false);
+          setStatus({ kind: 'error', message: e.payload });
+        },
+      );
     })();
     return () => {
       unlistenDone?.();

@@ -221,6 +221,8 @@ interface AskBarViewProps {
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
   /** Selected text from the host app captured at activation time, if any. */
   selectedText?: string;
+  /** Semantic source for the externally provided context. */
+  selectedSource?: 'selection' | 'clipboard';
   /**
    * Called when the compact history icon is clicked in ask-bar mode.
    * Omit to hide the history icon entirely.
@@ -263,6 +265,7 @@ export function AskBarView({
   onCancel,
   inputRef,
   selectedText,
+  selectedSource,
   onHistoryOpen,
   attachedImages,
   onImagesAttached,
@@ -584,6 +587,11 @@ export function AskBarView({
     <div className={`flex flex-col w-full shrink-0 ${ringClass}`}>
       {selectedText && (
         <div className="px-4 pt-2 pb-0">
+          {selectedSource && (
+            <p className="mb-1 text-[10px] font-medium uppercase tracking-[0.18em] text-text-tertiary">
+              {selectedSource === 'selection' ? 'Selection' : 'Clipboard'}
+            </p>
+          )}
           <p className="italic text-xs text-text-secondary select-text whitespace-pre-wrap">
             &ldquo;
             {formatQuotedText(

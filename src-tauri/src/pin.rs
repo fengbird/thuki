@@ -188,6 +188,7 @@ pub fn edit_pin_window(
         width,
         height,
         Some(true),
+        None,
     )?;
     close_pin_window(app_handle, label)?;
     Ok(())

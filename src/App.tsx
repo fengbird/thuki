@@ -125,6 +125,7 @@ type OverlayVisibilityPayload =
   | {
       state: 'show';
       selected_text: string | null;
+      selected_source?: 'selection' | 'clipboard' | null;
       window_x: number | null;
       window_y: number | null;
       screen_bottom_y: number | null;
@@ -275,6 +276,14 @@ function App() {
    */
   const [sessionId, setSessionId] = useState(0);
   const [selectedContext, setSelectedContext] = useState<string | null>(null);
+  const [selectedContextSource, setSelectedContextSource] = useState<
+    'selection' | 'clipboard' | null
+  >(null);
+  useEffect(() => {
+    if (selectedContext === null) {
+      setSelectedContextSource(null);
+    }
+  }, [selectedContext]);
   const [modelConfig, setModelConfig] = useState<{
     active: string;
     all: string[];
@@ -462,6 +471,7 @@ function App() {
   const replayEntranceAnimation = useCallback(
     (
       context: string | null,
+      source: 'selection' | 'clipboard' | null,
       windowX: number | null,
       windowY: number | null,
       screenBottomY: number | null,
@@ -482,6 +492,7 @@ function App() {
       setSessionId((id) => id + 1);
       setQuery('');
       setSelectedContext(context);
+      setSelectedContextSource(context ? source : null);
       setIsHistoryOpen(false);
       setAttachedImages((prev) => {
         for (const img of prev) URL.revokeObjectURL(img.blobUrl);
@@ -512,6 +523,7 @@ function App() {
     screenCapturePendingRef.current = false;
     screenCaptureInputSnapshotRef.current = null;
     setSelectedContext(null);
+    setSelectedContextSource(null);
     setPreviewImageUrl(null);
     setAttachedImages((prev) => {
       for (const img of prev) URL.revokeObjectURL(img.blobUrl);
@@ -1394,6 +1406,7 @@ function App() {
           if (payload.state === 'show') {
             replayEntranceAnimation(
               payload.selected_text ?? null,
+              payload.selected_source ?? null,
               payload.window_x ?? null,
               payload.window_y ?? null,
               payload.screen_bottom_y ?? null,
@@ -1747,6 +1760,7 @@ function App() {
                   onCancel={handleCancel}
                   inputRef={inputRef}
                   selectedText={selectedContext ?? undefined}
+                  selectedSource={selectedContextSource ?? undefined}
                   onHistoryOpen={handleHistoryToggle}
                   attachedImages={isSubmitPending ? [] : attachedImages}
                   onImagesAttached={handleImagesAttached}

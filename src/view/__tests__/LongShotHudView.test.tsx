@@ -31,6 +31,7 @@ describe('LongShotHudView', () => {
     expect(screen.getByTestId('longhud-root')).toBeInTheDocument();
     expect(screen.getByTestId('longhud-preview-empty')).toBeInTheDocument();
     expect(screen.getByTestId('longhud-save')).toBeInTheDocument();
+    expect(screen.getByTestId('longhud-edit')).toBeInTheDocument();
     expect(screen.getByTestId('longhud-cancel')).toBeInTheDocument();
     expect(screen.getByTestId('longhud-message').textContent).toContain(
       'trimmed automatically',
@@ -40,7 +41,9 @@ describe('LongShotHudView', () => {
   it('Save is disabled until a first progress event arrives', async () => {
     render(<LongShotHudView />);
     const save = screen.getByTestId('longhud-save') as HTMLButtonElement;
+    const edit = screen.getByTestId('longhud-edit') as HTMLButtonElement;
     expect(save.disabled).toBe(true);
+    expect(edit.disabled).toBe(true);
     await act(async () => {
       emitProgress({
         count: 1,
@@ -51,6 +54,7 @@ describe('LongShotHudView', () => {
       });
     });
     expect(save.disabled).toBe(false);
+    expect(edit.disabled).toBe(false);
   });
 
   it('progress event renders the preview image with cache-busted src', async () => {
@@ -178,6 +182,49 @@ describe('LongShotHudView', () => {
     ).toBe(false);
     expect(screen.getByTestId('longhud-message').textContent).toContain(
       'stitch failed',
+    );
+  });
+
+  it('Edit invokes edit_manual_long_capture and hides the HUD', async () => {
+    render(<LongShotHudView />);
+    await act(async () => {
+      emitProgress({
+        count: 1,
+        version: 1,
+        path: '/tmp/preview.png',
+        width: 100,
+        height: 100,
+      });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('longhud-edit'));
+    });
+    expect(invoke).toHaveBeenCalledWith('edit_manual_long_capture');
+    expect(__mockWindow.hide).toHaveBeenCalledOnce();
+  });
+
+  it('Edit surfaces backend errors and restores idle controls', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'edit_manual_long_capture') throw 'editor open failed';
+    });
+    render(<LongShotHudView />);
+    await act(async () => {
+      emitProgress({
+        count: 1,
+        version: 1,
+        path: '/tmp/preview.png',
+        width: 100,
+        height: 100,
+      });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('longhud-edit'));
+    });
+    expect(
+      (screen.getByTestId('longhud-edit') as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(screen.getByTestId('longhud-message').textContent).toContain(
+      'editor open failed',
     );
   });
 

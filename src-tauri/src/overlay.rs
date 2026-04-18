@@ -49,13 +49,20 @@ pub const OVERLAY_WINDOW_LABEL: &str = "overlay";
 /// the entire image instead of starting in drag-to-select mode. Used by the
 /// "edit pin" flow, where the user already picked their region and just
 /// wants to annotate.
-pub fn overlay_url(image_path: &str, fit: bool) -> String {
+///
+/// `editor` allows specialized overlay experiences to reuse the same native
+/// window shell while mounting a different React root for the image payload.
+pub fn overlay_url(image_path: &str, fit: bool, editor: Option<&str>) -> String {
     let encoded = percent_encode(image_path);
+    let mut url = format!("index.html?overlay=1&path={encoded}");
     if fit {
-        format!("index.html?overlay=1&path={encoded}&fit=1")
-    } else {
-        format!("index.html?overlay=1&path={encoded}")
+        url.push_str("&fit=1");
     }
+    if let Some(kind) = editor.filter(|kind| !kind.is_empty()) {
+        url.push_str("&editor=");
+        url.push_str(&percent_encode(kind));
+    }
+    url
 }
 
 /// Minimal RFC 3986 percent-encoding for path values — encodes characters
@@ -140,6 +147,7 @@ pub fn open_overlay_window(
     width: f64,
     height: f64,
     fit: Option<bool>,
+    editor: Option<String>,
 ) -> Result<(), String> {
     use tauri::Manager;
 
@@ -147,7 +155,7 @@ pub fn open_overlay_window(
     let (x, y, width, height) =
         sanitize_bounds(x, y, width, height).ok_or_else(|| "invalid overlay bounds".to_string())?;
 
-    let url = overlay_url(&image_path, fit.unwrap_or(false));
+    let url = overlay_url(&image_path, fit.unwrap_or(false), editor.as_deref());
 
     if let Some(existing) = app_handle.get_webview_window(OVERLAY_WINDOW_LABEL) {
         // Ensure the panel is off-screen before we navigate. When the user
@@ -299,7 +307,7 @@ mod tests {
 
     #[test]
     fn overlay_url_contains_flag_and_path() {
-        let url = overlay_url("/tmp/shot.png", false);
+        let url = overlay_url("/tmp/shot.png", false, None);
         assert!(url.starts_with("index.html?overlay=1"));
         assert!(url.contains("path="));
         assert!(url.contains("tmp"));
@@ -308,15 +316,21 @@ mod tests {
 
     #[test]
     fn overlay_url_encodes_special_chars() {
-        let url = overlay_url("/tmp/a b&c.png", false);
+        let url = overlay_url("/tmp/a b&c.png", false, None);
         assert!(url.contains("%20"));
         assert!(url.contains("%26"));
     }
 
     #[test]
     fn overlay_url_includes_fit_flag_when_requested() {
-        let url = overlay_url("/tmp/shot.png", true);
+        let url = overlay_url("/tmp/shot.png", true, None);
         assert!(url.contains("fit=1"));
+    }
+
+    #[test]
+    fn overlay_url_includes_editor_mode_when_requested() {
+        let url = overlay_url("/tmp/shot.png", false, Some("long"));
+        assert!(url.contains("editor=long"));
     }
 
     #[test]

@@ -105,6 +105,8 @@ struct VisibilityPayload {
     state: &'static str,
     /// Selected text captured at activation time, if any.
     selected_text: Option<String>,
+    /// Semantic source of `selected_text`.
+    selected_source: Option<crate::context::ContextSource>,
     /// Logical X of the window at show time. Used with `window_y` and
     /// `screen_bottom_y` to decide growth direction, and as the pinned X
     /// coordinate for `set_window_frame` calls during upward growth.
@@ -120,6 +122,7 @@ fn emit_overlay_visibility(
     app_handle: &tauri::AppHandle,
     state: &'static str,
     selected_text: Option<String>,
+    selected_source: Option<crate::context::ContextSource>,
     window_x: Option<f64>,
     window_y: Option<f64>,
     screen_bottom_y: Option<f64>,
@@ -129,6 +132,7 @@ fn emit_overlay_visibility(
         VisibilityPayload {
             state,
             selected_text,
+            selected_source,
             window_x,
             window_y,
             screen_bottom_y,
@@ -213,6 +217,7 @@ pub fn show_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::Activati
     }
 
     // Extract before building local_ctx to avoid an extra clone.
+    let selected_source = ctx.selected_source;
     let selected_text = ctx.selected_text;
 
     // Position the window before making it visible.
@@ -232,6 +237,7 @@ pub fn show_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::Activati
         // Convert global coordinates to monitor-local for the positioning math.
         let local_ctx = crate::context::ActivationContext {
             selected_text: selected_text.clone(),
+            selected_source,
             bounds: ctx.bounds.map(|r| crate::context::ScreenRect {
                 x: r.x - mon_x,
                 y: r.y - mon_y,
@@ -276,6 +282,7 @@ pub fn show_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::Activati
                 app_handle,
                 OVERLAY_VISIBILITY_SHOW,
                 selected_text,
+                selected_source,
                 window_x,
                 window_y,
                 screen_bottom_y,
@@ -296,6 +303,7 @@ fn request_overlay_hide(app_handle: &tauri::AppHandle) {
         emit_overlay_visibility(
             app_handle,
             OVERLAY_VISIBILITY_HIDE_REQUEST,
+            None,
             None,
             None,
             None,
@@ -322,6 +330,7 @@ pub fn show_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::Activati
             app_handle,
             OVERLAY_VISIBILITY_SHOW,
             ctx.selected_text,
+            ctx.selected_source,
             None,
             None,
             None,
@@ -417,6 +426,7 @@ fn capture_and_open_overlay(app_handle: &tauri::AppHandle) {
                 bounds.1,
                 bounds.2,
                 bounds.3,
+                None,
                 None,
             );
         });
@@ -803,8 +813,13 @@ pub fn run() {
 
             // ── System tray icon + menu ───────────────────────────────────
             let show_item = MenuItem::with_id(app, "show", "Open Thuki", true, None::<&str>)?;
-            let screenshot_item =
-                MenuItem::with_id(app, "screenshot", "New Screenshot…", true, None::<&str>)?;
+            let screenshot_item = MenuItem::with_id(
+                app,
+                "screenshot",
+                "New Screenshot…",
+                true,
+                Some("Cmd+Shift+X"),
+            )?;
             let settings_item =
                 MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -865,6 +880,8 @@ pub fn run() {
             {
                 let activator_app_handle = app.handle().clone();
                 let reply_app_handle = app.handle().clone();
+                let screenshot_app_handle = app.handle().clone();
+                let clipboard_hint_handle = app.handle().clone();
                 let activator = activator::OverlayActivator::new();
                 if permissions::is_accessibility_granted() {
                     activator.start(
@@ -883,7 +900,9 @@ pub fn run() {
                             // CFRunLoop and silently prevents all future key events from
                             // being delivered to the activator.
                             std::thread::spawn(move || {
-                                let ctx = crate::context::capture_activation_context(is_visible);
+                                let resolver =
+                                    handle.state::<crate::context::ActivationContextResolver>();
+                                let ctx = resolver.capture(is_visible);
                                 let _ = handle
                                     .run_on_main_thread(move || toggle_overlay(&handle2, ctx));
                             });
@@ -898,8 +917,18 @@ pub fn run() {
                                 handle_reply_hotkey(handle);
                             });
                         },
+                        move || {
+                            let handle = screenshot_app_handle.clone();
+                            capture_and_open_overlay(&handle);
+                        },
+                        move || {
+                            let resolver = clipboard_hint_handle
+                                .state::<crate::context::ActivationContextResolver>();
+                            resolver.note_copy_intent();
+                        },
                     );
                 }
+                app.manage(crate::context::ActivationContextResolver::new());
                 app.manage(activator);
             }
 
@@ -1008,6 +1037,8 @@ pub fn run() {
             long_shot::start_manual_long_capture,
             #[cfg(not(coverage))]
             long_shot::finish_manual_long_capture,
+            #[cfg(not(coverage))]
+            long_shot::edit_manual_long_capture,
             #[cfg(not(coverage))]
             long_shot::cancel_manual_long_capture,
             #[cfg(not(coverage))]

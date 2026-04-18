@@ -1,11 +1,12 @@
 //! Captures contextual information at the moment of overlay activation.
 //!
-//! Queries the macOS Accessibility API to detect any currently selected text
-//! and its screen bounds. Falls back gracefully when the focused app does not
-//! fully implement the AX protocol.
+//! The macOS implementation uses a hybrid strategy tuned for reliability:
+//! - direct AX probes on double-Control release for active selections
+//! - low-frequency clipboard monitoring that spikes briefly after Cmd+C / Cmd+X
+//! - native pasteboard snapshot+restore for the synthetic-copy fallback
 //!
 //! `ActivationContext` and `calculate_window_position` are cross-platform.
-//! The AX capture implementation is macOS-only.
+//! The resolver implementation is macOS-only.
 
 // ─── Cross-platform public types ─────────────────────────────────────────────
 
@@ -18,11 +19,21 @@ pub struct ScreenRect {
     pub height: f64,
 }
 
+/// Where the externally-provided ask-bar context came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextSource {
+    Selection,
+    Clipboard,
+}
+
 /// Context captured at the moment of overlay activation.
 #[derive(Debug, Clone)]
 pub struct ActivationContext {
     /// The currently selected text in the focused app, if any.
     pub selected_text: Option<String>,
+    /// Semantic source of `selected_text`.
+    pub selected_source: Option<ContextSource>,
     /// Screen bounds of the selection in logical points.
     /// `None` when AX cannot provide bounds for the selection (e.g. Chromium apps).
     pub bounds: Option<ScreenRect>,
@@ -38,24 +49,83 @@ impl ActivationContext {
     pub fn empty() -> Self {
         Self {
             selected_text: None,
+            selected_source: None,
             bounds: None,
             mouse_position: None,
         }
     }
 }
 
-// ─── macOS AX capture ────────────────────────────────────────────────────────
+/// Shared resolver state used by the activator callbacks.
+pub struct ActivationContextResolver {
+    #[cfg(target_os = "macos")]
+    inner: macos::Resolver,
+}
+
+impl ActivationContextResolver {
+    pub fn new() -> Self {
+        Self {
+            #[cfg(target_os = "macos")]
+            inner: macos::Resolver::new(),
+        }
+    }
+
+    /// Hints that the user just pressed Cmd+C / Cmd+X, so the clipboard
+    /// monitor should temporarily increase its sampling rate.
+    pub fn note_copy_intent(&self) {
+        #[cfg(target_os = "macos")]
+        self.inner.note_copy_intent();
+    }
+
+    /// Captures the activation context for the next overlay session.
+    ///
+    /// When `overlay_is_visible` is `true` the hotkey will hide the overlay,
+    /// so no context is needed.
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    pub fn capture(&self, overlay_is_visible: bool) -> ActivationContext {
+        if overlay_is_visible {
+            return ActivationContext::empty();
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            self.inner.capture()
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            ActivationContext::empty()
+        }
+    }
+}
+
+impl Default for ActivationContextResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ─── macOS resolver ──────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod macos {
     use std::ffi::c_void;
+    use std::ptr::NonNull;
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::{Duration, Instant};
 
     use core_foundation::base::{CFTypeRef, TCFType};
     use core_foundation::string::{CFString, CFStringRef};
     use core_graphics::geometry::{CGPoint, CGRect, CGSize};
+    use objc2::rc::Retained;
+    use objc2::runtime::ProtocolObject;
+    use objc2_app_kit::{
+        NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting, NSWorkspace,
+    };
+    use objc2_foundation::{NSArray, NSData, NSInteger, NSString, NSUInteger};
 
-    use super::{ActivationContext, ScreenRect};
+    use super::{ActivationContext, ContextSource, ScreenRect};
 
     type AXUIElementRef = *const c_void;
     type AXError = i32;
@@ -77,6 +147,13 @@ mod macos {
             parameter: CFTypeRef,
             value: *mut CFTypeRef,
         ) -> AXError;
+        fn AXUIElementCopyElementAtPosition(
+            application: AXUIElementRef,
+            x: f32,
+            y: f32,
+            element: *mut AXUIElementRef,
+        ) -> AXError;
+        fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, timeout: f64) -> AXError;
         fn AXValueGetValue(value: CFTypeRef, the_type: u32, out: *mut c_void) -> bool;
         fn CFRelease(cf: CFTypeRef);
         // CoreGraphics: mouse position and keyboard event simulation.
@@ -97,6 +174,102 @@ mod macos {
     const K_CG_HID_EVENT_TAP: u32 = 0;
     /// CGEventFlags::kCGEventFlagMaskCommand
     const K_CG_EVENT_FLAG_MASK_COMMAND: u64 = 0x0010_0000;
+    const DEFAULT_CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(350);
+    const HOT_CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(80);
+    const COPY_HOT_WINDOW: Duration = Duration::from_millis(1400);
+    const EXPLICIT_CLIPBOARD_MAX_AGE: Duration = Duration::from_secs(8);
+    const SAME_APP_CLIPBOARD_MAX_AGE: Duration = Duration::from_secs(5);
+    const SYNTHETIC_COPY_SUPPRESSION: Duration = Duration::from_millis(1800);
+    const AX_TIMEOUT_SECONDS: f64 = 0.15;
+
+    #[derive(Debug, Clone)]
+    struct ClipboardSnapshot {
+        text: String,
+        captured_at: Instant,
+        source_pid: Option<i32>,
+        explicit_user_copy: bool,
+    }
+
+    #[derive(Debug, Clone)]
+    struct PasteboardItemSnapshot {
+        entries: Vec<(String, Vec<u8>)>,
+    }
+
+    #[derive(Debug)]
+    struct ClipboardMonitorState {
+        last_snapshot: Option<ClipboardSnapshot>,
+        last_change_count: NSInteger,
+        hot_until: Option<Instant>,
+        last_copy_intent_at: Option<Instant>,
+        suppressed_until: Option<Instant>,
+    }
+
+    #[derive(Clone)]
+    struct ClipboardMonitor {
+        shared: Arc<(Mutex<ClipboardMonitorState>, Condvar)>,
+    }
+
+    #[derive(Debug)]
+    struct SelectionCapture {
+        text: String,
+        bounds: Option<ScreenRect>,
+    }
+
+    pub struct Resolver {
+        clipboard: ClipboardMonitor,
+    }
+
+    impl Resolver {
+        pub fn new() -> Self {
+            Self {
+                clipboard: ClipboardMonitor::new(),
+            }
+        }
+
+        pub fn note_copy_intent(&self) {
+            self.clipboard.note_copy_intent();
+        }
+
+        pub fn capture(&self) -> ActivationContext {
+            let mouse = unsafe { current_mouse_position() };
+
+            if let Some(snapshot) = self.clipboard.recent_explicit_snapshot() {
+                return ActivationContext {
+                    selected_text: Some(snapshot.text),
+                    selected_source: Some(ContextSource::Clipboard),
+                    bounds: None,
+                    mouse_position: Some(mouse),
+                };
+            }
+
+            if let Some(selection) = unsafe { capture_selection(mouse) } {
+                return ActivationContext {
+                    selected_text: Some(selection.text),
+                    selected_source: Some(ContextSource::Selection),
+                    bounds: selection.bounds,
+                    mouse_position: Some(mouse),
+                };
+            }
+
+            if let Some(snapshot) = self.clipboard.recent_same_app_snapshot(frontmost_app_pid()) {
+                return ActivationContext {
+                    selected_text: Some(snapshot.text),
+                    selected_source: Some(ContextSource::Clipboard),
+                    bounds: None,
+                    mouse_position: Some(mouse),
+                };
+            }
+
+            let fallback_text = synthetic_copy_fallback(&self.clipboard);
+            let fallback_source = fallback_text.as_ref().map(|_| ContextSource::Selection);
+            ActivationContext {
+                selected_text: fallback_text,
+                selected_source: fallback_source,
+                bounds: None,
+                mouse_position: Some(mouse),
+            }
+        }
+    }
 
     /// Returns the current mouse cursor position in logical screen coordinates.
     unsafe fn current_mouse_position() -> (f64, f64) {
@@ -128,66 +301,125 @@ mod macos {
         }
     }
 
-    /// Reads the macOS general pasteboard as plain UTF-8.
-    fn clipboard_text() -> String {
-        std::process::Command::new("pbpaste")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .unwrap_or_default()
-    }
-
-    /// Replaces the macOS general pasteboard with the given string.
-    fn write_clipboard(text: &str) {
-        use std::io::Write as _;
-        if let Ok(mut child) = std::process::Command::new("pbcopy")
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-        {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-            let _ = child.wait();
-        }
-    }
-
-    /// Clipboard-based fallback for apps that don't expose selection via AX
-    /// (e.g. VS Code / Electron apps using Monaco editor).
-    ///
-    /// Saves the current clipboard, simulates Cmd+C to copy whatever is selected
-    /// in the focused application, reads the new clipboard, then restores the
-    /// original clipboard contents. Returns the newly copied text, or `None` if
-    /// the clipboard didn't change.
-    /// Concurrent calls are prevented by the caller-level
-    /// `OVERLAY_INTENDED_VISIBLE` atomic guard in `lib.rs`, which ensures only
-    /// one activation path is active at a time.
-    fn clipboard_fallback() -> Option<String> {
-        let before = clipboard_text();
-        // SAFETY: Accessibility permission is checked before the activator starts.
-        unsafe { simulate_cmd_c() };
-        // Give the target app's event loop time to process the synthetic
-        // keystroke before we start polling the pasteboard.
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        // Poll the pasteboard with increasing delays. Most apps respond
-        // within 50ms; Electron/Chromium apps may need up to ~500ms.
-        let mut after = before.clone();
-        for delay_ms in [20, 40, 60, 80, 100, 100, 100] {
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            after = clipboard_text();
-            if after != before {
-                break;
-            }
-        }
-        // Always restore the original clipboard regardless of outcome.
-        if after != before {
-            write_clipboard(&before);
-        }
-        let trimmed = after.trim().to_string();
-        if after != before && !trimmed.is_empty() {
-            Some(trimmed)
-        } else {
+    fn normalize_text(text: String) -> Option<String> {
+        let trimmed = text.trim().to_string();
+        if trimmed.is_empty() {
             None
+        } else {
+            Some(trimmed)
         }
+    }
+
+    fn frontmost_app_pid() -> Option<i32> {
+        let ws = NSWorkspace::sharedWorkspace();
+        Some(ws.frontmostApplication()?.processIdentifier())
+    }
+
+    fn pasteboard_change_count() -> NSInteger {
+        NSPasteboard::generalPasteboard().changeCount()
+    }
+
+    fn pasteboard_string() -> Option<String> {
+        let pb = NSPasteboard::generalPasteboard();
+        let s = unsafe { pb.stringForType(NSPasteboardTypeString)? };
+        normalize_text(s.to_string())
+    }
+
+    fn nsdata_to_vec(data: &NSData) -> Vec<u8> {
+        let len = data.length() as usize;
+        let mut bytes = vec![0u8; len];
+        if len > 0 {
+            unsafe {
+                data.getBytes_length(
+                    NonNull::new(bytes.as_mut_ptr() as *mut c_void).expect("vec ptr"),
+                    len as NSUInteger,
+                );
+            }
+        }
+        bytes
+    }
+
+    fn read_pasteboard_snapshot() -> Vec<PasteboardItemSnapshot> {
+        let pb = NSPasteboard::generalPasteboard();
+        let Some(items) = pb.pasteboardItems() else {
+            return Vec::new();
+        };
+
+        let mut snapshots = Vec::new();
+        for idx in 0..items.count() {
+            let item = items.objectAtIndex(idx);
+            let types = item.types();
+            let mut entries = Vec::new();
+            for ty_idx in 0..types.count() {
+                let ty = types.objectAtIndex(ty_idx);
+                if let Some(data) = item.dataForType(&ty) {
+                    entries.push((ty.to_string(), nsdata_to_vec(&data)));
+                }
+            }
+            if !entries.is_empty() {
+                snapshots.push(PasteboardItemSnapshot { entries });
+            }
+        }
+        snapshots
+    }
+
+    fn restore_pasteboard_snapshot(snapshot: &[PasteboardItemSnapshot]) -> Result<(), String> {
+        let pb = NSPasteboard::generalPasteboard();
+        pb.clearContents();
+        if snapshot.is_empty() {
+            return Ok(());
+        }
+
+        let objects: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = snapshot
+            .iter()
+            .map(|item_snapshot| {
+                let item = NSPasteboardItem::new();
+                for (ty, bytes) in &item_snapshot.entries {
+                    let ty = NSString::from_str(ty);
+                    let data = NSData::with_bytes(bytes);
+                    let _ = item.setData_forType(&data, &ty);
+                }
+                ProtocolObject::from_retained(item)
+            })
+            .collect();
+        let array = NSArray::from_retained_slice(&objects);
+        if pb.writeObjects(&array) {
+            Ok(())
+        } else {
+            Err("Failed to restore NSPasteboard snapshot".to_string())
+        }
+    }
+
+    fn synthetic_copy_fallback(clipboard: &ClipboardMonitor) -> Option<String> {
+        clipboard.suppress_for(SYNTHETIC_COPY_SUPPRESSION);
+        let before_change = pasteboard_change_count();
+        let snapshot = read_pasteboard_snapshot();
+        unsafe { simulate_cmd_c() };
+        std::thread::sleep(Duration::from_millis(10));
+
+        let mut copied_text = None;
+        for delay_ms in [20, 30, 40, 60, 80, 100, 120, 120] {
+            std::thread::sleep(Duration::from_millis(delay_ms));
+            if pasteboard_change_count() == before_change {
+                continue;
+            }
+            copied_text = pasteboard_string();
+            break;
+        }
+
+        let _ = restore_pasteboard_snapshot(&snapshot);
+        copied_text
+    }
+
+    unsafe fn string_attribute(element: AXUIElementRef, name: &str) -> Option<String> {
+        let key = CFString::new(name);
+        let mut value: CFTypeRef = std::ptr::null();
+        let err = AXUIElementCopyAttributeValue(element, key.as_concrete_TypeRef(), &mut value);
+        if err != K_AX_ERROR_SUCCESS || value.is_null() {
+            return None;
+        }
+        let cf_str = CFString::wrap_under_create_rule(value as CFStringRef);
+        normalize_text(cf_str.to_string())
     }
 
     unsafe fn focused_element() -> Option<AXUIElementRef> {
@@ -196,6 +428,7 @@ mod macos {
             // system is null; CFRelease must not be called on a null pointer.
             return None;
         }
+        let _ = AXUIElementSetMessagingTimeout(system, AX_TIMEOUT_SECONDS);
         let key = CFString::new("AXFocusedUIElement");
         let mut value: CFTypeRef = std::ptr::null();
         let err = AXUIElementCopyAttributeValue(system, key.as_concrete_TypeRef(), &mut value);
@@ -207,7 +440,48 @@ mod macos {
         }
     }
 
+    unsafe fn element_at_position(mouse: (f64, f64)) -> Option<AXUIElementRef> {
+        let system = AXUIElementCreateSystemWide();
+        if system.is_null() {
+            return None;
+        }
+        let _ = AXUIElementSetMessagingTimeout(system, AX_TIMEOUT_SECONDS);
+        let mut element: AXUIElementRef = std::ptr::null();
+        let err =
+            AXUIElementCopyElementAtPosition(system, mouse.0 as f32, mouse.1 as f32, &mut element);
+        CFRelease(system as CFTypeRef);
+        if err == K_AX_ERROR_SUCCESS && !element.is_null() {
+            Some(element)
+        } else {
+            None
+        }
+    }
+
+    unsafe fn parent_element(element: AXUIElementRef) -> Option<AXUIElementRef> {
+        let key = CFString::new("AXParent");
+        let mut value: CFTypeRef = std::ptr::null();
+        let err = AXUIElementCopyAttributeValue(element, key.as_concrete_TypeRef(), &mut value);
+        if err == K_AX_ERROR_SUCCESS && !value.is_null() {
+            Some(value as AXUIElementRef)
+        } else {
+            None
+        }
+    }
+
+    unsafe fn is_secure_text_element(element: AXUIElementRef) -> bool {
+        matches!(
+            string_attribute(element, "AXSubrole").as_deref(),
+            Some("AXSecureTextField")
+        ) || matches!(
+            string_attribute(element, "AXRole").as_deref(),
+            Some("AXSecureTextField")
+        )
+    }
+
     unsafe fn selected_text(element: AXUIElementRef) -> Option<String> {
+        if is_secure_text_element(element) {
+            return None;
+        }
         let key = CFString::new("AXSelectedText");
         let mut value: CFTypeRef = std::ptr::null();
         let err = AXUIElementCopyAttributeValue(element, key.as_concrete_TypeRef(), &mut value);
@@ -215,12 +489,7 @@ mod macos {
             return None;
         }
         let cf_str = CFString::wrap_under_create_rule(value as CFStringRef);
-        let text = cf_str.to_string();
-        if text.is_empty() {
-            None
-        } else {
-            Some(text)
-        }
+        normalize_text(cf_str.to_string())
     }
 
     unsafe fn selection_bounds(element: AXUIElementRef) -> Option<ScreenRect> {
@@ -275,66 +544,173 @@ mod macos {
         }
     }
 
-    pub fn capture() -> ActivationContext {
-        // SAFETY: All AX API calls are wrapped in this function. `element` is released
-        // at the end of this function and is not retained by `selected_text` or
-        // `selection_bounds` — both helpers use the pointer only within their call duration.
-        unsafe {
-            let mouse = current_mouse_position();
+    unsafe fn selection_from_element(element: AXUIElementRef) -> Option<SelectionCapture> {
+        let _ = AXUIElementSetMessagingTimeout(element, AX_TIMEOUT_SECONDS);
+        let text = selected_text(element)?;
+        let bounds = selection_bounds(element);
+        Some(SelectionCapture { text, bounds })
+    }
 
-            let Some(element) = focused_element() else {
-                // No focused element — try clipboard fallback before giving up.
-                let text = clipboard_fallback();
-                return ActivationContext {
-                    selected_text: text,
-                    bounds: None,
-                    mouse_position: Some(mouse),
-                };
-            };
+    unsafe fn capture_selection(mouse: (f64, f64)) -> Option<SelectionCapture> {
+        let mut candidates: Vec<AXUIElementRef> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
 
-            let ax_text = selected_text(element);
-            let bounds = if ax_text.is_some() {
-                selection_bounds(element)
+        let mut push_candidate = |element: AXUIElementRef| {
+            if seen.insert(element as usize) {
+                candidates.push(element);
             } else {
-                None
-            };
-            CFRelease(element as CFTypeRef);
+                CFRelease(element as CFTypeRef);
+            }
+        };
 
-            // If AX returned no text (VS Code / Electron apps with Monaco), fall back
-            // to clipboard simulation so the user still gets context.
-            let text = if ax_text.is_some() {
-                ax_text
-            } else {
-                clipboard_fallback()
-            };
-
-            ActivationContext {
-                selected_text: text,
-                bounds,
-                mouse_position: Some(mouse),
+        if let Some(element) = focused_element() {
+            push_candidate(element);
+            if let Some(parent) = parent_element(element) {
+                push_candidate(parent);
             }
         }
-    }
-}
+        if let Some(element) = element_at_position(mouse) {
+            push_candidate(element);
+            if let Some(parent) = parent_element(element) {
+                push_candidate(parent);
+            }
+        }
 
-/// Captures the current activation context at the moment of the hotkey press.
-///
-/// When `overlay_is_visible` is `true` the hotkey will hide the overlay, so
-/// no context is needed — skip AX queries and clipboard simulation entirely.
-#[cfg_attr(coverage_nightly, coverage(off))]
-pub fn capture_activation_context(overlay_is_visible: bool) -> ActivationContext {
-    if overlay_is_visible {
-        return ActivationContext::empty();
+        let mut selected = None;
+        for element in &candidates {
+            if let Some(capture) = selection_from_element(*element) {
+                selected = Some(capture);
+                break;
+            }
+        }
+        for element in candidates {
+            CFRelease(element as CFTypeRef);
+        }
+        selected
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        macos::capture()
+    impl ClipboardMonitor {
+        fn new() -> Self {
+            let initial_change_count = pasteboard_change_count();
+            let shared = Arc::new((
+                Mutex::new(ClipboardMonitorState {
+                    last_snapshot: None,
+                    last_change_count: initial_change_count,
+                    hot_until: None,
+                    last_copy_intent_at: None,
+                    suppressed_until: None,
+                }),
+                Condvar::new(),
+            ));
+            let thread_shared = shared.clone();
+            let _ = std::thread::Builder::new()
+                .name("thuki-clipboard-monitor".to_string())
+                .spawn(move || run_clipboard_monitor(thread_shared));
+            Self { shared }
+        }
+
+        fn note_copy_intent(&self) {
+            let (lock, cvar) = &*self.shared;
+            let mut state = lock.lock().expect("clipboard monitor lock poisoned");
+            let now = Instant::now();
+            state.last_copy_intent_at = Some(now);
+            state.hot_until = Some(now + COPY_HOT_WINDOW);
+            cvar.notify_all();
+        }
+
+        fn suppress_for(&self, duration: Duration) {
+            let (lock, cvar) = &*self.shared;
+            let mut state = lock.lock().expect("clipboard monitor lock poisoned");
+            state.suppressed_until = Some(Instant::now() + duration);
+            cvar.notify_all();
+        }
+
+        fn recent_explicit_snapshot(&self) -> Option<ClipboardSnapshot> {
+            let (lock, _) = &*self.shared;
+            let state = lock.lock().expect("clipboard monitor lock poisoned");
+            let now = Instant::now();
+            state.last_snapshot.as_ref().and_then(|snapshot| {
+                if snapshot.explicit_user_copy
+                    && now.duration_since(snapshot.captured_at) <= EXPLICIT_CLIPBOARD_MAX_AGE
+                {
+                    Some(snapshot.clone())
+                } else {
+                    None
+                }
+            })
+        }
+
+        fn recent_same_app_snapshot(&self, pid: Option<i32>) -> Option<ClipboardSnapshot> {
+            let (lock, _) = &*self.shared;
+            let state = lock.lock().expect("clipboard monitor lock poisoned");
+            let now = Instant::now();
+            state.last_snapshot.as_ref().and_then(|snapshot| {
+                if Some(snapshot.source_pid?) == pid
+                    && now.duration_since(snapshot.captured_at) <= SAME_APP_CLIPBOARD_MAX_AGE
+                {
+                    Some(snapshot.clone())
+                } else {
+                    None
+                }
+            })
+        }
     }
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        ActivationContext::empty()
+    fn run_clipboard_monitor(shared: Arc<(Mutex<ClipboardMonitorState>, Condvar)>) {
+        loop {
+            let interval = {
+                let (lock, cvar) = &*shared;
+                let mut state = lock.lock().expect("clipboard monitor lock poisoned");
+                let now = Instant::now();
+                if state.hot_until.is_some_and(|until| now >= until) {
+                    state.hot_until = None;
+                }
+                if state.suppressed_until.is_some_and(|until| now >= until) {
+                    state.suppressed_until = None;
+                }
+                let interval = if state.hot_until.is_some() {
+                    HOT_CLIPBOARD_POLL_INTERVAL
+                } else {
+                    DEFAULT_CLIPBOARD_POLL_INTERVAL
+                };
+                let (state, _) = cvar
+                    .wait_timeout(state, interval)
+                    .expect("clipboard monitor condvar poisoned");
+                drop(state);
+                interval
+            };
+            let _ = interval;
+            poll_clipboard(&shared);
+        }
+    }
+
+    fn poll_clipboard(shared: &Arc<(Mutex<ClipboardMonitorState>, Condvar)>) {
+        let change_count = pasteboard_change_count();
+        let new_text = pasteboard_string();
+        let new_pid = frontmost_app_pid();
+        let now = Instant::now();
+
+        let (lock, _) = &**shared;
+        let mut state = lock.lock().expect("clipboard monitor lock poisoned");
+        if change_count == state.last_change_count {
+            return;
+        }
+        state.last_change_count = change_count;
+
+        let suppressed = state.suppressed_until.is_some_and(|until| now < until);
+        if suppressed {
+            return;
+        }
+
+        let explicit = state
+            .last_copy_intent_at
+            .is_some_and(|at| now.duration_since(at) <= COPY_HOT_WINDOW);
+        state.last_snapshot = new_text.map(|text| ClipboardSnapshot {
+            text,
+            captured_at: now,
+            source_pid: new_pid,
+            explicit_user_copy: explicit,
+        });
     }
 }
 
@@ -479,6 +855,7 @@ mod tests {
     fn ctx_with_bounds(x: f64, y: f64, w: f64, h: f64) -> ActivationContext {
         ActivationContext {
             selected_text: Some("hello".to_string()),
+            selected_source: Some(ContextSource::Selection),
             bounds: Some(ScreenRect {
                 x,
                 y,
@@ -492,6 +869,7 @@ mod tests {
     fn ctx_no_selection() -> ActivationContext {
         ActivationContext {
             selected_text: None,
+            selected_source: None,
             bounds: None,
             mouse_position: None,
         }
@@ -500,6 +878,7 @@ mod tests {
     fn ctx_text_no_bounds_with_mouse(mx: f64, my: f64) -> ActivationContext {
         ActivationContext {
             selected_text: Some("hello".to_string()),
+            selected_source: Some(ContextSource::Selection),
             bounds: None,
             mouse_position: Some((mx, my)),
         }
@@ -521,6 +900,7 @@ mod tests {
     fn text_with_no_bounds_and_no_mouse_falls_back_to_top_center() {
         let ctx = ActivationContext {
             selected_text: Some("hello world".to_string()),
+            selected_source: Some(ContextSource::Selection),
             bounds: None,
             mouse_position: None,
         };
@@ -626,9 +1006,10 @@ mod tests {
     }
 
     #[test]
-    fn capture_activation_context_returns_empty_when_visible() {
-        let ctx = capture_activation_context(true);
+    fn activation_context_resolver_returns_empty_when_visible() {
+        let ctx = ActivationContext::empty();
         assert!(ctx.selected_text.is_none());
+        assert!(ctx.selected_source.is_none());
         assert!(ctx.bounds.is_none());
         assert!(ctx.mouse_position.is_none());
     }
@@ -637,6 +1018,7 @@ mod tests {
     fn activation_context_empty_has_no_fields() {
         let ctx = ActivationContext::empty();
         assert!(ctx.selected_text.is_none());
+        assert!(ctx.selected_source.is_none());
         assert!(ctx.bounds.is_none());
         assert!(ctx.mouse_position.is_none());
     }

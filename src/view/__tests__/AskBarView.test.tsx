@@ -229,6 +229,24 @@ describe('AskBarView', () => {
     expect(screen.getByText(/some highlighted text/)).toBeInTheDocument();
   });
 
+  it('shows a selection source badge when provided', () => {
+    render(
+      <AskBarView
+        {...IMAGE_DEFAULTS}
+        query=""
+        setQuery={vi.fn()}
+        isChatMode={false}
+        isGenerating={false}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+        inputRef={makeRef()}
+        selectedText="some highlighted text"
+        selectedSource="selection"
+      />,
+    );
+    expect(screen.getByText('Selection')).toBeInTheDocument();
+  });
+
   it('hides context area when no selectedText', () => {
     const { container } = render(
       <AskBarView

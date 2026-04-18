@@ -56,6 +56,11 @@ describe('pickRoot', () => {
     // directly; presence of the root is enough for the routing branch.
   });
 
+  it('mounts LongImageEditorView when overlay editor=long is set', () => {
+    render(pickRoot('?overlay=1&path=/tmp/long.png&editor=long'));
+    expect(screen.getByTestId('long-editor-root')).toBeInTheDocument();
+  });
+
   it('mounts LongShotHudView when longhud=1 is set', () => {
     render(pickRoot('?longhud=1'));
     expect(screen.getByTestId('longhud-root')).toBeInTheDocument();

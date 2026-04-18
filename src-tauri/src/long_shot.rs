@@ -1016,6 +1016,74 @@ fn persist_final_long_capture(
     save_stitched_png(&frame.rgba, frame.width, frame.height)
 }
 
+#[cfg(target_os = "macos")]
+fn long_editor_window_bounds(app_handle: &tauri::AppHandle) -> (f64, f64, f64, f64) {
+    let (origin_x, origin_y, screen_w, screen_h) = app_handle
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| {
+            let sf = m.scale_factor();
+            let s = m.size();
+            let p = m.position();
+            (
+                (p.x as f64) / sf,
+                (p.y as f64) / sf,
+                (s.width as f64) / sf,
+                (s.height as f64) / sf,
+            )
+        })
+        .unwrap_or((0.0, 0.0, 1440.0, 900.0));
+
+    let width = (screen_w - 2.0 * (screen_w * 0.06).clamp(32.0, 120.0))
+        .clamp(860.0, 1480.0)
+        .min((screen_w - 24.0).max(420.0));
+    let height = (screen_h - 2.0 * (screen_h * 0.05).clamp(24.0, 96.0))
+        .clamp(620.0, 1160.0)
+        .min((screen_h - 24.0).max(360.0));
+
+    (
+        origin_x + (screen_w - width) / 2.0,
+        origin_y + (screen_h - height) / 2.0,
+        width,
+        height,
+    )
+}
+
+#[cfg(target_os = "macos")]
+async fn finalize_running_long_capture() -> Result<String, String> {
+    let state = {
+        let mut slot = CURRENT_LONG_STATE
+            .lock()
+            .map_err(|_| "long-capture state poisoned".to_string())?;
+        slot.take()
+    };
+    let state = state.ok_or_else(|| "no long capture running".to_string())?;
+    state.finish_requested.store(true, Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS + 50)).await;
+
+    let final_frame = {
+        let guard = match state.assembly.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.final_frame()
+    };
+
+    let preview_path = state.preview_path.clone();
+    let final_frame_for_save = final_frame.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = tx.send(persist_final_long_capture(
+            &preview_path,
+            final_frame_for_save.as_ref(),
+        ));
+    });
+    let path = rx.await.map_err(|_| "stitch task closed".to_string())??;
+    let _ = std::fs::remove_file(&state.preview_path);
+    Ok(path)
+}
+
 // ─── HUD lifecycle ─────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -1368,36 +1436,7 @@ pub async fn finish_manual_long_capture(app_handle: tauri::AppHandle) -> Result<
     use tauri::Emitter;
 
     let result = async {
-        let state = {
-            let mut slot = CURRENT_LONG_STATE
-                .lock()
-                .map_err(|_| "long-capture state poisoned".to_string())?;
-            slot.take()
-        };
-        let state = state.ok_or_else(|| "no long capture running".to_string())?;
-        state.finish_requested.store(true, Ordering::SeqCst);
-        tokio::time::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS + 50)).await;
-
-        let final_frame = {
-            let guard = match state.assembly.lock() {
-                Ok(g) => g,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            guard.final_frame()
-        };
-
-        let preview_path = state.preview_path.clone();
-        let final_frame_for_save = final_frame.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
-        tauri::async_runtime::spawn_blocking(move || {
-            let _ = tx.send(persist_final_long_capture(
-                &preview_path,
-                final_frame_for_save.as_ref(),
-            ));
-        });
-        let path = rx.await.map_err(|_| "stitch task closed".to_string())??;
-        let _ = std::fs::remove_file(&state.preview_path);
-
+        let path = finalize_running_long_capture().await?;
         let path_for_clipboard = path.clone();
         run_on_main(&app_handle, move || {
             crate::pasteboard::copy_image_to_clipboard(path_for_clipboard)
@@ -1405,6 +1444,47 @@ pub async fn finish_manual_long_capture(app_handle: tauri::AppHandle) -> Result<
         .await??;
 
         let _ = app_handle.emit(DONE_EVENT, &path);
+        Ok(path)
+    }
+    .await;
+
+    if let Err(message) = &result {
+        let _ = app_handle.emit(ERROR_EVENT, message);
+    }
+    result
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg(target_os = "macos")]
+#[cfg_attr(not(coverage), tauri::command)]
+pub async fn edit_manual_long_capture(app_handle: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Emitter;
+
+    let result = async {
+        let path = finalize_running_long_capture().await?;
+        let (x, y, width, height) = long_editor_window_bounds(&app_handle);
+        let path_for_window = path.clone();
+        let open_handle = app_handle.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+        app_handle
+            .run_on_main_thread(move || {
+                let _ = tx.send(
+                    crate::overlay::open_overlay_window(
+                        open_handle,
+                        path_for_window,
+                        x,
+                        y,
+                        width,
+                        height,
+                        None,
+                        Some("long".to_string()),
+                    )
+                    .map(|_| ()),
+                );
+            })
+            .map_err(|e| format!("failed to dispatch long editor: {e}"))?;
+        rx.await
+            .map_err(|_| "long editor open task closed".to_string())??;
         Ok(path)
     }
     .await;
@@ -1460,6 +1540,12 @@ pub async fn start_manual_long_capture(
 #[cfg(not(target_os = "macos"))]
 #[cfg_attr(not(coverage), tauri::command)]
 pub async fn finish_manual_long_capture(_app_handle: tauri::AppHandle) -> Result<String, String> {
+    Err("long-shot is only supported on macOS".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub async fn edit_manual_long_capture(_app_handle: tauri::AppHandle) -> Result<String, String> {
     Err("long-shot is only supported on macOS".to_string())
 }
 
