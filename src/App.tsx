@@ -1134,6 +1134,7 @@ function App() {
         strippedMessage,
         context,
         activeCommands,
+        { hasImageInput: attachedImages.length > 0 },
       );
       /* v8 ignore next -- defensive guard; strippedMessage is pre-checked */
       if (!composedPrompt) return;

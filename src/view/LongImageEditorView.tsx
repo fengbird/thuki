@@ -11,6 +11,7 @@ import {
 } from './editor/types';
 import { useAnnotations } from './editor/useAnnotations';
 import { dataUrlToBase64, exportStageToDataURL } from './editor/exportCanvas';
+import { useOcrPrompt } from '../hooks/useOcrPrompt';
 import { AnnotationStage } from './overlay/AnnotationStage';
 import { FloatingToolbar } from './overlay/FloatingToolbar';
 import type { Rect } from './overlay/selectionLogic';
@@ -39,6 +40,7 @@ export interface LongImageEditorViewProps {
 
 export function LongImageEditorView({ imagePath }: LongImageEditorViewProps) {
   const src = imagePath ? convertFileSrc(imagePath) : '';
+  const ocrPrompt = useOcrPrompt();
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [viewport, setViewport] = useState({
     width: window.innerWidth,
@@ -533,7 +535,7 @@ export function LongImageEditorView({ imagePath }: LongImageEditorViewProps) {
         onCopy={() => void handleCopy()}
         onPin={() => void handlePin()}
         onAskAi={() => void sendToChat(undefined, false)}
-        onOcr={() => void sendToChat('请提取图中所有文字，原样输出。', true)}
+        onOcr={() => void sendToChat(ocrPrompt, true)}
         onClose={() => void handleClose()}
         onLongShot={() => {}}
         hideLongShot

@@ -382,6 +382,27 @@ describe('OverlayView — toolbar actions', () => {
     }
   });
 
+  it('OCR uses the configured settings prompt when available', async () => {
+    invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'get_settings') {
+        return { ocr_prompt: '请读取图片里的全部文字，并按原顺序输出。' };
+      }
+      return args;
+    });
+    const restore = await setupWithSelection();
+    try {
+      fireEvent.click(screen.getByTestId('overlay-ocr'));
+      await act(async () => {});
+      const call = invoke.mock.calls.find(([c]) => c === 'send_image_to_chat');
+      expect(call?.[1]).toMatchObject({
+        prompt: '请读取图片里的全部文字，并按原顺序输出。',
+        autoSubmit: true,
+      });
+    } finally {
+      restore();
+    }
+  });
+
   it('send_image_to_chat error surfaces in the hint bar (string throw)', async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'send_image_to_chat') throw 'bridge failed';

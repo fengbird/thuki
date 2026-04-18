@@ -26,6 +26,8 @@ pub struct SettingsData {
     pub model_name: String,
     pub system_prompt: String,
     pub reply_prompt: String,
+    #[serde(default = "default_ocr_prompt")]
+    pub ocr_prompt: String,
     /// Slash command configuration stored as an opaque JSON value.
     /// The frontend owns the schema (overrides, custom, disabled).
     #[serde(default)]
@@ -39,7 +41,14 @@ const K_API_KEY: &str = "settings.api_key";
 const K_MODEL_NAME: &str = "settings.model_name";
 const K_SYSTEM_PROMPT: &str = "settings.system_prompt";
 const K_REPLY_PROMPT: &str = "settings.reply_prompt";
+const K_OCR_PROMPT: &str = "settings.ocr_prompt";
 const K_COMMANDS_CONFIG: &str = "settings.commands_config";
+
+pub const DEFAULT_OCR_PROMPT: &str = "请提取图中所有文字，原样输出。";
+
+fn default_ocr_prompt() -> String {
+    DEFAULT_OCR_PROMPT.to_string()
+}
 
 // ─── Load / Save ────────────────────────────────────────────────────────────
 
@@ -68,6 +77,7 @@ pub fn load_settings(conn: &rusqlite::Connection) -> SettingsData {
     let reply_prompt = db(K_REPLY_PROMPT)
         .or_else(|| env_nonempty("THUKI_REPLY_PROMPT"))
         .unwrap_or_else(crate::reply::load_reply_prompt);
+    let ocr_prompt = db(K_OCR_PROMPT).unwrap_or_else(default_ocr_prompt);
     let commands_config = load_commands_config(conn);
 
     SettingsData {
@@ -76,6 +86,7 @@ pub fn load_settings(conn: &rusqlite::Connection) -> SettingsData {
         model_name,
         system_prompt,
         reply_prompt,
+        ocr_prompt,
         commands_config,
     }
 }
@@ -91,6 +102,7 @@ pub fn save_settings(conn: &rusqlite::Connection, data: &SettingsData) -> Result
     set(K_MODEL_NAME, &data.model_name)?;
     set(K_SYSTEM_PROMPT, &data.system_prompt)?;
     set(K_REPLY_PROMPT, &data.reply_prompt)?;
+    set(K_OCR_PROMPT, &data.ocr_prompt)?;
     let config_json = serde_json::to_string(&data.commands_config)
         .map_err(|e| format!("Failed to serialize commands_config: {e}"))?;
     set(K_COMMANDS_CONFIG, &config_json)?;
@@ -232,6 +244,7 @@ mod tests {
         assert_eq!(s.model_name, DEFAULT_MODEL_NAME);
         assert!(!s.system_prompt.is_empty());
         assert!(!s.reply_prompt.is_empty());
+        assert_eq!(s.ocr_prompt, DEFAULT_OCR_PROMPT);
         // Default commands_config has empty overrides/custom/disabled.
         assert!(s.commands_config["overrides"]
             .as_object()
@@ -250,6 +263,7 @@ mod tests {
             model_name: "llama3.1-8b".to_string(),
             system_prompt: "Be brief.".to_string(),
             reply_prompt: "Reply concisely.".to_string(),
+            ocr_prompt: "Extract every visible line.".to_string(),
             commands_config: serde_json::json!({
                 "overrides": {
                     "/translate": { "prompt_template": "Custom translate" }
@@ -268,6 +282,7 @@ mod tests {
         assert_eq!(loaded.model_name, "llama3.1-8b");
         assert_eq!(loaded.system_prompt, "Be brief.");
         assert_eq!(loaded.reply_prompt, "Reply concisely.");
+        assert_eq!(loaded.ocr_prompt, "Extract every visible line.");
         assert_eq!(
             loaded.commands_config["overrides"]["/translate"]["prompt_template"],
             "Custom translate"
@@ -328,6 +343,7 @@ mod tests {
             model_name: "new-model".to_string(),
             system_prompt: "new sys".to_string(),
             reply_prompt: "new reply".to_string(),
+            ocr_prompt: "new ocr".to_string(),
             commands_config: serde_json::json!({}),
         };
         let api = Mutex::new(ApiConfig {
@@ -365,11 +381,13 @@ mod tests {
             model_name: "m".to_string(),
             system_prompt: "s".to_string(),
             reply_prompt: "r".to_string(),
+            ocr_prompt: "o".to_string(),
             commands_config: serde_json::json!({ "overrides": {}, "custom": [], "disabled": [] }),
         };
         let json = serde_json::to_value(&data).unwrap();
         assert_eq!(json["api_base_url"], "http://x");
         assert_eq!(json["model_name"], "m");
+        assert_eq!(json["ocr_prompt"], "o");
         assert!(json["commands_config"]["overrides"].is_object());
     }
 
@@ -381,6 +399,7 @@ mod tests {
             "model_name": "m2",
             "system_prompt": "sp",
             "reply_prompt": "rp",
+            "ocr_prompt": "op",
             "commands_config": {
                 "overrides": { "/translate": { "prompt_template": "custom" } },
                 "custom": [],
@@ -389,6 +408,7 @@ mod tests {
         }"#;
         let data: SettingsData = serde_json::from_str(json).unwrap();
         assert_eq!(data.api_base_url, "http://y");
+        assert_eq!(data.ocr_prompt, "op");
         assert_eq!(
             data.commands_config["overrides"]["/translate"]["prompt_template"],
             "custom"
@@ -407,6 +427,7 @@ mod tests {
         }"#;
         let data: SettingsData = serde_json::from_str(json).unwrap();
         assert_eq!(data.api_base_url, "http://z");
+        assert_eq!(data.ocr_prompt, DEFAULT_OCR_PROMPT);
         assert!(data.commands_config.is_null());
     }
 
@@ -473,6 +494,7 @@ mod tests {
             model_name: "m".to_string(),
             system_prompt: "s".to_string(),
             reply_prompt: "r".to_string(),
+            ocr_prompt: "o".to_string(),
             commands_config: serde_json::json!({ "overrides": {}, "custom": [], "disabled": [] }),
         };
         save_settings(&conn, &data).unwrap();

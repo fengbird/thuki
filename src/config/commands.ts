@@ -25,6 +25,12 @@ export interface Command {
   readonly description: string;
   /** Prompt template with $INPUT / $LANG placeholders. Absent for non-template commands. */
   readonly promptTemplate?: string;
+  /**
+   * Optional instruction used when the command is submitted with image input
+   * only (no typed or selected text). Lets multimodal models infer text/content
+   * directly from the attached image instead of requiring extra keystrokes.
+   */
+  readonly imageInputHint?: string;
 }
 
 /** A command enriched with its category for the runtime pipeline. */
@@ -87,7 +93,9 @@ export const COMMANDS: readonly Command[] = [
     label: '/translate',
     description: 'Translate text to another language',
     promptTemplate:
-      'You are a translation assistant. Translate the following text to the specified target language. The user may specify the target language by its full name (e.g., "Chinese"), ISO code (e.g., "zh", "zho"), abbreviation, or informal shorthand. Interpret the language identifier flexibly and use your best judgment. If no target language is specified: translate to Chinese (Simplified) if the text is non-Chinese, or to English if it is already in Chinese. Output only the translation with no commentary or explanation.\n\nTarget language: $LANG\n\nText: $INPUT',
+      'You are a translation assistant. Translate the provided source content into the specified target language. The source content may come from typed text, selected text, attached images, or a combination of these. If attached images are present, read and understand all clearly visible text in the images before translating. If the text field already contains the real source text, prioritize that text; if the text field is empty or only describes the attachment, use the text extracted from the attached images as the source content. The user may specify the target language by its full name (for example, "Chinese"), ISO code (for example, "zh" or "zho"), abbreviation, or informal shorthand. Interpret the language identifier flexibly and use your best judgment. If no target language is specified: translate to Chinese (Simplified) if the source content is non-Chinese, or to English if it is already Chinese. Output only the final translation. Do not add commentary, explanation, OCR notes, labels, or quotation marks.\n\nTarget language: $LANG\n\nSource content: $INPUT',
+    imageInputHint:
+      'The attached image contains the source content. Read all clearly visible text in the image and translate it.',
   },
   {
     trigger: '/rewrite',
@@ -215,6 +223,7 @@ export function buildPrompt(
   strippedMessage: string,
   selectedText?: string,
   commands?: readonly Command[],
+  options?: { hasImageInput?: boolean },
 ): string | null {
   const list = commands ?? COMMANDS;
   const cmd = list.find((c) => c.trigger === trigger);
@@ -245,6 +254,10 @@ export function buildPrompt(
     input = selected;
   } else if (typedRemainder) {
     input = typedRemainder;
+  } else if (options?.hasImageInput) {
+    input =
+      cmd.imageInputHint ??
+      'Use the attached image as the source content. Extract the relevant text or content from the image before completing the task.';
   } else {
     return null;
   }

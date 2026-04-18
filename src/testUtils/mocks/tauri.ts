@@ -50,6 +50,7 @@ const DEFAULT_MOCK_SETTINGS = {
   model_name: 'qwen3-vl-8b-thinking',
   system_prompt: 'Be helpful.',
   reply_prompt: 'Reply concisely.',
+  ocr_prompt: '请提取图中所有文字，原样输出。',
   commands_config: { overrides: {}, custom: [], disabled: [] },
 };
 

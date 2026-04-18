@@ -3681,7 +3681,63 @@ describe('App', () => {
         expect(askCall).toBeDefined();
         const args = askCall![1] as Record<string, unknown>;
         expect(args.message).toContain('Target language: jpn');
-        expect(args.message).toContain('Text: hello world');
+        expect(args.message).toContain('Source content: hello world');
+      });
+    });
+
+    it('routes /translate with image-only input through buildPrompt', async () => {
+      enableChannelCaptureWithResponses({
+        save_image_command: '/tmp/staged/img1.jpg',
+      });
+
+      render(<App />);
+      await act(async () => {});
+      await showOverlay();
+
+      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const file = new File(['fake-img-data'], 'photo.png', {
+        type: 'image/png',
+      });
+      const clipboardData = {
+        items: [{ type: 'image/png', getAsFile: () => file }],
+      };
+
+      await act(async () => {
+        fireEvent.paste(textarea, { clipboardData });
+      });
+
+      await act(async () => {
+        await vi.waitFor(() => {
+          expect(invoke).toHaveBeenCalledWith(
+            'save_image_command',
+            expect.anything(),
+          );
+        });
+      });
+
+      act(() => {
+        fireEvent.change(textarea, {
+          target: { value: '/translate' },
+        });
+      });
+
+      invoke.mockClear();
+      enableChannelCapture();
+
+      await act(async () => {
+        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+      });
+
+      await vi.waitFor(() => {
+        const askCall = vi
+          .mocked(invoke)
+          .mock.calls.find((c) => c[0] === 'ask_ollama');
+        expect(askCall).toBeDefined();
+        const args = askCall![1] as Record<string, unknown>;
+        expect(args.message).toContain(
+          'Source content: The attached image contains the source content. Read all clearly visible text in the image and translate it.',
+        );
+        expect(args.imagePaths).toEqual(['/tmp/staged/img1.jpg']);
       });
     });
 

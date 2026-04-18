@@ -495,6 +495,18 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
                   onChange={(e) => update('reply_prompt', e.target.value)}
                 />
               </Section>
+
+              <Divider />
+
+              <Section title="Screenshot OCR Prompt">
+                <textarea
+                  data-testid="settings-ocr-prompt"
+                  rows={4}
+                  style={inputStyle}
+                  value={draft.ocr_prompt}
+                  onChange={(e) => update('ocr_prompt', e.target.value)}
+                />
+              </Section>
             </>
           )}
 

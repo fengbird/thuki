@@ -13,6 +13,7 @@ export interface SettingsData {
   model_name: string;
   system_prompt: string;
   reply_prompt: string;
+  ocr_prompt: string;
   /** Slash command configuration: overrides, custom commands, disabled list. */
   commands_config: CommandsConfig;
 }

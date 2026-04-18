@@ -11,6 +11,7 @@ import {
 } from './editor/types';
 import { useAnnotations } from './editor/useAnnotations';
 import { dataUrlToBase64, exportStageToDataURL } from './editor/exportCanvas';
+import { useOcrPrompt } from '../hooks/useOcrPrompt';
 import { AnnotationStage } from './overlay/AnnotationStage';
 import { FloatingToolbar } from './overlay/FloatingToolbar';
 import {
@@ -70,6 +71,7 @@ interface ResizeState {
 
 export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
   const src = imagePath ? convertFileSrc(imagePath) : '';
+  const ocrPrompt = useOcrPrompt();
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [viewport, setViewport] = useState({
     width: window.innerWidth,
@@ -383,8 +385,8 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
     [sendToChat],
   );
   const handleOcr = useCallback(
-    () => void sendToChat('请提取图中所有文字，原样输出。', true),
-    [sendToChat],
+    () => void sendToChat(ocrPrompt, true),
+    [ocrPrompt, sendToChat],
   );
 
   // Xnip-style manual long screenshot. Clicking "Long" hides the overlay,

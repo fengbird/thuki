@@ -289,16 +289,24 @@ describe('buildPrompt', () => {
     expect(buildPrompt('/rewrite', '  ', '  ')).toBeNull();
   });
 
+  it('uses a generic image hint when utility command has image input only', () => {
+    const result = buildPrompt('/rewrite', '', undefined, undefined, {
+      hasImageInput: true,
+    });
+    expect(result).not.toBeNull();
+    expect(result).toContain('Use the attached image as the source content');
+  });
+
   it('/translate parses full language name from typed text', () => {
     const result = buildPrompt('/translate', 'Vietnamese hello world');
     expect(result).toContain('Target language: Vietnamese');
-    expect(result).toContain('Text: hello world');
+    expect(result).toContain('Source content: hello world');
   });
 
   it('/translate parses short code from typed text', () => {
     const result = buildPrompt('/translate', 'jpn this is a test');
     expect(result).toContain('Target language: jpn');
-    expect(result).toContain('Text: this is a test');
+    expect(result).toContain('Source content: this is a test');
   });
 
   it('/translate with single word and selected text combines both as input', () => {
@@ -312,14 +320,25 @@ describe('buildPrompt', () => {
   it('/translate with no language and selected text leaves $LANG empty', () => {
     const result = buildPrompt('/translate', '', 'translate me');
     expect(result).toContain('Target language: ');
-    expect(result).toContain('Text: translate me');
+    expect(result).toContain('Source content: translate me');
     expect(result).not.toContain('$LANG');
+  });
+
+  it('/translate with image input only uses the translate-specific image hint', () => {
+    const result = buildPrompt('/translate', '', undefined, undefined, {
+      hasImageInput: true,
+    });
+    expect(result).not.toBeNull();
+    expect(result).toContain('Target language: ');
+    expect(result).toContain(
+      'Source content: The attached image contains the source content. Read all clearly visible text in the image and translate it.',
+    );
   });
 
   it('/translate with a single word treats it as text to translate (default language)', () => {
     const result = buildPrompt('/translate', 'vie');
     expect(result).not.toBeNull();
-    expect(result).toContain('Text: vie');
+    expect(result).toContain('Source content: vie');
     // $LANG should be empty (default language)
     expect(result).toContain('Target language: ');
   });

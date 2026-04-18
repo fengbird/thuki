@@ -9,6 +9,7 @@ const MOCK_SETTINGS = {
   model_name: 'qwen3-vl-8b-thinking',
   system_prompt: 'Default system prompt',
   reply_prompt: 'Default reply prompt',
+  ocr_prompt: '请提取图中所有文字，原样输出。',
   commands_config: { overrides: {}, custom: [], disabled: [] },
 };
 
@@ -205,7 +206,7 @@ describe('SettingsView', () => {
     );
   });
 
-  it('system prompt and reply prompt textareas are editable', async () => {
+  it('system, reply, and OCR prompt textareas are editable', async () => {
     render(<SettingsView onDismiss={vi.fn()} />);
     await act(async () => {});
     await switchTab('prompts');
@@ -216,16 +217,46 @@ describe('SettingsView', () => {
     const replyTa = screen.getByTestId(
       'settings-reply-prompt',
     ) as HTMLTextAreaElement;
+    const ocrTa = screen.getByTestId(
+      'settings-ocr-prompt',
+    ) as HTMLTextAreaElement;
 
     expect(sysTa.value).toBe('Default system prompt');
     expect(replyTa.value).toBe('Default reply prompt');
+    expect(ocrTa.value).toBe('请提取图中所有文字，原样输出。');
 
     await act(async () => {
       fireEvent.change(sysTa, { target: { value: 'New sys' } });
       fireEvent.change(replyTa, { target: { value: 'New reply' } });
+      fireEvent.change(ocrTa, { target: { value: '只输出图片里的文本' } });
     });
     expect(sysTa.value).toBe('New sys');
     expect(replyTa.value).toBe('New reply');
+    expect(ocrTa.value).toBe('只输出图片里的文本');
+  });
+
+  it('saving persists the OCR prompt field', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('prompts');
+
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('settings-ocr-prompt'), {
+        target: { value: '请按段落提取图片中的文字，不要解释。' },
+      });
+    });
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-save-btn'));
+    });
+
+    const saveCall = invoke.mock.calls.find(
+      ([cmd]) => cmd === 'update_settings',
+    );
+    expect(saveCall?.[1]?.data?.ocr_prompt).toBe(
+      '请按段落提取图片中的文字，不要解释。',
+    );
   });
 
   it('unregisters keydown listener on unmount', async () => {
