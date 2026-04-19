@@ -19,18 +19,18 @@ type FilterKey = 'all' | 'text' | 'image' | 'favorites';
 
 const THEME = {
   shell:
-    'radial-gradient(ellipse 85% 60% at 50% 0%, rgba(255,141,92,0.16) 0%, rgba(28,24,20,0.98) 58%), rgba(18,15,13,0.98)',
+    'radial-gradient(ellipse 80% 58% at 50% -4%, rgba(255,141,92,0.13) 0%, rgba(32,27,23,0.96) 52%), linear-gradient(180deg, rgba(29,24,21,0.98) 0%, rgba(18,15,13,0.98) 100%)',
   border: '1px solid rgba(255,141,92,0.18)',
   divider: 'rgba(255,255,255,0.06)',
   text: '#f4f1ed',
   muted: 'rgba(255,255,255,0.58)',
   dim: 'rgba(255,255,255,0.34)',
   accent: '#ff8d5c',
-  glass: 'rgba(255,255,255,0.05)',
-  glassStrong: 'rgba(255,255,255,0.08)',
-  chip: 'rgba(255,141,92,0.14)',
-  chipBorder: 'rgba(255,141,92,0.24)',
-  shadow: '0 30px 80px rgba(0,0,0,0.45), 0 0 42px rgba(255,100,40,0.08)',
+  glass: 'rgba(255,255,255,0.045)',
+  glassStrong: 'rgba(255,255,255,0.075)',
+  chip: 'rgba(255,141,92,0.11)',
+  chipBorder: 'rgba(255,141,92,0.22)',
+  shadow: '0 34px 90px rgba(0,0,0,0.48), 0 0 36px rgba(255,100,40,0.07)',
   font: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
 };
 
@@ -363,7 +363,7 @@ export function ClipboardHistoryView() {
       style={{
         width: '100vw',
         height: '100vh',
-        padding: 18,
+        padding: 16,
         boxSizing: 'border-box',
         background: 'transparent',
         fontFamily: THEME.font,
@@ -397,12 +397,12 @@ export function ClipboardHistoryView() {
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 14,
-            padding: '14px 16px 12px',
+            gap: 12,
+            padding: '12px 16px',
             borderBottom: `1px solid ${THEME.divider}`,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <button
               type="button"
               onClick={() => void closeWindow()}
@@ -417,12 +417,8 @@ export function ClipboardHistoryView() {
                 flexShrink: 0,
               }}
             />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <span style={{ fontSize: 14, fontWeight: 700 }}>Clipboard</span>
-              <span style={{ fontSize: 11.5, color: THEME.muted }}>
-                Search, restore, paste, or send clips into Oling.
-              </span>
-            </div>
+            <span style={{ fontSize: 14, fontWeight: 700 }}>Clipboard</span>
+            <span style={headerCountPillStyle()}>{entries.length} clips</span>
           </div>
           <div style={{ flex: 1 }} />
           <input
@@ -432,14 +428,15 @@ export function ClipboardHistoryView() {
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search clips"
             style={{
-              width: 260,
-              padding: '9px 12px',
-              borderRadius: 12,
-              border: `1px solid ${THEME.divider}`,
+              width: 320,
+              padding: '10px 14px',
+              borderRadius: 14,
+              border: `1px solid rgba(255,255,255,0.08)`,
               background: THEME.glass,
               color: THEME.text,
               outline: 'none',
               fontSize: 12.5,
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.03)',
             }}
           />
         </div>
@@ -447,184 +444,186 @@ export function ClipboardHistoryView() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns:
-              '104px minmax(280px, 1fr) minmax(280px, 340px)',
+            gridTemplateColumns: 'minmax(360px, 0.96fr) minmax(420px, 1.08fr)',
             minHeight: 0,
           }}
         >
-          <aside
-            style={{
-              borderRight: `1px solid ${THEME.divider}`,
-              padding: 14,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-              background: 'rgba(0,0,0,0.14)',
-            }}
-          >
-            {FILTERS.map((item) => {
-              const active = filter === item.key;
-              return (
-                <button
-                  key={item.key}
-                  data-testid={`clipboard-filter-${item.key}`}
-                  type="button"
-                  onClick={() => setFilter(item.key)}
-                  style={{
-                    padding: '10px 10px',
-                    borderRadius: 12,
-                    border: `1px solid ${
-                      active ? THEME.chipBorder : 'rgba(255,255,255,0.05)'
-                    }`,
-                    background: active ? THEME.chip : 'transparent',
-                    color: active ? THEME.text : THEME.muted,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {item.label}
-                </button>
-              );
-            })}
-          </aside>
-
           <section
             style={{
               minHeight: 0,
-              overflow: 'auto',
-              padding: 12,
               display: 'flex',
               flexDirection: 'column',
-              gap: 10,
+              padding: 14,
+              gap: 12,
+              borderRight: `1px solid ${THEME.divider}`,
             }}
           >
-            {isLoading ? (
-              <EmptyState label="Loading clipboard history…" />
-            ) : entries.length === 0 ? (
-              <EmptyState label="No clipboard items yet." />
-            ) : (
-              entries.map((entry) => {
-                const active = entry.id === activeEntry?.id;
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}
+            >
+              {FILTERS.map((item) => {
+                const active = filter === item.key;
                 return (
                   <button
-                    key={entry.id}
-                    data-testid={`clipboard-entry-${entry.id}`}
+                    key={item.key}
+                    data-testid={`clipboard-filter-${item.key}`}
                     type="button"
-                    onClick={() => setSelectedId(entry.id)}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns:
-                        entry.kind === 'image' ? '68px 1fr' : '1fr',
-                      gap: 12,
-                      alignItems: 'center',
-                      padding: 12,
-                      borderRadius: 16,
-                      border: `1px solid ${
-                        active ? THEME.chipBorder : 'rgba(255,255,255,0.06)'
-                      }`,
-                      background: active ? 'rgba(255,141,92,0.1)' : THEME.glass,
-                      cursor: 'pointer',
-                      color: THEME.text,
-                      textAlign: 'left',
-                    }}
+                    onClick={() => setFilter(item.key)}
+                    style={filterChipStyle(active)}
                   >
-                    {entry.kind === 'image' && entry.image_path ? (
-                      <img
-                        src={convertFileSrc(entry.image_path)}
-                        alt="Clipboard preview"
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div
+              style={{
+                minHeight: 0,
+                overflow: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                paddingRight: 2,
+              }}
+            >
+              {isLoading ? (
+                <EmptyState label="Loading clipboard history…" />
+              ) : entries.length === 0 ? (
+                <EmptyState label="No clipboard items yet." />
+              ) : (
+                entries.map((entry) => {
+                  const active = entry.id === activeEntry?.id;
+                  return (
+                    <button
+                      key={entry.id}
+                      data-testid={`clipboard-entry-${entry.id}`}
+                      type="button"
+                      onClick={() => setSelectedId(entry.id)}
+                      style={entryRowStyle(active)}
+                    >
+                      {entry.kind === 'image' && entry.image_path ? (
+                        <img
+                          src={convertFileSrc(entry.image_path)}
+                          alt="Clipboard preview"
+                          style={{
+                            width: 54,
+                            height: 54,
+                            objectFit: 'cover',
+                            borderRadius: 12,
+                            background: 'rgba(255,255,255,0.04)',
+                            flexShrink: 0,
+                          }}
+                        />
+                      ) : (
+                        <div style={entryTypeGlyphStyle()}>T</div>
+                      )}
+                      <div
                         style={{
-                          width: 68,
-                          height: 68,
-                          objectFit: 'cover',
-                          borderRadius: 12,
-                          background: 'rgba(255,255,255,0.04)',
+                          minWidth: 0,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 5,
+                          flex: 1,
                         }}
-                      />
-                    ) : null}
-                    <div style={{ minWidth: 0 }}>
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            minWidth: 0,
+                          }}
+                        >
+                          <span style={miniTagStyle()}>
+                            {entryKindLabel(entry.kind)}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 11.5,
+                              color: THEME.muted,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {entry.source_app ?? 'Unknown app'}
+                          </span>
+                          {entry.is_favorite ? (
+                            <span
+                              style={{
+                                fontSize: 11,
+                                color: THEME.accent,
+                                flexShrink: 0,
+                              }}
+                            >
+                              Saved
+                            </span>
+                          ) : null}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            lineHeight: 1.45,
+                            fontWeight: 600,
+                            color: THEME.text,
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden',
+                            textAlign: 'left',
+                          }}
+                        >
+                          {entry.text_preview}
+                        </div>
+                      </div>
                       <div
                         style={{
                           display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          marginBottom: 6,
-                          minWidth: 0,
+                          flexDirection: 'column',
+                          alignItems: 'flex-end',
+                          gap: 6,
+                          flexShrink: 0,
                         }}
                       >
                         <span
                           style={{
                             fontSize: 11,
-                            lineHeight: 1,
-                            padding: '5px 7px',
-                            borderRadius: 999,
-                            background: 'rgba(255,255,255,0.06)',
-                            color: THEME.muted,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {entryKindLabel(entry.kind)}
-                        </span>
-                        {entry.is_favorite ? (
-                          <span style={{ fontSize: 11, color: THEME.accent }}>
-                            Favorite
-                          </span>
-                        ) : null}
-                        <span
-                          style={{
-                            marginLeft: 'auto',
-                            fontSize: 11,
                             color: THEME.dim,
-                            flexShrink: 0,
                           }}
                         >
                           {formatTimeAgo(entry.last_copied_at)}
                         </span>
+                        <span
+                          style={{
+                            fontSize: 11,
+                            color: THEME.muted,
+                          }}
+                        >
+                          {entry.copy_count}x
+                        </span>
                       </div>
-                      <div
-                        style={{
-                          fontSize: 13,
-                          lineHeight: 1.45,
-                          fontWeight: 600,
-                          color: THEME.text,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {entry.text_preview}
-                      </div>
-                      <div
-                        style={{
-                          marginTop: 4,
-                          fontSize: 11.5,
-                          color: THEME.muted,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {entry.source_app ?? 'Unknown app'} · copied{' '}
-                        {entry.copy_count}x
-                      </div>
-                    </div>
-                  </button>
-                );
-              })
-            )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </section>
 
           <section
             style={{
-              minHeight: 0,
-              borderLeft: `1px solid ${THEME.divider}`,
-              padding: 16,
               display: 'flex',
               flexDirection: 'column',
-              gap: 14,
+              minHeight: 0,
+              padding: 14,
+              gap: 12,
               overflow: 'hidden',
-              background: 'rgba(255,255,255,0.02)',
+              background: 'rgba(255,255,255,0.018)',
             }}
           >
             {activeEntry ? (
@@ -637,23 +636,28 @@ export function ClipboardHistoryView() {
                     gap: 10,
                   }}
                 >
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 700 }}>Preview</div>
-                    <div
-                      style={{
-                        fontSize: 11.5,
-                        color: THEME.muted,
-                        marginTop: 3,
-                      }}
-                    >
-                      {activeEntry.source_app ?? 'Unknown app'} ·{' '}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span style={miniTagStyle()}>
                       {entryKindLabel(activeEntry.kind)}
-                    </div>
+                    </span>
+                    <span style={inspectorMetaPillStyle()}>
+                      {activeEntry.source_app ?? 'Unknown app'}
+                    </span>
+                    <span style={inspectorMetaPillStyle()}>
+                      {formatTimeAgo(activeEntry.last_copied_at)}
+                    </span>
                   </div>
                   <button
                     type="button"
                     onClick={() => void toggleFavorite(activeEntry.id)}
-                    style={actionButtonStyle(false)}
+                    style={ghostButtonStyle()}
                   >
                     {activeEntry.is_favorite ? 'Unfavorite' : 'Favorite'}
                   </button>
@@ -668,17 +672,21 @@ export function ClipboardHistoryView() {
                     paddingRight: 4,
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 14,
+                    gap: 12,
                   }}
                 >
                   <div
                     style={{
-                      minHeight: 180,
-                      borderRadius: 18,
-                      border: `1px solid ${THEME.divider}`,
-                      background: THEME.glass,
+                      minHeight: 220,
+                      borderRadius: 20,
+                      border: '1px solid rgba(255,255,255,0.06)',
+                      background:
+                        activeEntry.kind === 'image'
+                          ? 'rgba(255,255,255,0.03)'
+                          : 'rgba(255,255,255,0.045)',
                       overflow: 'auto',
-                      padding: 14,
+                      padding: 16,
+                      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.02)',
                     }}
                   >
                     {activeEntry.kind === 'image' && activeEntry.image_path ? (
@@ -689,7 +697,7 @@ export function ClipboardHistoryView() {
                         style={{
                           width: '100%',
                           height: 'auto',
-                          borderRadius: 14,
+                          borderRadius: 16,
                           display: 'block',
                         }}
                       />
@@ -744,7 +752,7 @@ export function ClipboardHistoryView() {
                       type="button"
                       data-testid="clipboard-copy-btn"
                       onClick={() => void copyEntry(activeEntry.id)}
-                      style={actionButtonStyle()}
+                      style={secondaryButtonStyle()}
                     >
                       Copy
                     </button>
@@ -753,16 +761,16 @@ export function ClipboardHistoryView() {
                         type="button"
                         data-testid="clipboard-copy-plain-btn"
                         onClick={() => void copyEntryPlainText(activeEntry.id)}
-                        style={actionButtonStyle()}
+                        style={secondaryButtonStyle()}
                       >
-                        Copy Plain Text
+                        Plain Text
                       </button>
                     ) : (
                       <button
                         type="button"
                         data-testid="clipboard-edit-btn"
                         onClick={() => void editEntry(activeEntry.id)}
-                        style={actionButtonStyle()}
+                        style={secondaryButtonStyle()}
                       >
                         Edit
                       </button>
@@ -771,7 +779,7 @@ export function ClipboardHistoryView() {
                       type="button"
                       data-testid="clipboard-paste-btn"
                       onClick={() => void pasteEntry(activeEntry.id)}
-                      style={actionButtonStyle()}
+                      style={primaryButtonStyle()}
                     >
                       Paste
                     </button>
@@ -779,7 +787,7 @@ export function ClipboardHistoryView() {
                       type="button"
                       data-testid="clipboard-ask-btn"
                       onClick={() => void openInOling(activeEntry.id)}
-                      style={actionButtonStyle()}
+                      style={secondaryButtonStyle()}
                     >
                       Ask in Oling
                     </button>
@@ -791,7 +799,7 @@ export function ClipboardHistoryView() {
                             data-testid="clipboard-save-edit-btn"
                             onClick={() => void saveTextEdit(activeEntry.id)}
                             disabled={isSavingEdit}
-                            style={actionButtonStyle()}
+                            style={secondaryButtonStyle()}
                           >
                             {isSavingEdit ? 'Saving…' : 'Save'}
                           </button>
@@ -800,7 +808,7 @@ export function ClipboardHistoryView() {
                             data-testid="clipboard-cancel-edit-btn"
                             onClick={cancelTextEdit}
                             disabled={isSavingEdit}
-                            style={actionButtonStyle(false)}
+                            style={ghostButtonStyle()}
                           >
                             Cancel
                           </button>
@@ -810,7 +818,7 @@ export function ClipboardHistoryView() {
                           type="button"
                           data-testid="clipboard-start-edit-btn"
                           onClick={() => beginTextEdit(activeEntry)}
-                          style={actionButtonStyle()}
+                          style={secondaryButtonStyle()}
                         >
                           Edit Text
                         </button>
@@ -820,7 +828,7 @@ export function ClipboardHistoryView() {
                       type="button"
                       data-testid="clipboard-delete-btn"
                       onClick={() => void deleteEntry(activeEntry.id)}
-                      style={actionButtonStyle(false)}
+                      style={ghostButtonStyle()}
                     >
                       Delete
                     </button>
@@ -829,7 +837,7 @@ export function ClipboardHistoryView() {
                   <div
                     style={{
                       borderTop: `1px solid ${THEME.divider}`,
-                      paddingTop: 14,
+                      paddingTop: 12,
                       paddingBottom: 2,
                       display: 'flex',
                       flexDirection: 'column',
@@ -847,8 +855,8 @@ export function ClipboardHistoryView() {
                     </div>
                     <div
                       style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr 1fr',
+                        display: 'flex',
+                        flexWrap: 'wrap',
                         gap: 8,
                       }}
                     >
@@ -858,7 +866,7 @@ export function ClipboardHistoryView() {
                         onClick={() =>
                           void openInOling(activeEntry.id, '/tldr', true)
                         }
-                        style={actionButtonStyle()}
+                        style={aiChipStyle()}
                       >
                         Summarize
                       </button>
@@ -868,7 +876,7 @@ export function ClipboardHistoryView() {
                         onClick={() =>
                           void openInOling(activeEntry.id, '/translate', true)
                         }
-                        style={actionButtonStyle()}
+                        style={aiChipStyle()}
                       >
                         Translate
                       </button>
@@ -879,7 +887,7 @@ export function ClipboardHistoryView() {
                           onClick={() =>
                             void openInOling(activeEntry.id, '/rewrite', true)
                           }
-                          style={actionButtonStyle()}
+                          style={aiChipStyle()}
                         >
                           Rewrite
                         </button>
@@ -894,7 +902,7 @@ export function ClipboardHistoryView() {
                               true,
                             )
                           }
-                          style={actionButtonStyle()}
+                          style={aiChipStyle()}
                         >
                           OCR &amp; Clean
                         </button>
@@ -916,19 +924,19 @@ export function ClipboardHistoryView() {
             display: 'flex',
             alignItems: 'center',
             gap: 12,
-            padding: '12px 16px',
+            padding: '10px 16px',
             borderTop: `1px solid ${THEME.divider}`,
           }}
         >
           <span style={{ fontSize: 11.5, color: THEME.muted }}>
-            {status ?? `${entries.length} clips`}
+            {status ?? 'Clipboard stays local and searchable.'}
           </span>
           <div style={{ flex: 1 }} />
           <button
             type="button"
             data-testid="clipboard-clear-btn"
             onClick={() => void clearAll()}
-            style={actionButtonStyle(false)}
+            style={ghostButtonStyle()}
           >
             Clear History
           </button>
@@ -957,17 +965,143 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
-function actionButtonStyle(accent = true): CSSProperties {
+function headerCountPillStyle(): CSSProperties {
+  return {
+    padding: '4px 8px',
+    borderRadius: 999,
+    border: '1px solid rgba(255,255,255,0.06)',
+    background: 'rgba(255,255,255,0.04)',
+    color: THEME.muted,
+    fontSize: 11,
+    fontWeight: 600,
+    lineHeight: 1,
+  };
+}
+
+function filterChipStyle(active: boolean): CSSProperties {
+  return {
+    padding: '7px 11px',
+    borderRadius: 999,
+    border: `1px solid ${active ? THEME.chipBorder : 'rgba(255,255,255,0.06)'}`,
+    background: active ? THEME.chip : 'rgba(255,255,255,0.03)',
+    color: active ? THEME.text : THEME.muted,
+    fontSize: 11.5,
+    fontWeight: 600,
+    cursor: 'pointer',
+    lineHeight: 1.1,
+  };
+}
+
+function entryTypeGlyphStyle(): CSSProperties {
+  return {
+    width: 54,
+    height: 54,
+    borderRadius: 12,
+    background:
+      'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03))',
+    border: '1px solid rgba(255,255,255,0.05)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: THEME.muted,
+    fontSize: 12,
+    fontWeight: 700,
+    flexShrink: 0,
+  };
+}
+
+function entryRowStyle(active: boolean): CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    padding: '10px 12px',
+    borderRadius: 16,
+    border: `1px solid ${
+      active ? 'rgba(255,141,92,0.24)' : 'rgba(255,255,255,0.04)'
+    }`,
+    background: active ? 'rgba(255,141,92,0.08)' : 'rgba(255,255,255,0.025)',
+    boxShadow: active ? '0 0 0 1px rgba(255,141,92,0.04) inset' : 'none',
+    cursor: 'pointer',
+    color: THEME.text,
+    textAlign: 'left',
+  };
+}
+
+function miniTagStyle(): CSSProperties {
+  return {
+    fontSize: 10.5,
+    lineHeight: 1,
+    padding: '4px 7px',
+    borderRadius: 999,
+    background: 'rgba(255,255,255,0.05)',
+    color: THEME.muted,
+    flexShrink: 0,
+  };
+}
+
+function inspectorMetaPillStyle(): CSSProperties {
+  return {
+    fontSize: 11,
+    lineHeight: 1,
+    padding: '5px 8px',
+    borderRadius: 999,
+    background: 'rgba(255,255,255,0.04)',
+    color: THEME.muted,
+  };
+}
+
+function primaryButtonStyle(): CSSProperties {
   return {
     padding: '10px 12px',
     borderRadius: 12,
-    border: `1px solid ${
-      accent ? 'rgba(255,141,92,0.26)' : 'rgba(255,255,255,0.08)'
-    }`,
-    background: accent ? 'rgba(255,141,92,0.12)' : 'rgba(255,255,255,0.04)',
-    color: accent ? '#ffb18f' : 'rgba(255,255,255,0.75)',
+    border: '1px solid rgba(255,141,92,0.28)',
+    background:
+      'linear-gradient(180deg, rgba(255,141,92,0.24), rgba(255,141,92,0.16))',
+    color: '#ffd9c7',
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
+    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)',
+  };
+}
+
+function secondaryButtonStyle(): CSSProperties {
+  return {
+    padding: '10px 12px',
+    borderRadius: 12,
+    border: '1px solid rgba(255,255,255,0.08)',
+    background: 'rgba(255,255,255,0.045)',
+    color: THEME.text,
     fontSize: 12,
     fontWeight: 600,
     cursor: 'pointer',
+  };
+}
+
+function ghostButtonStyle(): CSSProperties {
+  return {
+    padding: '10px 12px',
+    borderRadius: 12,
+    border: '1px solid rgba(255,255,255,0.06)',
+    background: 'rgba(255,255,255,0.02)',
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+  };
+}
+
+function aiChipStyle(): CSSProperties {
+  return {
+    padding: '8px 11px',
+    borderRadius: 999,
+    border: '1px solid rgba(255,255,255,0.08)',
+    background: 'rgba(255,255,255,0.035)',
+    color: THEME.muted,
+    fontSize: 11.5,
+    fontWeight: 600,
+    cursor: 'pointer',
+    lineHeight: 1.1,
   };
 }
