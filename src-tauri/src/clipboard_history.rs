@@ -120,6 +120,13 @@ pub struct ClipboardEntry {
     pub is_favorite: bool,
 }
 
+#[derive(Clone, Debug)]
+struct ClipboardEntryRecord {
+    entry: ClipboardEntry,
+    rich_text_rtf: Option<Vec<u8>>,
+    rich_text_html: Option<Vec<u8>>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipboardComposePayload {
@@ -141,9 +148,19 @@ struct ClipboardCapture {
     content_hash: String,
     text_preview: String,
     text_content: Option<String>,
+    rich_text_rtf: Option<Vec<u8>>,
+    rich_text_html: Option<Vec<u8>>,
     image_path: Option<String>,
     source_app: Option<String>,
     source_bundle_id: Option<String>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone)]
+struct TextClipboardPayload {
+    text: String,
+    rtf: Option<Vec<u8>>,
+    html: Option<Vec<u8>>,
 }
 
 #[cfg(target_os = "macos")]
@@ -218,13 +235,15 @@ fn capture_current_clipboard(app_handle: &tauri::AppHandle) -> Option<ClipboardC
     let source_app = source.as_ref().map(|info| info.app_name.clone());
     let source_bundle_id = source.as_ref().map(|info| info.bundle_id.clone());
 
-    if let Some(text) = pasteboard_string() {
-        let preview = preview_for_text(&text);
+    if let Some(text_payload) = pasteboard_text_payload() {
+        let preview = preview_for_text(&text_payload.text);
         return Some(ClipboardCapture {
             kind: ClipboardEntryKind::Text,
-            content_hash: sha256_hex(text.as_bytes()),
+            content_hash: sha256_hex(text_payload.text.as_bytes()),
             text_preview: preview,
-            text_content: Some(text),
+            text_content: Some(text_payload.text),
+            rich_text_rtf: text_payload.rtf,
+            rich_text_html: text_payload.html,
             image_path: None,
             source_app,
             source_bundle_id,
@@ -244,6 +263,8 @@ fn capture_current_clipboard(app_handle: &tauri::AppHandle) -> Option<ClipboardC
         content_hash,
         text_preview: preview,
         text_content: None,
+        rich_text_rtf: None,
+        rich_text_html: None,
         image_path: Some(image_path),
         source_app,
         source_bundle_id,
@@ -307,6 +328,8 @@ fn generated_image_capture(
         content_hash,
         text_preview,
         text_content: None,
+        rich_text_rtf: None,
+        rich_text_html: None,
         image_path: Some(image_path),
         source_app: Some("Oling".to_string()),
         source_bundle_id: Some("com.quietnode.oling".to_string()),
@@ -358,7 +381,7 @@ fn preview_for_text(text: &str) -> String {
     }
 }
 
-fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry> {
+fn row_to_entry_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry> {
     let kind_str: String = row.get(1)?;
     Ok(ClipboardEntry {
         id: row.get(0)?,
@@ -372,6 +395,14 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry> {
         last_copied_at: row.get(8)?,
         copy_count: row.get(9)?,
         is_favorite: row.get::<_, i64>(10)? != 0,
+    })
+}
+
+fn row_to_entry_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntryRecord> {
+    Ok(ClipboardEntryRecord {
+        entry: row_to_entry_summary(row)?,
+        rich_text_rtf: row.get(11)?,
+        rich_text_html: row.get(12)?,
     })
 }
 
@@ -391,15 +422,19 @@ fn upsert_entry(conn: &rusqlite::Connection, capture: &ClipboardCapture) -> Resu
             "UPDATE clipboard_entries
              SET text_preview = ?1,
                  text_content = COALESCE(?2, text_content),
-                 image_path = COALESCE(image_path, ?3),
-                 source_app = ?4,
-                 source_bundle_id = ?5,
-                 last_copied_at = ?6,
+                 rich_text_rtf = COALESCE(?3, rich_text_rtf),
+                 rich_text_html = COALESCE(?4, rich_text_html),
+                 image_path = COALESCE(image_path, ?5),
+                 source_app = ?6,
+                 source_bundle_id = ?7,
+                 last_copied_at = ?8,
                  copy_count = copy_count + 1
-             WHERE id = ?7",
+             WHERE id = ?9",
             params![
                 capture.text_preview,
                 capture.text_content,
+                capture.rich_text_rtf,
+                capture.rich_text_html,
                 capture.image_path,
                 capture.source_app,
                 capture.source_bundle_id,
@@ -414,15 +449,18 @@ fn upsert_entry(conn: &rusqlite::Connection, capture: &ClipboardCapture) -> Resu
     let id = uuid::Uuid::new_v4().to_string();
     conn.execute(
         "INSERT INTO clipboard_entries (
-            id, kind, content_hash, text_preview, text_content, image_path,
-            source_app, source_bundle_id, created_at, last_copied_at, copy_count, is_favorite
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, 0)",
+            id, kind, content_hash, text_preview, text_content, rich_text_rtf, rich_text_html,
+            image_path, source_app, source_bundle_id, created_at, last_copied_at, copy_count,
+            is_favorite
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, 0)",
         params![
             id,
             capture.kind.as_db_str(),
             capture.content_hash,
             capture.text_preview,
             capture.text_content,
+            capture.rich_text_rtf,
+            capture.rich_text_html,
             capture.image_path,
             capture.source_app,
             capture.source_bundle_id,
@@ -475,7 +513,7 @@ fn list_entries(
     let rows = stmt
         .query_map(
             params![kind, if favorites_only { 1 } else { 0 }, pattern],
-            row_to_entry,
+            row_to_entry_summary,
         )
         .map_err(|e| e.to_string())?;
 
@@ -483,7 +521,7 @@ fn list_entries(
         .map_err(|e| e.to_string())
 }
 
-fn get_entry(conn: &rusqlite::Connection, entry_id: &str) -> Result<ClipboardEntry, String> {
+fn get_entry(conn: &rusqlite::Connection, entry_id: &str) -> Result<ClipboardEntryRecord, String> {
     conn.query_row(
         "SELECT
             id,
@@ -496,11 +534,13 @@ fn get_entry(conn: &rusqlite::Connection, entry_id: &str) -> Result<ClipboardEnt
             created_at,
             last_copied_at,
             copy_count,
-            is_favorite
+            is_favorite,
+            rich_text_rtf,
+            rich_text_html
          FROM clipboard_entries
          WHERE id = ?1",
         params![entry_id],
-        row_to_entry,
+        row_to_entry_record,
     )
     .map_err(|e| e.to_string())
 }
@@ -514,6 +554,84 @@ fn touch_entry(conn: &rusqlite::Connection, entry_id: &str) -> Result<(), String
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn update_text_entry(
+    conn: &rusqlite::Connection,
+    entry_id: &str,
+    text: &str,
+) -> Result<String, String> {
+    let record = get_entry(conn, entry_id)?;
+    if record.entry.kind != ClipboardEntryKind::Text {
+        return Err("Only text clipboard entries can be edited".to_string());
+    }
+
+    if text.trim().is_empty() {
+        return Err("Clipboard text cannot be empty".to_string());
+    }
+
+    let now = now_millis();
+    let next_hash = sha256_hex(text.as_bytes());
+    let preview = preview_for_text(text);
+    let duplicate_id: Option<String> = conn
+        .query_row(
+            "SELECT id
+             FROM clipboard_entries
+             WHERE content_hash = ?1 AND id != ?2",
+            params![next_hash, entry_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    if let Some(duplicate_id) = duplicate_id {
+        conn.execute(
+            "UPDATE clipboard_entries
+             SET is_favorite = CASE WHEN is_favorite = 1 OR ?1 = 1 THEN 1 ELSE 0 END,
+                 source_app = ?2,
+                 source_bundle_id = ?3,
+                 last_copied_at = ?4
+             WHERE id = ?5",
+            params![
+                if record.entry.is_favorite { 1 } else { 0 },
+                "Oling",
+                "com.quietnode.oling",
+                now,
+                duplicate_id,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "DELETE FROM clipboard_entries WHERE id = ?1",
+            params![entry_id],
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(duplicate_id);
+    }
+
+    conn.execute(
+        "UPDATE clipboard_entries
+         SET content_hash = ?1,
+             text_preview = ?2,
+             text_content = ?3,
+             rich_text_rtf = NULL,
+             rich_text_html = NULL,
+             source_app = ?4,
+             source_bundle_id = ?5,
+             last_copied_at = ?6
+         WHERE id = ?7",
+        params![
+            next_hash,
+            preview,
+            text,
+            "Oling",
+            "com.quietnode.oling",
+            now,
+            entry_id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(entry_id.to_string())
 }
 
 fn delete_entry(conn: &rusqlite::Connection, entry_id: &str) -> Result<Option<String>, String> {
@@ -663,21 +781,77 @@ pub fn hide_window(app_handle: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn write_entry_to_clipboard(entry: &ClipboardEntry) -> Result<(), String> {
-    match entry.kind {
+fn write_text_payload_to_clipboard(
+    text: &str,
+    rich_text_rtf: Option<&[u8]>,
+    rich_text_html: Option<&[u8]>,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::rc::Retained;
+        use objc2::runtime::ProtocolObject;
+        use objc2_app_kit::{
+            NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting,
+        };
+        use objc2_foundation::{NSArray, NSData, NSString};
+
+        let pb = NSPasteboard::generalPasteboard();
+        let item = NSPasteboardItem::new();
+        let plain = NSString::from_str(text);
+        if !unsafe { item.setString_forType(&plain, NSPasteboardTypeString) } {
+            return Err("Failed to write clipboard text".to_string());
+        }
+        if let Some(bytes) = rich_text_rtf {
+            let rtf_type = NSString::from_str("public.rtf");
+            let data = NSData::with_bytes(bytes);
+            let _ = item.setData_forType(&data, &rtf_type);
+        }
+        if let Some(bytes) = rich_text_html {
+            let html_type = NSString::from_str("public.html");
+            let data = NSData::with_bytes(bytes);
+            let _ = item.setData_forType(&data, &html_type);
+        }
+
+        pb.clearContents();
+        let object: Retained<ProtocolObject<dyn NSPasteboardWriting>> =
+            ProtocolObject::from_retained(item);
+        let array = NSArray::from_retained_slice(&[object]);
+        if pb.writeObjects(&array) {
+            Ok(())
+        } else {
+            Err("Failed to write clipboard text".to_string())
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = rich_text_rtf;
+        let _ = rich_text_html;
+        if crate::reply::pasteboard_write_string(text) {
+            Ok(())
+        } else {
+            Err("Failed to write clipboard text".to_string())
+        }
+    }
+}
+
+fn write_entry_to_clipboard(entry: &ClipboardEntryRecord) -> Result<(), String> {
+    match entry.entry.kind {
         ClipboardEntryKind::Text => {
             let text = entry
+                .entry
                 .text_content
                 .as_deref()
                 .ok_or_else(|| "Text clipboard entry has no text payload".to_string())?;
-            if crate::reply::pasteboard_write_string(text) {
-                Ok(())
-            } else {
-                Err("Failed to write clipboard text".to_string())
-            }
+            write_text_payload_to_clipboard(
+                text,
+                entry.rich_text_rtf.as_deref(),
+                entry.rich_text_html.as_deref(),
+            )
         }
         ClipboardEntryKind::Image => {
             let image_path = entry
+                .entry
                 .image_path
                 .clone()
                 .ok_or_else(|| "Image clipboard entry has no image path".to_string())?;
@@ -686,10 +860,24 @@ fn write_entry_to_clipboard(entry: &ClipboardEntry) -> Result<(), String> {
     }
 }
 
+fn write_entry_to_plain_text_clipboard(entry: &ClipboardEntryRecord) -> Result<(), String> {
+    match entry.entry.kind {
+        ClipboardEntryKind::Text => {
+            let text = entry
+                .entry
+                .text_content
+                .as_deref()
+                .ok_or_else(|| "Text clipboard entry has no text payload".to_string())?;
+            write_text_payload_to_clipboard(text, None, None)
+        }
+        ClipboardEntryKind::Image => write_entry_to_clipboard(entry),
+    }
+}
+
 fn paste_entry_to_previous_app(
     app_handle: &tauri::AppHandle,
     state: &ClipboardHistoryState,
-    entry: &ClipboardEntry,
+    entry: &ClipboardEntryRecord,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -764,6 +952,24 @@ pub fn copy_clipboard_entry(
 
     clipboard_state.suppress_writes(CLIPBOARD_WRITE_SUPPRESSION);
     write_entry_to_clipboard(&entry)
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn copy_clipboard_entry_plain_text(
+    db: tauri::State<'_, Database>,
+    clipboard_state: tauri::State<'_, ClipboardHistoryState>,
+    entry_id: String,
+) -> Result<(), String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    let entry = get_entry(&conn, &entry_id)?;
+    touch_entry(&conn, &entry_id)?;
+    drop(conn);
+
+    clipboard_state.suppress_writes(CLIPBOARD_WRITE_SUPPRESSION);
+    write_entry_to_plain_text_clipboard(&entry)
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -857,9 +1063,10 @@ pub fn open_clipboard_entry_in_oling(
         .filter(|value| !value.is_empty());
     let auto_submit = auto_submit.unwrap_or(false);
 
-    match entry.kind {
+    match entry.entry.kind {
         ClipboardEntryKind::Text => {
             let text = entry
+                .entry
                 .text_content
                 .clone()
                 .ok_or_else(|| "Clipboard text entry is empty".to_string())?;
@@ -882,6 +1089,7 @@ pub fn open_clipboard_entry_in_oling(
         }
         ClipboardEntryKind::Image => {
             let image_path = entry
+                .entry
                 .image_path
                 .clone()
                 .ok_or_else(|| "Clipboard image entry is missing its file path".to_string())?;
@@ -903,6 +1111,23 @@ pub fn open_clipboard_entry_in_oling(
 
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg_attr(not(coverage), tauri::command)]
+pub fn update_clipboard_text_entry(
+    app_handle: tauri::AppHandle,
+    db: tauri::State<'_, Database>,
+    entry_id: String,
+    text: String,
+) -> Result<String, String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    let resolved_id = update_text_entry(&conn, &entry_id, &text)?;
+    drop(conn);
+    let _ = app_handle.emit(CLIPBOARD_UPDATED_EVENT, ());
+    Ok(resolved_id)
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
 pub fn edit_clipboard_entry(
     app_handle: tauri::AppHandle,
     db: tauri::State<'_, Database>,
@@ -919,8 +1144,9 @@ pub fn edit_clipboard_entry(
     touch_entry(&conn, &entry_id)?;
     drop(conn);
 
-    let image_path = match entry.kind {
+    let image_path = match entry.entry.kind {
         ClipboardEntryKind::Image => entry
+            .entry
             .image_path
             .clone()
             .ok_or_else(|| "Clipboard image entry is missing its file path".to_string())?,
@@ -959,16 +1185,47 @@ fn pasteboard_change_count() -> isize {
 }
 
 #[cfg(target_os = "macos")]
-fn pasteboard_string() -> Option<String> {
+fn pasteboard_text_payload() -> Option<TextClipboardPayload> {
     use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    use objc2_foundation::NSString;
+
     let pb = NSPasteboard::generalPasteboard();
     let s = unsafe { pb.stringForType(NSPasteboardTypeString)? };
     let text = s.to_string();
     if text.trim().is_empty() {
-        None
-    } else {
-        Some(text)
+        return None;
     }
+
+    let Some(items) = pb.pasteboardItems() else {
+        return Some(TextClipboardPayload {
+            text,
+            rtf: None,
+            html: None,
+        });
+    };
+
+    let rtf_type = NSString::from_str("public.rtf");
+    let html_type = NSString::from_str("public.html");
+    let mut rtf = None;
+    let mut html = None;
+    for idx in 0..items.count() {
+        let item = items.objectAtIndex(idx);
+        if rtf.is_none() {
+            if let Some(data) = item.dataForType(&rtf_type) {
+                rtf = Some(nsdata_to_vec(&data));
+            }
+        }
+        if html.is_none() {
+            if let Some(data) = item.dataForType(&html_type) {
+                html = Some(nsdata_to_vec(&data));
+            }
+        }
+        if rtf.is_some() && html.is_some() {
+            break;
+        }
+    }
+
+    Some(TextClipboardPayload { text, rtf, html })
 }
 
 #[cfg(target_os = "macos")]
@@ -1171,5 +1428,76 @@ mod tests {
         assert_eq!(entries[0].kind, ClipboardEntryKind::Image);
         assert_eq!(entries[0].copy_count, 2);
         assert_eq!(entries[0].source_app.as_deref(), Some("Oling"));
+    }
+
+    #[test]
+    fn update_text_entry_rewrites_content_and_clears_rich_payload() {
+        let conn = crate::database::open_in_memory().unwrap();
+        let capture = ClipboardCapture {
+            kind: ClipboardEntryKind::Text,
+            content_hash: sha256_hex(b"<b>Hello</b>"),
+            text_preview: "Hello".to_string(),
+            text_content: Some("Hello".to_string()),
+            rich_text_rtf: Some(vec![1, 2, 3]),
+            rich_text_html: Some(b"<b>Hello</b>".to_vec()),
+            image_path: None,
+            source_app: Some("Safari".to_string()),
+            source_bundle_id: Some("com.apple.Safari".to_string()),
+        };
+        let id = upsert_entry(&conn, &capture).unwrap();
+
+        let resolved_id = update_text_entry(&conn, &id, "Hello from Oling").unwrap();
+        assert_eq!(resolved_id, id);
+
+        let record = get_entry(&conn, &id).unwrap();
+        assert_eq!(
+            record.entry.text_content.as_deref(),
+            Some("Hello from Oling")
+        );
+        assert_eq!(record.entry.text_preview, "Hello from Oling");
+        assert!(record.rich_text_rtf.is_none());
+        assert!(record.rich_text_html.is_none());
+        assert_eq!(record.entry.source_app.as_deref(), Some("Oling"));
+        assert_eq!(
+            record.entry.source_bundle_id.as_deref(),
+            Some("com.quietnode.oling")
+        );
+    }
+
+    #[test]
+    fn update_text_entry_merges_duplicate_hashes() {
+        let conn = crate::database::open_in_memory().unwrap();
+        let first = ClipboardCapture {
+            kind: ClipboardEntryKind::Text,
+            content_hash: sha256_hex(b"Alpha"),
+            text_preview: "Alpha".to_string(),
+            text_content: Some("Alpha".to_string()),
+            rich_text_rtf: None,
+            rich_text_html: None,
+            image_path: None,
+            source_app: Some("Notes".to_string()),
+            source_bundle_id: Some("com.apple.Notes".to_string()),
+        };
+        let second = ClipboardCapture {
+            kind: ClipboardEntryKind::Text,
+            content_hash: sha256_hex(b"Beta"),
+            text_preview: "Beta".to_string(),
+            text_content: Some("Beta".to_string()),
+            rich_text_rtf: None,
+            rich_text_html: None,
+            image_path: None,
+            source_app: Some("Slack".to_string()),
+            source_bundle_id: Some("com.tinyspeck.slackmacgap".to_string()),
+        };
+        let first_id = upsert_entry(&conn, &first).unwrap();
+        let second_id = upsert_entry(&conn, &second).unwrap();
+
+        let resolved_id = update_text_entry(&conn, &second_id, "Alpha").unwrap();
+        assert_eq!(resolved_id, first_id);
+
+        let entries = list_entries(&conn, None, Some("text"), false).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, first_id);
+        assert_eq!(entries[0].text_content.as_deref(), Some("Alpha"));
     }
 }

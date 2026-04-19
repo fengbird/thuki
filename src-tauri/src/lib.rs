@@ -1022,6 +1022,8 @@ pub fn run() {
             #[cfg(not(coverage))]
             clipboard_history::copy_clipboard_entry,
             #[cfg(not(coverage))]
+            clipboard_history::copy_clipboard_entry_plain_text,
+            #[cfg(not(coverage))]
             clipboard_history::paste_clipboard_entry,
             #[cfg(not(coverage))]
             clipboard_history::toggle_clipboard_entry_favorite,
@@ -1031,6 +1033,8 @@ pub fn run() {
             clipboard_history::clear_clipboard_history,
             #[cfg(not(coverage))]
             clipboard_history::open_clipboard_entry_in_oling,
+            #[cfg(not(coverage))]
+            clipboard_history::update_clipboard_text_entry,
             #[cfg(not(coverage))]
             clipboard_history::edit_clipboard_entry,
             #[cfg(not(coverage))]

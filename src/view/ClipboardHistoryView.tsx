@@ -69,6 +69,9 @@ export function ClipboardHistoryView() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [status, setStatus] = useState<string | null>(null);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   const loadEntries = useCallback(async () => {
@@ -136,6 +139,22 @@ export function ClipboardHistoryView() {
     () => entries.find((entry) => entry.id === selectedId) ?? null,
     [entries, selectedId],
   );
+  const isEditingActiveText =
+    activeEntry?.kind === 'text' && editingEntryId === activeEntry.id;
+
+  useEffect(() => {
+    if (!activeEntry || activeEntry.kind !== 'text') {
+      setEditingEntryId(null);
+      setEditingText('');
+      setIsSavingEdit(false);
+      return;
+    }
+    if (editingEntryId && editingEntryId !== activeEntry.id) {
+      setEditingEntryId(null);
+      setEditingText('');
+      setIsSavingEdit(false);
+    }
+  }, [activeEntry, editingEntryId]);
 
   const closeWindow = useCallback(async () => {
     try {
@@ -153,6 +172,15 @@ export function ClipboardHistoryView() {
     async (entryId: string) => {
       await invoke('copy_clipboard_entry', { entryId });
       setStatus('Copied back to clipboard');
+      void loadEntries();
+    },
+    [loadEntries],
+  );
+
+  const copyEntryPlainText = useCallback(
+    async (entryId: string) => {
+      await invoke('copy_clipboard_entry_plain_text', { entryId });
+      setStatus('Copied as plain text');
       void loadEntries();
     },
     [loadEntries],
@@ -219,6 +247,41 @@ export function ClipboardHistoryView() {
     });
   }, []);
 
+  const beginTextEdit = useCallback((entry: ClipboardEntry) => {
+    if (entry.kind !== 'text') {
+      return;
+    }
+    setEditingEntryId(entry.id);
+    setEditingText(entry.text_content ?? entry.text_preview);
+    setStatus(null);
+  }, []);
+
+  const cancelTextEdit = useCallback(() => {
+    setEditingEntryId(null);
+    setEditingText('');
+    setIsSavingEdit(false);
+  }, []);
+
+  const saveTextEdit = useCallback(
+    async (entryId: string) => {
+      setIsSavingEdit(true);
+      try {
+        const resolvedId = await invoke<string>('update_clipboard_text_entry', {
+          entryId,
+          text: editingText,
+        });
+        setSelectedId(resolvedId);
+        setStatus('Clipboard text updated');
+        cancelTextEdit();
+        void loadEntries();
+      } catch (error) {
+        setStatus(typeof error === 'string' ? error : String(error));
+        setIsSavingEdit(false);
+      }
+    },
+    [cancelTextEdit, editingText, loadEntries],
+  );
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
@@ -230,6 +293,16 @@ export function ClipboardHistoryView() {
       if (event.key === 'Escape') {
         event.preventDefault();
         void closeWindow();
+        return;
+      }
+      if (
+        isEditingActiveText &&
+        activeEntry?.kind === 'text' &&
+        (event.metaKey || event.ctrlKey) &&
+        event.key === 'Enter'
+      ) {
+        event.preventDefault();
+        void saveTextEdit(activeEntry.id);
         return;
       }
       if (!entries.length) {
@@ -273,7 +346,16 @@ export function ClipboardHistoryView() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeEntry, closeWindow, deleteEntry, entries, pasteEntry, selectedId]);
+  }, [
+    activeEntry,
+    closeWindow,
+    deleteEntry,
+    entries,
+    isEditingActiveText,
+    pasteEntry,
+    saveTextEdit,
+    selectedId,
+  ]);
 
   return (
     <div
@@ -541,6 +623,7 @@ export function ClipboardHistoryView() {
               display: 'flex',
               flexDirection: 'column',
               gap: 14,
+              overflow: 'hidden',
               background: 'rgba(255,255,255,0.02)',
             }}
           >
@@ -577,116 +660,79 @@ export function ClipboardHistoryView() {
                 </div>
 
                 <div
+                  data-testid="clipboard-detail-scroll"
                   style={{
                     flex: 1,
-                    minHeight: 160,
-                    borderRadius: 18,
-                    border: `1px solid ${THEME.divider}`,
-                    background: THEME.glass,
+                    minHeight: 0,
                     overflow: 'auto',
-                    padding: 14,
-                  }}
-                >
-                  {activeEntry.kind === 'image' && activeEntry.image_path ? (
-                    <img
-                      data-testid="clipboard-preview-image"
-                      src={convertFileSrc(activeEntry.image_path)}
-                      alt="Clipboard detail preview"
-                      style={{
-                        width: '100%',
-                        height: 'auto',
-                        borderRadius: 14,
-                        display: 'block',
-                      }}
-                    />
-                  ) : (
-                    <pre
-                      data-testid="clipboard-preview-text"
-                      style={{
-                        margin: 0,
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                        fontSize: 12.5,
-                        lineHeight: 1.65,
-                        color: THEME.text,
-                        fontFamily:
-                          'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
-                      }}
-                    >
-                      {activeEntry.text_content ?? activeEntry.text_preview}
-                    </pre>
-                  )}
-                </div>
-
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: 8,
-                  }}
-                >
-                  <button
-                    type="button"
-                    data-testid="clipboard-copy-btn"
-                    onClick={() => void copyEntry(activeEntry.id)}
-                    style={actionButtonStyle()}
-                  >
-                    Copy
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="clipboard-paste-btn"
-                    onClick={() => void pasteEntry(activeEntry.id)}
-                    style={actionButtonStyle()}
-                  >
-                    Paste
-                  </button>
-                  {activeEntry.kind === 'image' && (
-                    <button
-                      type="button"
-                      data-testid="clipboard-edit-btn"
-                      onClick={() => void editEntry(activeEntry.id)}
-                      style={actionButtonStyle()}
-                    >
-                      Edit
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    data-testid="clipboard-ask-btn"
-                    onClick={() => void openInOling(activeEntry.id)}
-                    style={actionButtonStyle()}
-                  >
-                    Ask in Oling
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="clipboard-delete-btn"
-                    onClick={() => void deleteEntry(activeEntry.id)}
-                    style={actionButtonStyle(false)}
-                  >
-                    Delete
-                  </button>
-                </div>
-
-                <div
-                  style={{
-                    borderTop: `1px solid ${THEME.divider}`,
-                    paddingTop: 14,
+                    paddingRight: 4,
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 8,
+                    gap: 14,
                   }}
                 >
                   <div
                     style={{
-                      fontSize: 11.5,
-                      color: THEME.muted,
-                      fontWeight: 700,
+                      minHeight: 180,
+                      borderRadius: 18,
+                      border: `1px solid ${THEME.divider}`,
+                      background: THEME.glass,
+                      overflow: 'auto',
+                      padding: 14,
                     }}
                   >
-                    AI Actions
+                    {activeEntry.kind === 'image' && activeEntry.image_path ? (
+                      <img
+                        data-testid="clipboard-preview-image"
+                        src={convertFileSrc(activeEntry.image_path)}
+                        alt="Clipboard detail preview"
+                        style={{
+                          width: '100%',
+                          height: 'auto',
+                          borderRadius: 14,
+                          display: 'block',
+                        }}
+                      />
+                    ) : isEditingActiveText ? (
+                      <textarea
+                        data-testid="clipboard-edit-textarea"
+                        value={editingText}
+                        onChange={(event) => setEditingText(event.target.value)}
+                        spellCheck={false}
+                        style={{
+                          width: '100%',
+                          minHeight: 220,
+                          height: '100%',
+                          resize: 'vertical',
+                          border: 'none',
+                          background: 'transparent',
+                          color: THEME.text,
+                          outline: 'none',
+                          fontSize: 12.5,
+                          lineHeight: 1.65,
+                          fontFamily:
+                            'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
+                        }}
+                      />
+                    ) : (
+                      <pre
+                        data-testid="clipboard-preview-text"
+                        style={{
+                          margin: 0,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          fontSize: 12.5,
+                          lineHeight: 1.65,
+                          color: THEME.text,
+                          fontFamily:
+                            'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
+                        }}
+                      >
+                        {activeEntry.text_content ?? activeEntry.text_preview}
+                      </pre>
+                    )}
                   </div>
+
                   <div
                     style={{
                       display: 'grid',
@@ -696,56 +742,171 @@ export function ClipboardHistoryView() {
                   >
                     <button
                       type="button"
-                      data-testid="clipboard-ai-summarize"
-                      onClick={() =>
-                        void openInOling(activeEntry.id, '/tldr', true)
-                      }
+                      data-testid="clipboard-copy-btn"
+                      onClick={() => void copyEntry(activeEntry.id)}
                       style={actionButtonStyle()}
                     >
-                      Summarize
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="clipboard-ai-translate"
-                      onClick={() =>
-                        void openInOling(activeEntry.id, '/translate', true)
-                      }
-                      style={actionButtonStyle()}
-                    >
-                      Translate
+                      Copy
                     </button>
                     {activeEntry.kind === 'text' ? (
                       <button
                         type="button"
-                        data-testid="clipboard-ai-rewrite"
-                        onClick={() =>
-                          void openInOling(activeEntry.id, '/rewrite', true)
-                        }
+                        data-testid="clipboard-copy-plain-btn"
+                        onClick={() => void copyEntryPlainText(activeEntry.id)}
                         style={actionButtonStyle()}
                       >
-                        Rewrite
+                        Copy Plain Text
                       </button>
                     ) : (
                       <button
                         type="button"
-                        data-testid="clipboard-ai-ocr-clean"
+                        data-testid="clipboard-edit-btn"
+                        onClick={() => void editEntry(activeEntry.id)}
+                        style={actionButtonStyle()}
+                      >
+                        Edit
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      data-testid="clipboard-paste-btn"
+                      onClick={() => void pasteEntry(activeEntry.id)}
+                      style={actionButtonStyle()}
+                    >
+                      Paste
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="clipboard-ask-btn"
+                      onClick={() => void openInOling(activeEntry.id)}
+                      style={actionButtonStyle()}
+                    >
+                      Ask in Oling
+                    </button>
+                    {activeEntry.kind === 'text' ? (
+                      isEditingActiveText ? (
+                        <>
+                          <button
+                            type="button"
+                            data-testid="clipboard-save-edit-btn"
+                            onClick={() => void saveTextEdit(activeEntry.id)}
+                            disabled={isSavingEdit}
+                            style={actionButtonStyle()}
+                          >
+                            {isSavingEdit ? 'Saving…' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="clipboard-cancel-edit-btn"
+                            onClick={cancelTextEdit}
+                            disabled={isSavingEdit}
+                            style={actionButtonStyle(false)}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          data-testid="clipboard-start-edit-btn"
+                          onClick={() => beginTextEdit(activeEntry)}
+                          style={actionButtonStyle()}
+                        >
+                          Edit Text
+                        </button>
+                      )
+                    ) : null}
+                    <button
+                      type="button"
+                      data-testid="clipboard-delete-btn"
+                      onClick={() => void deleteEntry(activeEntry.id)}
+                      style={actionButtonStyle(false)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+
+                  <div
+                    style={{
+                      borderTop: `1px solid ${THEME.divider}`,
+                      paddingTop: 14,
+                      paddingBottom: 2,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 11.5,
+                        color: THEME.muted,
+                        fontWeight: 700,
+                      }}
+                    >
+                      AI Actions
+                    </div>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: 8,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        data-testid="clipboard-ai-summarize"
                         onClick={() =>
-                          void openInOling(
-                            activeEntry.id,
-                            OCR_AND_CLEAN_PROMPT,
-                            true,
-                          )
+                          void openInOling(activeEntry.id, '/tldr', true)
                         }
                         style={actionButtonStyle()}
                       >
-                        OCR &amp; Clean
+                        Summarize
                       </button>
-                    )}
+                      <button
+                        type="button"
+                        data-testid="clipboard-ai-translate"
+                        onClick={() =>
+                          void openInOling(activeEntry.id, '/translate', true)
+                        }
+                        style={actionButtonStyle()}
+                      >
+                        Translate
+                      </button>
+                      {activeEntry.kind === 'text' ? (
+                        <button
+                          type="button"
+                          data-testid="clipboard-ai-rewrite"
+                          onClick={() =>
+                            void openInOling(activeEntry.id, '/rewrite', true)
+                          }
+                          style={actionButtonStyle()}
+                        >
+                          Rewrite
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          data-testid="clipboard-ai-ocr-clean"
+                          onClick={() =>
+                            void openInOling(
+                              activeEntry.id,
+                              OCR_AND_CLEAN_PROMPT,
+                              true,
+                            )
+                          }
+                          style={actionButtonStyle()}
+                        >
+                          OCR &amp; Clean
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </>
             ) : (
-              <EmptyState label="Select a clipboard item to inspect it." />
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <EmptyState label="Select a clipboard item to inspect it." />
+              </div>
             )}
           </section>
         </div>

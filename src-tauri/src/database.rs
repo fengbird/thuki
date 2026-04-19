@@ -196,6 +196,8 @@ fn run_migrations(conn: &Connection) -> SqlResult<()> {
         "  content_hash TEXT NOT NULL UNIQUE,",
         "  text_preview TEXT NOT NULL,",
         "  text_content TEXT,",
+        "  rich_text_rtf BLOB,",
+        "  rich_text_html BLOB,",
         "  image_path TEXT,",
         "  source_app TEXT,",
         "  source_bundle_id TEXT,",
@@ -232,6 +234,24 @@ fn run_migrations(conn: &Connection) -> SqlResult<()> {
 
     if !has_thinking_content {
         conn.execute_batch("ALTER TABLE messages ADD COLUMN thinking_content TEXT;")?;
+    }
+
+    // Migration: rich clipboard text payload columns for formatting-preserving
+    // restore/copy actions.
+    let clipboard_columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(clipboard_entries)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if !clipboard_columns.iter().any(|name| name == "rich_text_rtf") {
+        conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN rich_text_rtf BLOB;")?;
+    }
+    if !clipboard_columns
+        .iter()
+        .any(|name| name == "rich_text_html")
+    {
+        conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN rich_text_html BLOB;")?;
     }
 
     Ok(())
