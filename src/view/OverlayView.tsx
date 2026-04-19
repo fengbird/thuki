@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -17,6 +17,7 @@ import { FloatingToolbar } from './overlay/FloatingToolbar';
 import {
   RESIZE_HANDLES,
   computeBadgePosition,
+  fitRectInViewport,
   cursorForHandle,
   imageScaleFor,
   isRectSized,
@@ -51,6 +52,10 @@ export interface OverlayViewProps {
    * annotation.
    */
   fit?: boolean;
+  /** Specialized overlay layouts can reuse the same editor with slightly
+   *  different chrome behavior, e.g. clipboard images reserve space for
+   *  the toolbar below the image. */
+  editorKind?: string | null;
 }
 
 interface DragState {
@@ -69,7 +74,11 @@ interface ResizeState {
   handle: ResizeHandle;
 }
 
-export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
+export function OverlayView({
+  imagePath,
+  fit = false,
+  editorKind = null,
+}: OverlayViewProps) {
   const src = imagePath ? convertFileSrc(imagePath) : '';
   const ocrPrompt = useOcrPrompt();
   const [image, setImage] = useState<HTMLImageElement | null>(null);
@@ -97,6 +106,21 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
   const stageRef = useRef<Konva.Stage | null>(null);
   const { annotations, canUndo, canRedo, add, clear, undo, redo } =
     useAnnotations();
+  const isClipboardEditor = fit && editorKind === 'clipboard';
+
+  const imageFrame = useMemo(() => {
+    if (!image) {
+      return { x: 0, y: 0, width: viewport.width, height: viewport.height };
+    }
+    if (isClipboardEditor) {
+      return fitRectInViewport(
+        image.naturalWidth,
+        image.naturalHeight,
+        viewport,
+      );
+    }
+    return { x: 0, y: 0, width: viewport.width, height: viewport.height };
+  }, [image, isClipboardEditor, viewport]);
 
   // Load the background screenshot so we know its natural pixel dimensions.
   useEffect(() => {
@@ -123,13 +147,17 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
   useEffect(() => {
     if (!fit || !image || fitApplied.current) return;
     fitApplied.current = true;
-    setSelection({
-      x: 0,
-      y: 0,
-      width: viewport.width,
-      height: viewport.height,
-    });
-  }, [fit, image, viewport]);
+    setSelection(
+      isClipboardEditor
+        ? imageFrame
+        : {
+            x: 0,
+            y: 0,
+            width: viewport.width,
+            height: viewport.height,
+          },
+    );
+  }, [fit, image, imageFrame, isClipboardEditor, viewport]);
 
   const handleClose = useCallback(async () => {
     if (imagePath) {
@@ -145,16 +173,6 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
       // Window already closing; ignore.
     }
   }, [imagePath]);
-
-  const resetSelection = useCallback(() => {
-    setSelection(null);
-    setMoving(null);
-    setResizing(null);
-    setTextEditor(null);
-    clear();
-    setTool('select');
-    setStatus({ kind: 'idle', message: '' });
-  }, [clear]);
 
   // Commit the in-progress text, or cancel if empty.
   const commitText = useCallback(() => {
@@ -174,21 +192,13 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
     setTextEditor(null);
   }, [textEditor, add, fontSize, color]);
 
-  // Keyboard: Esc cancels selection (first press) or closes overlay (again).
-  // When the text editor is open, Esc dismisses the editor first.
+  // Keyboard: Esc always exits the overlay directly. We no longer step back
+  // to the selection phase first — one press should dismiss the whole mode.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        if (textEditor) {
-          setTextEditor(null);
-          return;
-        }
-        if (selection) {
-          resetSelection();
-        } else {
-          void handleClose();
-        }
+        void handleClose();
         return;
       }
       if (!(e.metaKey || e.ctrlKey)) return;
@@ -200,7 +210,7 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selection, textEditor, handleClose, resetSelection, redo, undo]);
+  }, [handleClose, redo, undo]);
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -470,7 +480,7 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
     };
   }, [handleClose]);
 
-  const scale = image ? imageScaleFor(image.naturalWidth, viewport.width) : 1;
+  const scale = image ? imageScaleFor(image.naturalWidth, imageFrame.width) : 1;
   const isAdjusting = !!(moving || resizing);
 
   return (
@@ -495,16 +505,17 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
           draggable={false}
           style={{
             position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
+            left: isClipboardEditor ? imageFrame.x : 0,
+            top: isClipboardEditor ? imageFrame.y : 0,
+            width: isClipboardEditor ? imageFrame.width : '100%',
+            height: isClipboardEditor ? imageFrame.height : '100%',
             pointerEvents: 'none',
             userSelect: 'none',
           }}
         />
       )}
 
-      <DimMask rect={liveRect} viewport={viewport} />
+      {!isClipboardEditor && <DimMask rect={liveRect} viewport={viewport} />}
 
       {selection && image && (
         <div
@@ -533,6 +544,7 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
             image={image}
             selection={selection}
             scale={scale}
+            sourceOrigin={imageFrame}
             tool={tool}
             color={color}
             fontSize={fontSize}
@@ -608,7 +620,7 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
           stays visible after commit. Handles hide during resize and in
           fit mode (the selection is locked to the whole viewport, resizing
           it would be meaningless). */}
-      {liveRect && (
+      {liveRect && !isClipboardEditor && (
         <SelectionFrame
           rect={liveRect}
           showHandles={!!selection && !isAdjusting && !fit}
@@ -616,7 +628,7 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
         />
       )}
 
-      {liveRect && <DimensionBadge rect={liveRect} />}
+      {liveRect && !isClipboardEditor && <DimensionBadge rect={liveRect} />}
 
       {selection && (
         <FloatingToolbar
@@ -656,7 +668,7 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
           value={textEditor.value}
           onChange={(v) => setTextEditor({ ...textEditor, value: v })}
           onCommit={commitText}
-          onCancel={() => setTextEditor(null)}
+          onCancel={() => void handleClose()}
         />
       )}
 

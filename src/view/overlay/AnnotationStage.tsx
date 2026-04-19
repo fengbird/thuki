@@ -53,6 +53,7 @@ export interface AnnotationStageProps {
   selection: Rect;
   /** imagePixels / viewportPixels — used to crop the image correctly. */
   scale: number;
+  sourceOrigin?: { x: number; y: number };
   tool: Tool;
   color: string;
   fontSize: number;
@@ -66,6 +67,7 @@ export function AnnotationStage({
   image,
   selection,
   scale,
+  sourceOrigin = { x: 0, y: 0 },
   tool,
   color,
   fontSize,
@@ -110,7 +112,13 @@ export function AnnotationStage({
   const handleMouseUp = useCallback(() => {
     if (!draft) return;
     if (draft.tool === 'mosaic') {
-      const ann = finalizeMosaicDraft(draft, image, selection, scale);
+      const ann = finalizeMosaicDraft(
+        draft,
+        image,
+        selection,
+        scale,
+        sourceOrigin,
+      );
       if (ann) onCommit(ann);
     } else {
       const committed = finalizeDraft(draft, {
@@ -120,7 +128,7 @@ export function AnnotationStage({
       if (committed) onCommit(committed);
     }
     setDraft(null);
-  }, [draft, onCommit, image, selection, scale, color]);
+  }, [draft, onCommit, image, selection, scale, color, sourceOrigin]);
 
   const draftShape = draft ? draftToAnnotation(draft, color, fontSize) : null;
 
@@ -142,8 +150,8 @@ export function AnnotationStage({
           width={selection.width}
           height={selection.height}
           crop={{
-            x: selection.x * scale,
-            y: selection.y * scale,
+            x: (selection.x - sourceOrigin.x) * scale,
+            y: (selection.y - sourceOrigin.y) * scale,
             width: selection.width * scale,
             height: selection.height * scale,
           }}
@@ -329,6 +337,7 @@ function finalizeMosaicDraft(
   image: HTMLImageElement,
   selection: Rect,
   scale: number,
+  sourceOrigin: { x: number; y: number },
 ): MosaicAnnotation | null {
   if (draft.points.length < 4) return null;
   const [x1, y1, x2, y2] = draft.points;
@@ -360,7 +369,7 @@ function finalizeMosaicDraft(
     cells,
     DEFAULT_MOSAIC_CELL_SIZE,
     scale,
-    { x: selection.x, y: selection.y },
+    { x: selection.x - sourceOrigin.x, y: selection.y - sourceOrigin.y },
     imgData,
   );
   return {

@@ -1,5 +1,6 @@
 import React from 'react';
 import App from './App';
+import { ClipboardHistoryView } from './view/ClipboardHistoryView';
 import { LongImageEditorView } from './view/LongImageEditorView';
 import { LongShotHudView } from './view/LongShotHudView';
 import { OverlayView } from './view/OverlayView';
@@ -19,10 +20,11 @@ export function pickRoot(search: string): React.ReactElement {
   if (params.get('overlay') === '1') {
     const imagePath = params.get('path') ?? '';
     const fit = params.get('fit') === '1';
-    if (params.get('editor') === 'long') {
+    const editor = params.get('editor');
+    if (editor === 'long') {
       return <LongImageEditorView imagePath={imagePath} />;
     }
-    return <OverlayView imagePath={imagePath} fit={fit} />;
+    return <OverlayView imagePath={imagePath} fit={fit} editorKind={editor} />;
   }
   if (params.get('longhud') === '1') {
     return <LongShotHudView />;
@@ -31,6 +33,9 @@ export function pickRoot(search: string): React.ReactElement {
     const imagePath = params.get('path') ?? '';
     const label = params.get('label') ?? '';
     return <PinView imagePath={imagePath} label={label} />;
+  }
+  if (params.get('clipboard') === '1') {
+    return <ClipboardHistoryView />;
   }
   return <App />;
 }

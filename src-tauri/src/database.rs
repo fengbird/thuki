@@ -190,6 +190,23 @@ fn run_migrations(conn: &Connection) -> SqlResult<()> {
         "  ON conversations(updated_at DESC);",
         "CREATE TABLE IF NOT EXISTS app_config (",
         "  key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS clipboard_entries (",
+        "  id TEXT PRIMARY KEY,",
+        "  kind TEXT NOT NULL,",
+        "  content_hash TEXT NOT NULL UNIQUE,",
+        "  text_preview TEXT NOT NULL,",
+        "  text_content TEXT,",
+        "  image_path TEXT,",
+        "  source_app TEXT,",
+        "  source_bundle_id TEXT,",
+        "  created_at INTEGER NOT NULL,",
+        "  last_copied_at INTEGER NOT NULL,",
+        "  copy_count INTEGER NOT NULL DEFAULT 1,",
+        "  is_favorite INTEGER NOT NULL DEFAULT 0);",
+        "CREATE INDEX IF NOT EXISTS idx_clipboard_entries_last_copied",
+        "  ON clipboard_entries(last_copied_at DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_clipboard_entries_favorite",
+        "  ON clipboard_entries(is_favorite, last_copied_at DESC);",
     );
     conn.execute_batch(SCHEMA_DDL)?;
 
@@ -330,6 +347,21 @@ pub fn purge_conversation_data(conn: &Connection) -> SqlResult<()> {
          DELETE FROM conversations;",
     )?;
     Ok(())
+}
+
+/// Returns true when the named table exists in the current SQLite schema.
+#[cfg(test)]
+pub fn has_table(conn: &Connection, table_name: &str) -> SqlResult<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = ?1
+        )",
+        params![table_name],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|value| value != 0)
 }
 
 // ─── Message CRUD ───────────────────────────────────────────────────────────
@@ -475,6 +507,13 @@ mod tests {
             .collect();
         assert!(tables.contains(&"conversations".to_string()));
         assert!(tables.contains(&"messages".to_string()));
+        assert!(tables.contains(&"clipboard_entries".to_string()));
+    }
+
+    #[test]
+    fn clipboard_entries_table_exists() {
+        let conn = open_in_memory().unwrap();
+        assert!(has_table(&conn, "clipboard_entries").unwrap());
     }
 
     #[test]

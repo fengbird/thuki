@@ -50,7 +50,7 @@ const KC_CMD_R: i64 = 0x36;
 
 /// Keycode for the letter R. Used to detect the reply hotkey (⌃⇧R).
 const KC_R: i64 = 0x0f;
-/// Keycode for the letter C. Used to detect Cmd+C clipboard intent.
+/// Keycode for the letter C. Used for clipboard-history shortcut and Cmd+C clipboard intent.
 const KC_C: i64 = 0x08;
 /// Keycode for the letter X. Used to detect the screenshot hotkey (⌘⇧X).
 const KC_X: i64 = 0x07;
@@ -287,20 +287,23 @@ impl OverlayActivator {
     /// * `on_activation` — invoked on the configured overlay activation shortcut.
     /// * `on_reply_hotkey` — invoked on ⌃⇧R (triggers smart-reply capture).
     /// * `on_screenshot_hotkey` — invoked on the configured screenshot shortcut.
+    /// * `on_clipboard_window_hotkey` — invoked on the configured clipboard-history shortcut.
     /// * `on_clipboard_hotkey` — invoked on ⌘C / ⌘X (clipboard monitor hint).
     #[cfg_attr(coverage_nightly, coverage(off))]
-    pub fn start<F, G, H, I>(
+    pub fn start<F, G, H, I, J>(
         &self,
         shortcuts: Arc<Mutex<ShortcutConfig>>,
         on_activation: F,
         on_reply_hotkey: G,
         on_screenshot_hotkey: H,
-        on_clipboard_hotkey: I,
+        on_clipboard_window_hotkey: I,
+        on_clipboard_hotkey: J,
     ) where
         F: Fn() + Send + Sync + 'static,
         G: Fn() + Send + Sync + 'static,
         H: Fn() + Send + Sync + 'static,
         I: Fn() + Send + Sync + 'static,
+        J: Fn() + Send + Sync + 'static,
     {
         if self.is_active.load(Ordering::SeqCst) {
             return;
@@ -317,6 +320,7 @@ impl OverlayActivator {
         let on_activation = Arc::new(on_activation);
         let on_reply_hotkey = Arc::new(on_reply_hotkey);
         let on_screenshot_hotkey = Arc::new(on_screenshot_hotkey);
+        let on_clipboard_window_hotkey = Arc::new(on_clipboard_window_hotkey);
         let on_clipboard_hotkey = Arc::new(on_clipboard_hotkey);
 
         std::thread::spawn(move || {
@@ -326,6 +330,7 @@ impl OverlayActivator {
                 on_activation,
                 on_reply_hotkey,
                 on_screenshot_hotkey,
+                on_clipboard_window_hotkey,
                 on_clipboard_hotkey,
             );
         });
@@ -356,18 +361,20 @@ enum TapExitReason {
 ///   `TapDisabledByTimeout`). Retries immediately with no attempt limit so the
 ///   listener recovers as fast as possible.
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn run_loop_with_retry<F, G, H, I>(
+fn run_loop_with_retry<F, G, H, I, J>(
     is_active: Arc<AtomicBool>,
     shortcuts: Arc<Mutex<ShortcutConfig>>,
     on_activation: Arc<F>,
     on_reply_hotkey: Arc<G>,
     on_screenshot_hotkey: Arc<H>,
-    on_clipboard_hotkey: Arc<I>,
+    on_clipboard_window_hotkey: Arc<I>,
+    on_clipboard_hotkey: Arc<J>,
 ) where
     F: Fn() + Send + Sync + 'static,
     G: Fn() + Send + Sync + 'static,
     H: Fn() + Send + Sync + 'static,
     I: Fn() + Send + Sync + 'static,
+    J: Fn() + Send + Sync + 'static,
 {
     let mut permission_failures: u32 = 0;
 
@@ -382,6 +389,7 @@ fn run_loop_with_retry<F, G, H, I>(
             &on_activation,
             &on_reply_hotkey,
             &on_screenshot_hotkey,
+            &on_clipboard_window_hotkey,
             &on_clipboard_hotkey,
         ) {
             TapExitReason::Deactivated => return,
@@ -418,19 +426,21 @@ fn run_loop_with_retry<F, G, H, I>(
 /// Returns the reason the run loop exited so the caller can decide whether
 /// to retry.
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn try_initialize_tap<F, G, H, I>(
+fn try_initialize_tap<F, G, H, I, J>(
     is_active: &Arc<AtomicBool>,
     shortcuts: &Arc<Mutex<ShortcutConfig>>,
     on_activation: &Arc<F>,
     on_reply_hotkey: &Arc<G>,
     on_screenshot_hotkey: &Arc<H>,
-    on_clipboard_hotkey: &Arc<I>,
+    on_clipboard_window_hotkey: &Arc<I>,
+    on_clipboard_hotkey: &Arc<J>,
 ) -> TapExitReason
 where
     F: Fn() + Send + Sync + 'static,
     G: Fn() + Send + Sync + 'static,
     H: Fn() + Send + Sync + 'static,
     I: Fn() + Send + Sync + 'static,
+    J: Fn() + Send + Sync + 'static,
 {
     let state = Arc::new(Mutex::new(ActivationState {
         last_trigger: None,
@@ -443,6 +453,7 @@ where
     let cb_on_activation = on_activation.clone();
     let cb_on_reply_hotkey = on_reply_hotkey.clone();
     let cb_on_screenshot_hotkey = on_screenshot_hotkey.clone();
+    let cb_on_clipboard_window_hotkey = on_clipboard_window_hotkey.clone();
     let cb_on_clipboard_hotkey = on_clipboard_hotkey.clone();
     let cb_state = state.clone();
 
@@ -502,6 +513,12 @@ where
                     } else if matches_key_combo(keycode, flags, &shortcut_config.screenshot_capture)
                     {
                         cb_on_screenshot_hotkey();
+                    } else if matches_key_combo(
+                        keycode,
+                        flags,
+                        &shortcut_config.clipboard_history_open,
+                    ) {
+                        cb_on_clipboard_window_hotkey();
                     } else if is_clipboard_hotkey(keycode, flags) {
                         cb_on_clipboard_hotkey();
                     } else {
@@ -540,7 +557,7 @@ where
     match tap_result {
         Ok(tap) => {
             eprintln!(
-                "oling: [activator] event tap created (HID level) — listening for configurable activation/screenshot shortcuts, ⌃⇧R, and clipboard intents"
+                "oling: [activator] event tap created (HID level) — listening for configurable activation/screenshot/clipboard shortcuts, ⌃⇧R, and clipboard intents"
             );
             unsafe {
                 let loop_source = tap
@@ -808,6 +825,16 @@ mod tests {
             modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
         };
         assert!(matches_key_combo(KC_X, flags, &shortcut));
+    }
+
+    #[test]
+    fn key_combo_matches_cmd_shift_c_for_clipboard_history() {
+        let flags = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagShift;
+        let shortcut = KeyComboShortcut {
+            key_code: KC_C,
+            modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+        };
+        assert!(matches_key_combo(KC_C, flags, &shortcut));
     }
 
     #[test]

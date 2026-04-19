@@ -29,7 +29,11 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: asset: https://asset.localhost;",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/images/**", "/tmp/*-oling*.png"]
+        "scope": [
+          "$APPDATA/images/**",
+          "$APPDATA/clipboard/**",
+          "/tmp/*-oling*.png"
+        ]
       },
       "capabilities": ["default"]
     },

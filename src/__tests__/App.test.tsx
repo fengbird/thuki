@@ -2976,6 +2976,50 @@ describe('App', () => {
   });
 
   describe('overlay-submit bridge', () => {
+    it('queues clipboard compose until the overlay is shown', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('oling://clipboard-compose', {
+          query: '/tldr',
+          autoSubmit: false,
+        });
+      });
+
+      await showOverlay('Quarterly project update', 'clipboard');
+
+      const textarea = screen.getByPlaceholderText(
+        'Ask Oling anything...',
+      ) as HTMLTextAreaElement;
+      expect(textarea.value).toBe('/tldr');
+      expect(
+        screen.getByText((content) =>
+          content.includes('Quarterly project update'),
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('queues overlay-submit payload until the overlay is shown', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('oling://overlay-submit', {
+          imagePath: '/tmp/editor-shot.png',
+          prompt: 'What is in this image?',
+          autoSubmit: false,
+        });
+      });
+
+      await showOverlay();
+
+      const textarea = screen.getByPlaceholderText(
+        'Ask Oling anything...',
+      ) as HTMLTextAreaElement;
+      expect(textarea.value).toBe('What is in this image?');
+    });
+
     it('attaches the image and pre-fills the prompt when received', async () => {
       render(<App />);
       await act(async () => {});

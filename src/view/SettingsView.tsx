@@ -62,7 +62,10 @@ export interface SettingsViewProps {
 }
 
 type SettingsTab = 'model' | 'prompts' | 'shortcuts' | 'commands';
-type RecordingShortcutField = 'overlay_activation' | 'screenshot_capture';
+type RecordingShortcutField =
+  | 'overlay_activation'
+  | 'screenshot_capture'
+  | 'clipboard_history_open';
 
 const TAB_ITEMS: { key: SettingsTab; label: string }[] = [
   { key: 'model', label: 'AI Model' },
@@ -329,7 +332,7 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
 
       finishCapture({
         ...draft.shortcut_config,
-        screenshot_capture: combo,
+        [recordingShortcut]: combo,
       });
     };
 
@@ -695,6 +698,19 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
                   isRecording={recordingShortcut === 'screenshot_capture'}
                   hint="Press the full shortcut combination you want to use."
                   onRecord={() => beginShortcutRecording('screenshot_capture')}
+                />
+                <ShortcutRow
+                  testIdPrefix="settings-shortcut-clipboard"
+                  title="Clipboard History"
+                  description="Used to open or hide the independent clipboard manager."
+                  value={formatShortcut(
+                    draft.shortcut_config.clipboard_history_open,
+                  )}
+                  isRecording={recordingShortcut === 'clipboard_history_open'}
+                  hint="Press the full shortcut combination you want to use."
+                  onRecord={() =>
+                    beginShortcutRecording('clipboard_history_open')
+                  }
                 />
               </Section>
             </>

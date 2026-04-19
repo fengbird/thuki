@@ -18,6 +18,11 @@ const MOCK_SETTINGS: SettingsData = {
       key_code: 0x07,
       modifiers: ['cmd', 'shift'],
     },
+    clipboard_history_open: {
+      kind: 'key_combo',
+      key_code: 0x08,
+      modifiers: ['cmd', 'shift'],
+    },
   },
   commands_config: { overrides: {}, custom: [], disabled: [] },
 };
@@ -279,6 +284,9 @@ describe('SettingsView', () => {
     expect(
       screen.getByTestId('settings-shortcut-screenshot-value').textContent,
     ).toBe('⌘⇧X');
+    expect(
+      screen.getByTestId('settings-shortcut-clipboard-value').textContent,
+    ).toBe('⌘⇧C');
   });
 
   it('records a new screenshot shortcut and saves it', async () => {
@@ -354,6 +362,9 @@ describe('SettingsView', () => {
     expect(
       screen.getByTestId('settings-shortcut-screenshot-value').textContent,
     ).toBe('⌘⇧X');
+    expect(
+      screen.getByTestId('settings-shortcut-clipboard-value').textContent,
+    ).toBe('⌘⇧C');
   });
 
   it('unregisters keydown listener on unmount', async () => {

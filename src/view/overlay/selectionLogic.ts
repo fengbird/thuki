@@ -74,6 +74,41 @@ export function computeToolbarPosition(
 }
 
 /**
+ * Fits an arbitrary image inside a viewport while reserving a fixed bottom
+ * gutter for controls. Used by clipboard-image editing so the toolbar can
+ * sit below the image instead of overlapping it.
+ */
+export function fitRectInViewport(
+  imageWidth: number,
+  imageHeight: number,
+  viewport: { width: number; height: number },
+  padding = 24,
+  reservedBottom = 108,
+): Rect {
+  if (
+    imageWidth <= 0 ||
+    imageHeight <= 0 ||
+    viewport.width <= 0 ||
+    viewport.height <= 0
+  ) {
+    return { x: 0, y: 0, width: viewport.width, height: viewport.height };
+  }
+
+  const maxWidth = Math.max(1, viewport.width - padding * 2);
+  const maxHeight = Math.max(1, viewport.height - reservedBottom - padding);
+  const scale = Math.min(maxWidth / imageWidth, maxHeight / imageHeight);
+  const width = Math.max(1, Math.round(imageWidth * scale));
+  const height = Math.max(1, Math.round(imageHeight * scale));
+  const x = Math.round((viewport.width - width) / 2);
+  const y = Math.max(
+    padding,
+    Math.round((viewport.height - reservedBottom - height) / 2),
+  );
+
+  return { x, y, width, height };
+}
+
+/**
  * Places the dimension badge just above the selection's top-left. If the
  * selection is near the top of the viewport, anchor the badge inside the
  * selection instead so it doesn't clip off-screen.

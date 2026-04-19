@@ -15,6 +15,7 @@
 
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
+pub mod clipboard_history;
 pub mod commands;
 pub mod database;
 pub mod images;
@@ -795,10 +796,20 @@ pub fn run() {
 
             // ── System tray icon + menu ───────────────────────────────────
             let show_item = MenuItem::with_id(app, "show", "Open Oling", true, None::<&str>)?;
+            let clipboard_item = MenuItem::with_id(
+                app,
+                "clipboard_history",
+                "Clipboard History…",
+                true,
+                None::<&str>,
+            )?;
             let settings_item =
                 MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
+            let tray_menu = Menu::with_items(
+                app,
+                &[&show_item, &clipboard_item, &settings_item, &quit_item],
+            )?;
 
             let tray_icon =
                 tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
@@ -813,6 +824,9 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         show_overlay(app, crate::context::ActivationContext::empty());
+                    }
+                    "clipboard_history" => {
+                        clipboard_history::toggle_window(app);
                     }
                     "settings" => {
                         let _ = app.emit("oling://settings-open", ());
@@ -872,6 +886,13 @@ pub fn run() {
                 app.manage(std::sync::Mutex::new(reply::ReplyPrompt(s.reply_prompt)));
                 app.manage(settings::ShortcutConfigState::new(s.shortcut_config));
             }
+            app.manage(clipboard_history::ClipboardHistoryState::new());
+            clipboard_history::start_monitor(
+                app.handle().clone(),
+                app.state::<clipboard_history::ClipboardHistoryState>()
+                    .inner()
+                    .clone(),
+            );
 
             // ── Activation listener (macOS only) ─────────────────────────
             // Only start the event tap when Accessibility is already granted.
@@ -883,6 +904,7 @@ pub fn run() {
                 let activator_app_handle = app.handle().clone();
                 let reply_app_handle = app.handle().clone();
                 let screenshot_app_handle = app.handle().clone();
+                let clipboard_window_handle = app.handle().clone();
                 let clipboard_hint_handle = app.handle().clone();
                 let shortcuts = app.state::<settings::ShortcutConfigState>().0.clone();
                 let activator = activator::OverlayActivator::new();
@@ -925,6 +947,10 @@ pub fn run() {
                         move || {
                             let handle = screenshot_app_handle.clone();
                             capture_and_open_overlay(&handle);
+                        },
+                        move || {
+                            let handle = clipboard_window_handle.clone();
+                            clipboard_history::toggle_window(&handle);
                         },
                         move || {
                             let resolver = clipboard_hint_handle
@@ -992,6 +1018,24 @@ pub fn run() {
             #[cfg(not(coverage))]
             overlay_bridge::send_image_to_chat,
             #[cfg(not(coverage))]
+            clipboard_history::list_clipboard_entries,
+            #[cfg(not(coverage))]
+            clipboard_history::copy_clipboard_entry,
+            #[cfg(not(coverage))]
+            clipboard_history::paste_clipboard_entry,
+            #[cfg(not(coverage))]
+            clipboard_history::toggle_clipboard_entry_favorite,
+            #[cfg(not(coverage))]
+            clipboard_history::delete_clipboard_entry,
+            #[cfg(not(coverage))]
+            clipboard_history::clear_clipboard_history,
+            #[cfg(not(coverage))]
+            clipboard_history::open_clipboard_entry_in_oling,
+            #[cfg(not(coverage))]
+            clipboard_history::edit_clipboard_entry,
+            #[cfg(not(coverage))]
+            clipboard_history::close_clipboard_window,
+            #[cfg(not(coverage))]
             long_shot::start_manual_long_capture,
             #[cfg(not(coverage))]
             long_shot::finish_manual_long_capture,
@@ -1047,6 +1091,9 @@ pub fn run() {
                     api.prevent_close();
 
                     request_overlay_hide(app_handle);
+                } else if label == clipboard_history::CLIPBOARD_WINDOW_LABEL {
+                    api.prevent_close();
+                    let _ = clipboard_history::hide_window(app_handle);
                 }
             }
         });

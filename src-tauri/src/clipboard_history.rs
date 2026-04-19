@@ -1,0 +1,1104 @@
+/*!
+ * Clipboard history manager for Oling.
+ *
+ * Provides:
+ * - low-overhead clipboard polling on macOS
+ * - local SQLite-backed history for text and image clips
+ * - an independent clipboard window opened via a configurable hotkey
+ * - actions to copy, paste, favorite, delete, clear, and hand clips off to Oling
+ */
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use rusqlite::{params, OptionalExtension};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use tauri::{Emitter, Manager};
+
+use crate::database::Database;
+
+pub const CLIPBOARD_WINDOW_LABEL: &str = "clipboard-history";
+pub const CLIPBOARD_UPDATED_EVENT: &str = "oling://clipboard-history-updated";
+pub const CLIPBOARD_COMPOSE_EVENT: &str = "oling://clipboard-compose";
+
+const CLIPBOARD_WINDOW_WIDTH: f64 = 920.0;
+const CLIPBOARD_WINDOW_HEIGHT: f64 = 640.0;
+const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(350);
+const CLIPBOARD_WRITE_SUPPRESSION: Duration = Duration::from_millis(1200);
+const CLIPBOARD_PASTE_RESTORE_DELAY: Duration = Duration::from_millis(700);
+const MAX_CLIPBOARD_ENTRIES: usize = 200;
+
+#[derive(Clone)]
+pub struct ClipboardHistoryState {
+    suppressed_until: Arc<Mutex<Option<Instant>>>,
+    target_bundle_id: Arc<Mutex<Option<String>>>,
+    window_visible: Arc<AtomicBool>,
+}
+
+impl ClipboardHistoryState {
+    pub fn new() -> Self {
+        Self {
+            suppressed_until: Arc::new(Mutex::new(None)),
+            target_bundle_id: Arc::new(Mutex::new(None)),
+            window_visible: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn suppress_writes(&self, duration: Duration) {
+        *self.suppressed_until.lock().unwrap() = Some(Instant::now() + duration);
+    }
+
+    fn is_suppressed(&self, now: Instant) -> bool {
+        self.suppressed_until
+            .lock()
+            .unwrap()
+            .is_some_and(|until| now < until)
+    }
+
+    fn set_target_bundle_id(&self, bundle_id: Option<String>) {
+        *self.target_bundle_id.lock().unwrap() = bundle_id;
+    }
+
+    fn target_bundle_id(&self) -> Option<String> {
+        self.target_bundle_id.lock().unwrap().clone()
+    }
+
+    fn set_window_visible(&self, visible: bool) {
+        self.window_visible.store(visible, Ordering::SeqCst);
+    }
+
+    fn is_window_visible(&self) -> bool {
+        self.window_visible.load(Ordering::SeqCst)
+    }
+}
+
+impl Default for ClipboardHistoryState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipboardEntryKind {
+    Text,
+    Image,
+}
+
+impl ClipboardEntryKind {
+    fn as_db_str(&self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Image => "image",
+        }
+    }
+
+    fn from_db_str(value: &str) -> Option<Self> {
+        match value {
+            "text" => Some(Self::Text),
+            "image" => Some(Self::Image),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ClipboardEntry {
+    pub id: String,
+    pub kind: ClipboardEntryKind,
+    pub text_preview: String,
+    pub text_content: Option<String>,
+    pub image_path: Option<String>,
+    pub source_app: Option<String>,
+    pub source_bundle_id: Option<String>,
+    pub created_at: i64,
+    pub last_copied_at: i64,
+    pub copy_count: i64,
+    pub is_favorite: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardComposePayload {
+    pub query: Option<String>,
+    pub auto_submit: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlaySubmitPayload {
+    image_path: String,
+    prompt: Option<String>,
+    auto_submit: bool,
+}
+
+#[derive(Clone, Debug)]
+struct ClipboardCapture {
+    kind: ClipboardEntryKind,
+    content_hash: String,
+    text_preview: String,
+    text_content: Option<String>,
+    image_path: Option<String>,
+    source_app: Option<String>,
+    source_bundle_id: Option<String>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone)]
+struct PasteboardItemSnapshot {
+    entries: Vec<(String, Vec<u8>)>,
+}
+
+pub fn start_monitor(app_handle: tauri::AppHandle, state: ClipboardHistoryState) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::thread::Builder::new()
+            .name("oling-clipboard-history".to_string())
+            .spawn(move || monitor_loop(app_handle, state));
+    }
+}
+
+fn monitor_loop(app_handle: tauri::AppHandle, state: ClipboardHistoryState) {
+    #[cfg(target_os = "macos")]
+    {
+        let mut last_change_count = pasteboard_change_count();
+        loop {
+            std::thread::sleep(CLIPBOARD_POLL_INTERVAL);
+
+            let now = Instant::now();
+            let change_count = pasteboard_change_count();
+            if change_count == last_change_count {
+                continue;
+            }
+            last_change_count = change_count;
+
+            if state.is_suppressed(now) {
+                continue;
+            }
+
+            let Some(capture) = capture_current_clipboard(&app_handle) else {
+                continue;
+            };
+
+            if let Err(error) = persist_capture(&app_handle, capture) {
+                eprintln!("oling: [clipboard] failed to persist capture: {error}");
+            }
+        }
+    }
+}
+
+fn persist_capture(app_handle: &tauri::AppHandle, capture: ClipboardCapture) -> Result<(), String> {
+    let db = app_handle.state::<Database>();
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard database lock poisoned".to_string())?;
+    upsert_entry(&conn, &capture)?;
+    let stale_paths = prune_old_entries(&conn, MAX_CLIPBOARD_ENTRIES)?;
+    drop(conn);
+
+    for path in stale_paths {
+        let _ = std::fs::remove_file(path);
+    }
+
+    let _ = app_handle.emit(CLIPBOARD_UPDATED_EVENT, ());
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_current_clipboard(app_handle: &tauri::AppHandle) -> Option<ClipboardCapture> {
+    let ignored = read_ignored_types();
+    if ignored {
+        return None;
+    }
+
+    let source = crate::reply::frontmost_app_info();
+    let source_app = source.as_ref().map(|info| info.app_name.clone());
+    let source_bundle_id = source.as_ref().map(|info| info.bundle_id.clone());
+
+    if let Some(text) = pasteboard_string() {
+        let preview = preview_for_text(&text);
+        return Some(ClipboardCapture {
+            kind: ClipboardEntryKind::Text,
+            content_hash: sha256_hex(text.as_bytes()),
+            text_preview: preview,
+            text_content: Some(text),
+            image_path: None,
+            source_app,
+            source_bundle_id,
+        });
+    }
+
+    let image_bytes = pasteboard_image_bytes()?;
+    let content_hash = sha256_hex(&image_bytes);
+    let image_path = save_clipboard_image(app_handle, &image_bytes, &content_hash).ok()?;
+    let preview = source_app
+        .as_ref()
+        .map(|app| format!("Image copied from {app}"))
+        .unwrap_or_else(|| "Copied image".to_string());
+
+    Some(ClipboardCapture {
+        kind: ClipboardEntryKind::Image,
+        content_hash,
+        text_preview: preview,
+        text_content: None,
+        image_path: Some(image_path),
+        source_app,
+        source_bundle_id,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn capture_current_clipboard(_app_handle: &tauri::AppHandle) -> Option<ClipboardCapture> {
+    None
+}
+
+fn clipboard_assets_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?
+        .join("clipboard");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create clipboard directory: {e}"))?;
+    Ok(dir)
+}
+
+fn save_clipboard_image(
+    app_handle: &tauri::AppHandle,
+    bytes: &[u8],
+    content_hash: &str,
+) -> Result<String, String> {
+    let dir = clipboard_assets_dir(app_handle)?;
+    let path = dir.join(format!("{content_hash}.png"));
+    if path.exists() {
+        return Ok(path.to_string_lossy().into_owned());
+    }
+
+    let image = image::load_from_memory(bytes)
+        .map_err(|e| format!("Failed to decode clipboard image: {e}"))?;
+    image
+        .save_with_format(&path, image::ImageFormat::Png)
+        .map_err(|e| format!("Failed to store clipboard image: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn clone_image_for_overlay(image_path: &str) -> Result<String, String> {
+    let bytes = std::fs::read(image_path)
+        .map_err(|e| format!("Failed to read clipboard image for editing: {e}"))?;
+    let image = image::load_from_memory(&bytes)
+        .map_err(|e| format!("Failed to decode clipboard image for editing: {e}"))?;
+    let path = PathBuf::from(format!("/tmp/{}-oling-overlay.png", uuid::Uuid::new_v4()));
+    image
+        .save_with_format(&path, image::ImageFormat::Png)
+        .map_err(|e| format!("Failed to prepare clipboard image for editing: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time before Unix epoch")
+        .as_millis() as i64
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn preview_for_text(text: &str) -> String {
+    let collapsed = text
+        .lines()
+        .flat_map(|line| line.split_whitespace())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let trimmed = collapsed.trim();
+    if trimmed.is_empty() {
+        return "Whitespace text clip".to_string();
+    }
+    const LIMIT: usize = 140;
+    if trimmed.chars().count() <= LIMIT {
+        trimmed.to_string()
+    } else {
+        let head = trimmed.chars().take(LIMIT).collect::<String>();
+        format!("{head}…")
+    }
+}
+
+fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry> {
+    let kind_str: String = row.get(1)?;
+    Ok(ClipboardEntry {
+        id: row.get(0)?,
+        kind: ClipboardEntryKind::from_db_str(&kind_str).unwrap_or(ClipboardEntryKind::Text),
+        text_preview: row.get(2)?,
+        text_content: row.get(3)?,
+        image_path: row.get(4)?,
+        source_app: row.get(5)?,
+        source_bundle_id: row.get(6)?,
+        created_at: row.get(7)?,
+        last_copied_at: row.get(8)?,
+        copy_count: row.get(9)?,
+        is_favorite: row.get::<_, i64>(10)? != 0,
+    })
+}
+
+fn upsert_entry(conn: &rusqlite::Connection, capture: &ClipboardCapture) -> Result<String, String> {
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT id FROM clipboard_entries WHERE content_hash = ?1",
+            params![capture.content_hash],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    let now = now_millis();
+    if let Some(id) = existing {
+        conn.execute(
+            "UPDATE clipboard_entries
+             SET text_preview = ?1,
+                 text_content = COALESCE(?2, text_content),
+                 image_path = COALESCE(image_path, ?3),
+                 source_app = ?4,
+                 source_bundle_id = ?5,
+                 last_copied_at = ?6,
+                 copy_count = copy_count + 1
+             WHERE id = ?7",
+            params![
+                capture.text_preview,
+                capture.text_content,
+                capture.image_path,
+                capture.source_app,
+                capture.source_bundle_id,
+                now,
+                id,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(id);
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO clipboard_entries (
+            id, kind, content_hash, text_preview, text_content, image_path,
+            source_app, source_bundle_id, created_at, last_copied_at, copy_count, is_favorite
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, 0)",
+        params![
+            id,
+            capture.kind.as_db_str(),
+            capture.content_hash,
+            capture.text_preview,
+            capture.text_content,
+            capture.image_path,
+            capture.source_app,
+            capture.source_bundle_id,
+            now,
+            now,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+fn list_entries(
+    conn: &rusqlite::Connection,
+    search: Option<&str>,
+    kind: Option<&str>,
+    favorites_only: bool,
+) -> Result<Vec<ClipboardEntry>, String> {
+    let pattern = search
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{}%", value.replace('%', "\\%").replace('_', "\\_")));
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT
+                id,
+                kind,
+                text_preview,
+                text_content,
+                image_path,
+                source_app,
+                source_bundle_id,
+                created_at,
+                last_copied_at,
+                copy_count,
+                is_favorite
+             FROM clipboard_entries
+             WHERE (?1 IS NULL OR kind = ?1)
+               AND (?2 = 0 OR is_favorite = 1)
+               AND (
+                 ?3 IS NULL
+                 OR text_preview LIKE ?3 ESCAPE '\\'
+                 OR COALESCE(text_content, '') LIKE ?3 ESCAPE '\\'
+                 OR COALESCE(source_app, '') LIKE ?3 ESCAPE '\\'
+               )
+             ORDER BY is_favorite DESC, last_copied_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(
+            params![kind, if favorites_only { 1 } else { 0 }, pattern],
+            row_to_entry,
+        )
+        .map_err(|e| e.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+fn get_entry(conn: &rusqlite::Connection, entry_id: &str) -> Result<ClipboardEntry, String> {
+    conn.query_row(
+        "SELECT
+            id,
+            kind,
+            text_preview,
+            text_content,
+            image_path,
+            source_app,
+            source_bundle_id,
+            created_at,
+            last_copied_at,
+            copy_count,
+            is_favorite
+         FROM clipboard_entries
+         WHERE id = ?1",
+        params![entry_id],
+        row_to_entry,
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn touch_entry(conn: &rusqlite::Connection, entry_id: &str) -> Result<(), String> {
+    conn.execute(
+        "UPDATE clipboard_entries
+         SET last_copied_at = ?1, copy_count = copy_count + 1
+         WHERE id = ?2",
+        params![now_millis(), entry_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn delete_entry(conn: &rusqlite::Connection, entry_id: &str) -> Result<Option<String>, String> {
+    let image_path: Option<String> = conn
+        .query_row(
+            "SELECT image_path FROM clipboard_entries WHERE id = ?1",
+            params![entry_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .flatten();
+
+    conn.execute(
+        "DELETE FROM clipboard_entries WHERE id = ?1",
+        params![entry_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(image_path)
+}
+
+fn toggle_favorite(conn: &rusqlite::Connection, entry_id: &str) -> Result<bool, String> {
+    let current: Option<i64> = conn
+        .query_row(
+            "SELECT is_favorite FROM clipboard_entries WHERE id = ?1",
+            params![entry_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let next = current.unwrap_or(0) == 0;
+    conn.execute(
+        "UPDATE clipboard_entries SET is_favorite = ?1 WHERE id = ?2",
+        params![if next { 1 } else { 0 }, entry_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(next)
+}
+
+fn clear_entries(conn: &rusqlite::Connection) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT image_path FROM clipboard_entries WHERE image_path IS NOT NULL")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    let mut paths = Vec::new();
+    for row in rows {
+        paths.push(row.map_err(|e| e.to_string())?);
+    }
+    conn.execute("DELETE FROM clipboard_entries", [])
+        .map_err(|e| e.to_string())?;
+    Ok(paths)
+}
+
+fn prune_old_entries(conn: &rusqlite::Connection, limit: usize) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT image_path
+             FROM clipboard_entries
+             WHERE id IN (
+                SELECT id
+                FROM clipboard_entries
+                WHERE is_favorite = 0
+                ORDER BY last_copied_at DESC
+                LIMIT -1 OFFSET ?1
+             )
+             AND image_path IS NOT NULL",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![limit as i64], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    let mut paths = Vec::new();
+    for row in rows {
+        paths.push(row.map_err(|e| e.to_string())?);
+    }
+    conn.execute(
+        "DELETE FROM clipboard_entries
+         WHERE id IN (
+            SELECT id
+            FROM clipboard_entries
+            WHERE is_favorite = 0
+            ORDER BY last_copied_at DESC
+            LIMIT -1 OFFSET ?1
+         )",
+        params![limit as i64],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(paths)
+}
+
+fn open_window(app_handle: &tauri::AppHandle, state: &ClipboardHistoryState) -> Result<(), String> {
+    if let Some(frontmost) = crate::reply::frontmost_app_info() {
+        state.set_target_bundle_id(Some(frontmost.bundle_id));
+    }
+
+    if let Some(existing) = app_handle.get_webview_window(CLIPBOARD_WINDOW_LABEL) {
+        state.set_window_visible(true);
+        let _ = existing.center();
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
+    let window = tauri::WebviewWindowBuilder::new(
+        app_handle,
+        CLIPBOARD_WINDOW_LABEL,
+        tauri::WebviewUrl::App("index.html?clipboard=1".into()),
+    )
+    .title("Oling Clipboard")
+    .inner_size(CLIPBOARD_WINDOW_WIDTH, CLIPBOARD_WINDOW_HEIGHT)
+    .min_inner_size(760.0, 520.0)
+    .center()
+    .decorations(false)
+    .resizable(true)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(false)
+    .build()
+    .map_err(|e| format!("Failed to open clipboard window: {e}"))?;
+
+    state.set_window_visible(true);
+    let _ = window.show();
+    let _ = window.set_focus();
+    Ok(())
+}
+
+pub fn toggle_window(app_handle: &tauri::AppHandle) {
+    let state = app_handle.state::<ClipboardHistoryState>();
+    if state.is_window_visible() {
+        let _ = hide_window(app_handle);
+        return;
+    }
+    if let Err(error) = open_window(app_handle, &state) {
+        eprintln!("oling: [clipboard] failed to open window: {error}");
+    }
+}
+
+pub fn hide_window(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    let state = app_handle.state::<ClipboardHistoryState>();
+    state.set_window_visible(false);
+    if let Some(window) = app_handle.get_webview_window(CLIPBOARD_WINDOW_LABEL) {
+        window.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn write_entry_to_clipboard(entry: &ClipboardEntry) -> Result<(), String> {
+    match entry.kind {
+        ClipboardEntryKind::Text => {
+            let text = entry
+                .text_content
+                .as_deref()
+                .ok_or_else(|| "Text clipboard entry has no text payload".to_string())?;
+            if crate::reply::pasteboard_write_string(text) {
+                Ok(())
+            } else {
+                Err("Failed to write clipboard text".to_string())
+            }
+        }
+        ClipboardEntryKind::Image => {
+            let image_path = entry
+                .image_path
+                .clone()
+                .ok_or_else(|| "Image clipboard entry has no image path".to_string())?;
+            crate::pasteboard::copy_image_to_clipboard(image_path)
+        }
+    }
+}
+
+fn paste_entry_to_previous_app(
+    app_handle: &tauri::AppHandle,
+    state: &ClipboardHistoryState,
+    entry: &ClipboardEntry,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let backup = read_pasteboard_snapshot();
+        state.suppress_writes(CLIPBOARD_WRITE_SUPPRESSION);
+        write_entry_to_clipboard(entry)?;
+        let target_bundle_id = state
+            .target_bundle_id()
+            .ok_or_else(|| "No previous app is available for paste".to_string())?;
+
+        hide_window(app_handle)?;
+
+        if !crate::reply::activate_app_by_bundle_id(&target_bundle_id) {
+            let _ = restore_pasteboard_snapshot(&backup);
+            return Err(format!("Target app '{target_bundle_id}' is not running"));
+        }
+
+        let backup_for_restore = backup.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(crate::reply::APP_ACTIVATE_DELAY).await;
+            if crate::reply::post_cmd_v_to_frontmost() {
+                tokio::time::sleep(CLIPBOARD_PASTE_RESTORE_DELAY).await;
+                let _ = restore_pasteboard_snapshot(&backup_for_restore);
+            } else {
+                let _ = restore_pasteboard_snapshot(&backup_for_restore);
+            }
+        });
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app_handle;
+        let _ = state;
+        let _ = entry;
+        Err("Clipboard paste is only supported on macOS".to_string())
+    }
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn list_clipboard_entries(
+    db: tauri::State<'_, Database>,
+    search: Option<String>,
+    kind: Option<String>,
+    favorites_only: Option<bool>,
+) -> Result<Vec<ClipboardEntry>, String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    list_entries(
+        &conn,
+        search.as_deref(),
+        kind.as_deref(),
+        favorites_only.unwrap_or(false),
+    )
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn copy_clipboard_entry(
+    db: tauri::State<'_, Database>,
+    clipboard_state: tauri::State<'_, ClipboardHistoryState>,
+    entry_id: String,
+) -> Result<(), String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    let entry = get_entry(&conn, &entry_id)?;
+    touch_entry(&conn, &entry_id)?;
+    drop(conn);
+
+    clipboard_state.suppress_writes(CLIPBOARD_WRITE_SUPPRESSION);
+    write_entry_to_clipboard(&entry)
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn paste_clipboard_entry(
+    app_handle: tauri::AppHandle,
+    db: tauri::State<'_, Database>,
+    clipboard_state: tauri::State<'_, ClipboardHistoryState>,
+    entry_id: String,
+) -> Result<(), String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    let entry = get_entry(&conn, &entry_id)?;
+    touch_entry(&conn, &entry_id)?;
+    drop(conn);
+    paste_entry_to_previous_app(&app_handle, &clipboard_state, &entry)
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn toggle_clipboard_entry_favorite(
+    app_handle: tauri::AppHandle,
+    db: tauri::State<'_, Database>,
+    entry_id: String,
+) -> Result<bool, String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    let next = toggle_favorite(&conn, &entry_id)?;
+    drop(conn);
+    let _ = app_handle.emit(CLIPBOARD_UPDATED_EVENT, ());
+    Ok(next)
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn delete_clipboard_entry(
+    app_handle: tauri::AppHandle,
+    db: tauri::State<'_, Database>,
+    entry_id: String,
+) -> Result<(), String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    let image_path = delete_entry(&conn, &entry_id)?;
+    drop(conn);
+    if let Some(path) = image_path {
+        let _ = std::fs::remove_file(path);
+    }
+    let _ = app_handle.emit(CLIPBOARD_UPDATED_EVENT, ());
+    Ok(())
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn clear_clipboard_history(
+    app_handle: tauri::AppHandle,
+    db: tauri::State<'_, Database>,
+) -> Result<(), String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    let image_paths = clear_entries(&conn)?;
+    drop(conn);
+    for path in image_paths {
+        let _ = std::fs::remove_file(path);
+    }
+    let _ = app_handle.emit(CLIPBOARD_UPDATED_EVENT, ());
+    Ok(())
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn open_clipboard_entry_in_oling(
+    app_handle: tauri::AppHandle,
+    db: tauri::State<'_, Database>,
+    entry_id: String,
+    prompt: Option<String>,
+    auto_submit: Option<bool>,
+) -> Result<(), String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    let entry = get_entry(&conn, &entry_id)?;
+    touch_entry(&conn, &entry_id)?;
+    drop(conn);
+
+    let prompt = prompt
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let auto_submit = auto_submit.unwrap_or(false);
+
+    match entry.kind {
+        ClipboardEntryKind::Text => {
+            let text = entry
+                .text_content
+                .clone()
+                .ok_or_else(|| "Clipboard text entry is empty".to_string())?;
+            let _ = app_handle.emit(
+                CLIPBOARD_COMPOSE_EVENT,
+                ClipboardComposePayload {
+                    query: prompt,
+                    auto_submit,
+                },
+            );
+            crate::show_overlay(
+                &app_handle,
+                crate::context::ActivationContext {
+                    selected_text: Some(text),
+                    selected_source: Some(crate::context::ContextSource::Clipboard),
+                    bounds: None,
+                    mouse_position: None,
+                },
+            );
+        }
+        ClipboardEntryKind::Image => {
+            let image_path = entry
+                .image_path
+                .clone()
+                .ok_or_else(|| "Clipboard image entry is missing its file path".to_string())?;
+            let _ = app_handle.emit(
+                "oling://overlay-submit",
+                OverlaySubmitPayload {
+                    image_path,
+                    prompt,
+                    auto_submit,
+                },
+            );
+            crate::show_overlay(&app_handle, crate::context::ActivationContext::empty());
+        }
+    }
+
+    hide_window(&app_handle)?;
+    Ok(())
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn edit_clipboard_entry(
+    app_handle: tauri::AppHandle,
+    db: tauri::State<'_, Database>,
+    entry_id: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    let entry = get_entry(&conn, &entry_id)?;
+    touch_entry(&conn, &entry_id)?;
+    drop(conn);
+
+    let image_path = match entry.kind {
+        ClipboardEntryKind::Image => entry
+            .image_path
+            .clone()
+            .ok_or_else(|| "Clipboard image entry is missing its file path".to_string())?,
+        ClipboardEntryKind::Text => {
+            return Err("Only image clipboard entries can be edited".to_string());
+        }
+    };
+
+    let overlay_path = clone_image_for_overlay(&image_path)?;
+    crate::overlay::open_overlay_window(
+        app_handle.clone(),
+        overlay_path,
+        x,
+        y,
+        width,
+        height,
+        Some(true),
+        Some("clipboard".to_string()),
+    )?;
+    hide_window(&app_handle)?;
+    Ok(())
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn close_clipboard_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    hide_window(&app_handle)
+}
+
+#[cfg(target_os = "macos")]
+fn pasteboard_change_count() -> isize {
+    use objc2_app_kit::NSPasteboard;
+    NSPasteboard::generalPasteboard().changeCount()
+}
+
+#[cfg(target_os = "macos")]
+fn pasteboard_string() -> Option<String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    let pb = NSPasteboard::generalPasteboard();
+    let s = unsafe { pb.stringForType(NSPasteboardTypeString)? };
+    let text = s.to_string();
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn read_ignored_types() -> bool {
+    use objc2_app_kit::NSPasteboard;
+    let pb = NSPasteboard::generalPasteboard();
+    let Some(items) = pb.pasteboardItems() else {
+        return false;
+    };
+    for idx in 0..items.count() {
+        let item = items.objectAtIndex(idx);
+        let types = item.types();
+        for ty_idx in 0..types.count() {
+            let ty = types.objectAtIndex(ty_idx).to_string();
+            if matches!(
+                ty.as_str(),
+                "org.nspasteboard.TransientType"
+                    | "org.nspasteboard.ConcealedType"
+                    | "org.nspasteboard.AutoGeneratedType"
+            ) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn pasteboard_image_bytes() -> Option<Vec<u8>> {
+    use objc2_app_kit::NSPasteboard;
+    use objc2_foundation::NSString;
+
+    let pb = NSPasteboard::generalPasteboard();
+    let Some(items) = pb.pasteboardItems() else {
+        return None;
+    };
+
+    let image_types = ["public.png", "public.jpeg", "public.tiff"];
+    for idx in 0..items.count() {
+        let item = items.objectAtIndex(idx);
+        for pb_type in image_types {
+            let ty = NSString::from_str(pb_type);
+            if let Some(data) = item.dataForType(&ty) {
+                return Some(nsdata_to_vec(&data));
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn nsdata_to_vec(data: &objc2_foundation::NSData) -> Vec<u8> {
+    use std::ffi::c_void;
+    use std::ptr::NonNull;
+
+    let len = data.length() as usize;
+    let mut bytes = vec![0u8; len];
+    if len > 0 {
+        unsafe {
+            data.getBytes_length(
+                NonNull::new(bytes.as_mut_ptr() as *mut c_void).expect("vec ptr"),
+                len as usize,
+            );
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "macos")]
+fn read_pasteboard_snapshot() -> Vec<PasteboardItemSnapshot> {
+    use objc2_app_kit::NSPasteboard;
+
+    let pb = NSPasteboard::generalPasteboard();
+    let Some(items) = pb.pasteboardItems() else {
+        return Vec::new();
+    };
+
+    let mut snapshots = Vec::new();
+    for idx in 0..items.count() {
+        let item = items.objectAtIndex(idx);
+        let types = item.types();
+        let mut entries = Vec::new();
+        for ty_idx in 0..types.count() {
+            let ty = types.objectAtIndex(ty_idx);
+            if let Some(data) = item.dataForType(&ty) {
+                entries.push((ty.to_string(), nsdata_to_vec(&data)));
+            }
+        }
+        if !entries.is_empty() {
+            snapshots.push(PasteboardItemSnapshot { entries });
+        }
+    }
+    snapshots
+}
+
+#[cfg(target_os = "macos")]
+fn restore_pasteboard_snapshot(snapshot: &[PasteboardItemSnapshot]) -> Result<(), String> {
+    use objc2::rc::Retained;
+    use objc2::runtime::ProtocolObject;
+    use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardWriting};
+    use objc2_foundation::{NSArray, NSData, NSString};
+
+    let pb = NSPasteboard::generalPasteboard();
+    pb.clearContents();
+    if snapshot.is_empty() {
+        return Ok(());
+    }
+
+    let objects: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = snapshot
+        .iter()
+        .map(|item_snapshot| {
+            let item = NSPasteboardItem::new();
+            for (ty, bytes) in &item_snapshot.entries {
+                let ty = NSString::from_str(ty);
+                let data = NSData::with_bytes(bytes);
+                let _ = item.setData_forType(&data, &ty);
+            }
+            ProtocolObject::from_retained(item)
+        })
+        .collect();
+    let array = NSArray::from_retained_slice(&objects);
+    if pb.writeObjects(&array) {
+        Ok(())
+    } else {
+        Err("Failed to restore pasteboard snapshot".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_for_text_collapses_whitespace() {
+        let preview = preview_for_text("hello   world\n\nfrom\tOling");
+        assert_eq!(preview, "hello world from Oling");
+    }
+
+    #[test]
+    fn preview_for_text_truncates_long_lines() {
+        let text = "a".repeat(200);
+        let preview = preview_for_text(&text);
+        assert!(preview.ends_with('…'));
+        assert!(preview.len() < text.len());
+    }
+
+    #[test]
+    fn sha256_hex_is_stable() {
+        assert_eq!(
+            sha256_hex(b"oling"),
+            "f1f181356dee100678a589b8d9a0010d7fc098176155b8fa37c6f98d1552671e"
+        );
+    }
+
+    #[test]
+    fn clipboard_state_suppression_expires() {
+        let state = ClipboardHistoryState::new();
+        assert!(!state.is_suppressed(Instant::now()));
+        state.suppress_writes(Duration::from_millis(20));
+        assert!(state.is_suppressed(Instant::now()));
+        std::thread::sleep(Duration::from_millis(25));
+        assert!(!state.is_suppressed(Instant::now()));
+    }
+}

@@ -18,6 +18,7 @@ export type OverlayActivationShortcut =
 export interface ShortcutConfig {
   overlay_activation: OverlayActivationShortcut;
   screenshot_capture: KeyComboShortcut;
+  clipboard_history_open: KeyComboShortcut;
 }
 
 export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
@@ -28,6 +29,11 @@ export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
   screenshot_capture: {
     kind: 'key_combo',
     key_code: 0x07,
+    modifiers: ['cmd', 'shift'],
+  },
+  clipboard_history_open: {
+    kind: 'key_combo',
+    key_code: 0x08,
     modifiers: ['cmd', 'shift'],
   },
 };
@@ -195,6 +201,7 @@ export function normalizeShortcutConfig(
 ): ShortcutConfig {
   const overlay = raw?.overlay_activation;
   const screenshot = raw?.screenshot_capture;
+  const clipboard = raw?.clipboard_history_open;
 
   return {
     overlay_activation:
@@ -222,6 +229,17 @@ export function normalizeShortcutConfig(
       modifiers: normalizeModifiers(
         screenshot?.modifiers ??
           DEFAULT_SHORTCUT_CONFIG.screenshot_capture.modifiers,
+      ),
+    },
+    clipboard_history_open: {
+      kind: 'key_combo',
+      key_code:
+        typeof clipboard?.key_code === 'number'
+          ? clipboard.key_code
+          : DEFAULT_SHORTCUT_CONFIG.clipboard_history_open.key_code,
+      modifiers: normalizeModifiers(
+        clipboard?.modifiers ??
+          DEFAULT_SHORTCUT_CONFIG.clipboard_history_open.modifiers,
       ),
     },
   };

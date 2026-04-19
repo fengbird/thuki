@@ -71,6 +71,8 @@ pub struct ShortcutConfig {
     pub overlay_activation: OverlayActivationShortcut,
     #[serde(default = "default_screenshot_shortcut")]
     pub screenshot_capture: KeyComboShortcut,
+    #[serde(default = "default_clipboard_history_shortcut")]
+    pub clipboard_history_open: KeyComboShortcut,
 }
 
 pub struct ShortcutConfigState(pub Arc<Mutex<ShortcutConfig>>);
@@ -111,10 +113,18 @@ fn default_screenshot_shortcut() -> KeyComboShortcut {
     }
 }
 
+fn default_clipboard_history_shortcut() -> KeyComboShortcut {
+    KeyComboShortcut {
+        key_code: 0x08,
+        modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+    }
+}
+
 pub fn default_shortcut_config() -> ShortcutConfig {
     ShortcutConfig {
         overlay_activation: default_overlay_activation_shortcut(),
         screenshot_capture: default_screenshot_shortcut(),
+        clipboard_history_open: default_clipboard_history_shortcut(),
     }
 }
 
@@ -160,6 +170,7 @@ impl ShortcutConfig {
                 }
             },
             screenshot_capture: self.screenshot_capture.normalize(),
+            clipboard_history_open: self.clipboard_history_open.normalize(),
         }
     }
 }
@@ -408,6 +419,10 @@ mod tests {
                     key_code: 0x0f,
                     modifiers: vec![ShortcutModifier::Ctrl, ShortcutModifier::Shift],
                 },
+                clipboard_history_open: KeyComboShortcut {
+                    key_code: 0x08,
+                    modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+                },
             },
             commands_config: serde_json::json!({
                 "overrides": {
@@ -440,6 +455,13 @@ mod tests {
             KeyComboShortcut {
                 key_code: 0x0f,
                 modifiers: vec![ShortcutModifier::Ctrl, ShortcutModifier::Shift],
+            }
+        );
+        assert_eq!(
+            loaded.shortcut_config.clipboard_history_open,
+            KeyComboShortcut {
+                key_code: 0x08,
+                modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
             }
         );
         assert_eq!(
@@ -511,6 +533,10 @@ mod tests {
                     key_code: 0x08,
                     modifiers: vec![ShortcutModifier::Cmd],
                 },
+                clipboard_history_open: KeyComboShortcut {
+                    key_code: 0x0c,
+                    modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+                },
             },
             commands_config: serde_json::json!({}),
         };
@@ -549,6 +575,10 @@ mod tests {
                 screenshot_capture: KeyComboShortcut {
                     key_code: 0x08,
                     modifiers: vec![ShortcutModifier::Cmd],
+                },
+                clipboard_history_open: KeyComboShortcut {
+                    key_code: 0x0c,
+                    modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
                 },
             }
         );
@@ -595,6 +625,10 @@ mod tests {
                 "screenshot_capture": {
                     "key_code": 15,
                     "modifiers": ["ctrl", "shift"]
+                },
+                "clipboard_history_open": {
+                    "key_code": 8,
+                    "modifiers": ["cmd", "shift"]
                 }
             },
             "commands_config": {
@@ -611,6 +645,13 @@ mod tests {
             KeyComboShortcut {
                 key_code: 15,
                 modifiers: vec![ShortcutModifier::Ctrl, ShortcutModifier::Shift],
+            }
+        );
+        assert_eq!(
+            data.shortcut_config.clipboard_history_open,
+            KeyComboShortcut {
+                key_code: 8,
+                modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
             }
         );
         assert_eq!(

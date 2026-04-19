@@ -5,6 +5,7 @@ import {
   computeBadgePosition,
   computeToolbarPosition,
   cursorForHandle,
+  fitRectInViewport,
   imageScaleFor,
   isRectSized,
   moveRect,
@@ -175,6 +176,33 @@ describe('computeBadgePosition', () => {
     const pos = computeBadgePosition({ x: 50, y: 10, width: 40, height: 30 });
     // above would be negative → inside: x + gap, y + gap
     expect(pos).toEqual({ x: 56, y: 16 });
+  });
+});
+
+describe('fitRectInViewport', () => {
+  it('fits the image inside the viewport while reserving a bottom gutter', () => {
+    const rect = fitRectInViewport(
+      2000,
+      1200,
+      { width: 1024, height: 768 },
+      24,
+      108,
+    );
+    expect(rect).toEqual({
+      x: 24,
+      y: 37,
+      width: 976,
+      height: 586,
+    });
+  });
+
+  it('falls back to the viewport when image dimensions are invalid', () => {
+    expect(fitRectInViewport(0, 1200, { width: 500, height: 400 })).toEqual({
+      x: 0,
+      y: 0,
+      width: 500,
+      height: 400,
+    });
   });
 });
 

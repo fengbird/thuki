@@ -698,7 +698,7 @@ describe('OverlayView — keyboard shortcuts', () => {
     expect(invoke).toHaveBeenCalledWith('close_overlay_window');
   });
 
-  it('Esc with a selection cancels the selection instead of closing', async () => {
+  it('Esc with a selection closes the overlay immediately', async () => {
     render(<OverlayView imagePath="/tmp/shot.png" />);
     dragSelect(
       screen.getByTestId('overlay-root'),
@@ -709,8 +709,7 @@ describe('OverlayView — keyboard shortcuts', () => {
     await act(async () => {
       fireEvent.keyDown(window, { key: 'Escape' });
     });
-    expect(screen.queryByTestId('overlay-selection-frame')).toBeNull();
-    expect(invoke).not.toHaveBeenCalledWith('close_overlay_window');
+    expect(invoke).toHaveBeenCalledWith('close_overlay_window');
   });
 
   it('Cmd+Z without a selection is inert (no undo history to apply)', () => {
@@ -855,22 +854,24 @@ describe('OverlayView — text tool', () => {
     }
   });
 
-  it('Escape inside the textarea dismisses without committing', async () => {
+  it('Escape inside the textarea closes the overlay without committing', async () => {
     const restore = await commitSelectionAndEnterText();
     try {
       const ta = screen.getByTestId(
         'overlay-text-editor',
       ) as HTMLTextAreaElement;
       fireEvent.change(ta, { target: { value: 'abort' } });
-      fireEvent.keyDown(ta, { key: 'Escape' });
-      expect(screen.queryByTestId('overlay-text-editor')).toBeNull();
+      await act(async () => {
+        fireEvent.keyDown(ta, { key: 'Escape' });
+      });
+      expect(invoke).toHaveBeenCalledWith('close_overlay_window');
       expect(screen.queryByTestId('mock-text')).toBeNull();
     } finally {
       restore();
     }
   });
 
-  it('global Escape with the text editor open only dismisses the editor', async () => {
+  it('global Escape with the text editor open closes the overlay', async () => {
     const restore = await commitSelectionAndEnterText();
     try {
       const ta = screen.getByTestId(
@@ -880,9 +881,7 @@ describe('OverlayView — text tool', () => {
       await act(async () => {
         fireEvent.keyDown(window, { key: 'Escape' });
       });
-      expect(screen.queryByTestId('overlay-text-editor')).toBeNull();
-      // Selection is still committed.
-      expect(screen.getByTestId('overlay-selection-frame')).toBeInTheDocument();
+      expect(invoke).toHaveBeenCalledWith('close_overlay_window');
     } finally {
       restore();
     }
@@ -1115,6 +1114,30 @@ describe('OverlayView — fit mode (edit-pin flow)', () => {
       // selection in fit mode is (0, 0, viewport.w, viewport.h); pin should
       // open at window position (300, 200).
       expect(call?.[1]).toMatchObject({ x: 300, y: 200 });
+    } finally {
+      restore();
+    }
+  });
+
+  it('clipboard editor mode keeps the toolbar below the fitted image bounds', async () => {
+    const restore = installImageStub();
+    try {
+      render(
+        <OverlayView imagePath="/tmp/shot.png" fit editorKind="clipboard" />,
+      );
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      const image = screen.getByTestId(
+        'overlay-background',
+      ) as HTMLImageElement;
+      const toolbar = screen.getByTestId('overlay-toolbar') as HTMLDivElement;
+
+      expect(screen.queryByTestId('overlay-selection-frame')).toBeNull();
+      expect(screen.queryByTestId('overlay-dim-top')).toBeNull();
+      expect(image.style.left).toBe('24px');
+      expect(image.style.top).toBe('37px');
+      expect(toolbar.style.top).toBe('635px');
     } finally {
       restore();
     }

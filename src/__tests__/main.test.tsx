@@ -77,4 +77,9 @@ describe('pickRoot', () => {
     expect(screen.getByTestId('pin-root')).toBeInTheDocument();
     expect(screen.getByTestId('pin-empty')).toBeInTheDocument();
   });
+
+  it('mounts ClipboardHistoryView when clipboard=1 is set', () => {
+    render(pickRoot('?clipboard=1'));
+    expect(screen.getByTestId('clipboard-root')).toBeInTheDocument();
+  });
 });

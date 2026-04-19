@@ -34,12 +34,18 @@ const REPLY_DRAFT_OPEN_EVENT = 'oling://reply-draft-open';
 const REPLY_DRAFT_IMAGE_EVENT = 'oling://reply-draft-image';
 const SETTINGS_OPEN_EVENT = 'oling://settings-open';
 const OVERLAY_SUBMIT_EVENT = 'oling://overlay-submit';
+const CLIPBOARD_COMPOSE_EVENT = 'oling://clipboard-compose';
 
 /** Payload for `oling://overlay-submit` — image-bridge from the overlay
  *  window to the main chat. `autoSubmit` is true for the "OCR" shortcut. */
 interface OverlaySubmitPayload {
   imagePath: string;
   prompt?: string | null;
+  autoSubmit: boolean;
+}
+
+interface ClipboardComposePayload {
+  query?: string | null;
   autoSubmit: boolean;
 }
 
@@ -137,6 +143,8 @@ type OverlayState = 'visible' | 'hidden' | 'hiding';
 function App() {
   const [query, setQuery] = useState('');
   const [overlayState, setOverlayState] = useState<OverlayState>('hidden');
+  const overlayStateRef = useRef<OverlayState>('hidden');
+  overlayStateRef.current = overlayState;
   /** Non-null when the backend signals onboarding is needed; holds the current stage. */
   const [onboardingStage, setOnboardingStage] =
     useState<OnboardingStage | null>(null);
@@ -193,6 +201,10 @@ function App() {
     think: boolean;
     promptOverride?: string;
   } | null>(null);
+  const pendingOverlaySubmitRef = useRef<OverlaySubmitPayload | null>(null);
+  const pendingClipboardComposeRef = useRef<ClipboardComposePayload | null>(
+    null,
+  );
   /** True while waiting for images to finish processing before a deferred
    *  submit. Drives the "waiting" UI state in the ask bar. */
   const [isSubmitPending, setIsSubmitPending] = useState(false);
@@ -466,6 +478,30 @@ function App() {
       setPendingUserMessage(null);
 
       reset();
+      const pendingCompose = pendingClipboardComposeRef.current;
+      pendingClipboardComposeRef.current = null;
+      if (pendingCompose?.query) {
+        setQuery(pendingCompose.query);
+      }
+      if (pendingCompose?.autoSubmit) {
+        setPendingOverlaySubmit(true);
+      }
+      const pendingOverlaySubmit = pendingOverlaySubmitRef.current;
+      pendingOverlaySubmitRef.current = null;
+      if (pendingOverlaySubmit?.imagePath) {
+        const newImage: AttachedImage = {
+          id: crypto.randomUUID(),
+          blobUrl: convertFileSrc(pendingOverlaySubmit.imagePath),
+          filePath: pendingOverlaySubmit.imagePath,
+        };
+        setAttachedImages([newImage]);
+        if (pendingOverlaySubmit.prompt) {
+          setQuery(pendingOverlaySubmit.prompt);
+        }
+        if (pendingOverlaySubmit.autoSubmit) {
+          setPendingOverlaySubmit(true);
+        }
+      }
       setOverlayState('visible');
     },
     [cleanupSessionImages, reset],
@@ -976,6 +1012,7 @@ function App() {
     let unlistenReplyDraftImage: (() => void) | undefined;
     let unlistenSettings: (() => void) | undefined;
     let unlistenOverlaySubmit: (() => void) | undefined;
+    let unlistenClipboardCompose: (() => void) | undefined;
 
     /**
      * Handle an `overlay-submit` event: add the image to the ask bar and
@@ -987,6 +1024,10 @@ function App() {
      */
     const handleOverlaySubmit = (payload: OverlaySubmitPayload) => {
       if (!payload.imagePath) return;
+      if (overlayStateRef.current !== 'visible') {
+        pendingOverlaySubmitRef.current = payload;
+        return;
+      }
       const newImage: AttachedImage = {
         id: crypto.randomUUID(),
         blobUrl: convertFileSrc(payload.imagePath),
@@ -995,6 +1036,19 @@ function App() {
       setAttachedImages((prev) => [...prev, newImage]);
       if (payload.prompt) {
         setQuery(payload.prompt);
+      }
+      if (payload.autoSubmit) {
+        setPendingOverlaySubmit(true);
+      }
+    };
+
+    const handleClipboardCompose = (payload: ClipboardComposePayload) => {
+      if (overlayStateRef.current !== 'visible') {
+        pendingClipboardComposeRef.current = payload;
+        return;
+      }
+      if (payload.query) {
+        setQuery(payload.query);
       }
       if (payload.autoSubmit) {
         setPendingOverlaySubmit(true);
@@ -1060,6 +1114,12 @@ function App() {
           handleOverlaySubmit(payload);
         },
       );
+      unlistenClipboardCompose = await listen<ClipboardComposePayload>(
+        CLIPBOARD_COMPOSE_EVENT,
+        ({ payload }) => {
+          handleClipboardCompose(payload);
+        },
+      );
       // Listeners registered — safe to let Rust decide what to show on launch.
       await invoke('notify_frontend_ready');
     };
@@ -1072,6 +1132,7 @@ function App() {
       unlistenReplyDraftImage?.();
       unlistenSettings?.();
       unlistenOverlaySubmit?.();
+      unlistenClipboardCompose?.();
     };
   }, [replayEntranceAnimation, requestHideOverlay]);
 
