@@ -9,6 +9,8 @@ import {
   imageScaleFor,
   isRectSized,
   moveRect,
+  rectContainsPoint,
+  rectEquals,
   rectFromPoints,
   resizeRect,
 } from '../selectionLogic';
@@ -70,6 +72,43 @@ describe('clampRect', () => {
     const r = clampRect({ x: 150, y: 150, width: 30, height: 30 }, bounds);
     // x/y clamped to max corner (100,100); remaining width/height forced to 0
     expect(r).toEqual({ x: 100, y: 100, width: 0, height: 0 });
+  });
+});
+
+describe('rectContainsPoint', () => {
+  const rect = { x: 10, y: 20, width: 100, height: 80 };
+
+  it('returns true for points inside the rect', () => {
+    expect(rectContainsPoint(rect, { x: 30, y: 40 })).toBe(true);
+  });
+
+  it('treats the rect edges as inclusive', () => {
+    expect(rectContainsPoint(rect, { x: 10, y: 20 })).toBe(true);
+    expect(rectContainsPoint(rect, { x: 110, y: 100 })).toBe(true);
+  });
+
+  it('returns false for points outside the rect', () => {
+    expect(rectContainsPoint(rect, { x: 9, y: 20 })).toBe(false);
+    expect(rectContainsPoint(rect, { x: 111, y: 100 })).toBe(false);
+  });
+});
+
+describe('rectEquals', () => {
+  it('returns true for identical rects', () => {
+    const rect = { x: 1, y: 2, width: 3, height: 4 };
+    expect(rectEquals(rect, rect)).toBe(true);
+    expect(rectEquals(rect, { ...rect })).toBe(true);
+  });
+
+  it('returns false when either rect differs or is null', () => {
+    expect(rectEquals({ x: 1, y: 2, width: 3, height: 4 }, null)).toBe(false);
+    expect(rectEquals(null, null)).toBe(true);
+    expect(
+      rectEquals(
+        { x: 1, y: 2, width: 3, height: 4 },
+        { x: 1, y: 2, width: 3, height: 5 },
+      ),
+    ).toBe(false);
   });
 });
 

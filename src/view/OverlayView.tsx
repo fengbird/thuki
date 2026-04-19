@@ -22,6 +22,8 @@ import {
   imageScaleFor,
   isRectSized,
   moveRect,
+  rectContainsPoint,
+  rectEquals,
   rectFromPoints,
   resizeRect,
   type Point,
@@ -63,6 +65,18 @@ interface DragState {
   current: Point;
 }
 
+interface PressState {
+  start: Point;
+  quickRect: Rect | null;
+}
+
+interface QuickSelectWindow {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface MoveState {
   original: Rect;
   anchor: Point;
@@ -90,9 +104,14 @@ export function OverlayView({
   const [color, setColor] = useState<string>(DEFAULT_COLOR);
   const [fontSize, setFontSize] = useState<number>(DEFAULT_FONT_SIZE);
   const [selection, setSelection] = useState<Rect | null>(null);
+  const [pressing, setPressing] = useState<PressState | null>(null);
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [moving, setMoving] = useState<MoveState | null>(null);
   const [resizing, setResizing] = useState<ResizeState | null>(null);
+  const [quickSelectWindows, setQuickSelectWindows] = useState<
+    QuickSelectWindow[]
+  >([]);
+  const [hoverQuickRect, setHoverQuickRect] = useState<Rect | null>(null);
   const [textEditor, setTextEditor] = useState<{
     x: number;
     y: number;
@@ -121,6 +140,45 @@ export function OverlayView({
     }
     return { x: 0, y: 0, width: viewport.width, height: viewport.height };
   }, [image, isClipboardEditor, viewport]);
+
+  useEffect(() => {
+    if (fit || isClipboardEditor) {
+      setQuickSelectWindows([]);
+      setHoverQuickRect(null);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const win = getCurrentWindow();
+        const [phys, sf] = await Promise.all([
+          win.innerPosition(),
+          win.scaleFactor(),
+        ]);
+        const payload = await invoke<QuickSelectWindow[]>(
+          'list_quick_select_windows_command',
+          {
+            x: phys.x / sf,
+            y: phys.y / sf,
+            width: viewport.width,
+            height: viewport.height,
+          },
+        );
+        if (!cancelled) {
+          setQuickSelectWindows(Array.isArray(payload) ? payload : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setQuickSelectWindows([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fit, isClipboardEditor, viewport.height, viewport.width]);
 
   // Load the background screenshot so we know its natural pixel dimensions.
   useEffect(() => {
@@ -216,9 +274,9 @@ export function OverlayView({
     (e: React.MouseEvent<HTMLDivElement>) => {
       if (selection) return;
       const p = { x: e.clientX, y: e.clientY };
-      setDragging({ start: p, current: p });
+      setPressing({ start: p, quickRect: hoverQuickRect });
     },
-    [selection],
+    [hoverQuickRect, selection],
   );
 
   const onMouseMove = useCallback(
@@ -247,27 +305,70 @@ export function OverlayView({
       }
       if (dragging) {
         setDragging({ start: dragging.start, current: p });
+        return;
       }
+      if (pressing) {
+        const dx = p.x - pressing.start.x;
+        const dy = p.y - pressing.start.y;
+        if (Math.abs(dx) >= 4 || Math.abs(dy) >= 4) {
+          setDragging({ start: pressing.start, current: p });
+          setHoverQuickRect(null);
+        }
+        return;
+      }
+      if (selection || fit || isClipboardEditor) return;
+      const nextHover =
+        quickSelectWindows.find((candidate) =>
+          rectContainsPoint(candidate, p),
+        ) ?? null;
+      setHoverQuickRect((prev) =>
+        rectEquals(prev, nextHover) ? prev : nextHover,
+      );
     },
-    [dragging, moving, resizing],
+    [
+      dragging,
+      fit,
+      isClipboardEditor,
+      moving,
+      pressing,
+      quickSelectWindows,
+      resizing,
+      selection,
+    ],
   );
 
-  const onMouseUp = useCallback(() => {
-    if (resizing) {
-      setResizing(null);
-      return;
-    }
-    if (moving) {
-      setMoving(null);
-      return;
-    }
-    if (!dragging) return;
-    const rect = rectFromPoints(dragging.start, dragging.current);
-    setDragging(null);
-    if (isRectSized(rect)) {
-      setSelection(rect);
-    }
-  }, [dragging, moving, resizing]);
+  const onMouseUp = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (resizing) {
+        setResizing(null);
+        return;
+      }
+      if (moving) {
+        setMoving(null);
+        return;
+      }
+      if (dragging) {
+        const rect = rectFromPoints(dragging.start, dragging.current);
+        setDragging(null);
+        setPressing(null);
+        if (isRectSized(rect)) {
+          setSelection(rect);
+        }
+        return;
+      }
+      if (!pressing) return;
+      const p = { x: e.clientX, y: e.clientY };
+      const quickRect =
+        pressing.quickRect && rectContainsPoint(pressing.quickRect, p)
+          ? pressing.quickRect
+          : null;
+      setPressing(null);
+      if (quickRect) {
+        setSelection(quickRect);
+      }
+    },
+    [dragging, moving, pressing, resizing],
+  );
 
   const startResize = useCallback(
     (handle: ResizeHandle, e: React.MouseEvent<HTMLDivElement>) => {
@@ -316,13 +417,22 @@ export function OverlayView({
   const dragRect = dragging
     ? rectFromPoints(dragging.start, dragging.current)
     : null;
-  const liveRect = selection ?? dragRect;
+  const liveRect = selection ?? dragRect ?? hoverQuickRect;
+
+  const exportPixelRatio =
+    image && imageFrame.width > 0 && imageFrame.height > 0
+      ? Math.max(
+          1,
+          image.naturalWidth / imageFrame.width,
+          image.naturalHeight / imageFrame.height,
+        )
+      : 1;
 
   const exportSelection = useCallback((): string | null => {
-    const dataUrl = exportStageToDataURL(stageRef.current);
+    const dataUrl = exportStageToDataURL(stageRef.current, exportPixelRatio);
     /* v8 ignore next -- dataUrl is non-null whenever the stage has mounted */
     return dataUrl ? dataUrlToBase64(dataUrl) : null;
-  }, []);
+  }, [exportPixelRatio]);
 
   const handleCopy = useCallback(async () => {
     const b64 = exportSelection();
@@ -494,7 +604,11 @@ export function OverlayView({
         inset: 0,
         overflow: 'hidden',
         userSelect: 'none',
-        cursor: selection ? 'default' : 'crosshair',
+        cursor: selection
+          ? 'default'
+          : hoverQuickRect
+            ? 'pointer'
+            : 'crosshair',
       }}
     >
       {src && (
@@ -672,7 +786,11 @@ export function OverlayView({
         />
       )}
 
-      <HintBar selection={selection} status={status} />
+      <HintBar
+        selection={selection}
+        quickSelectRect={hoverQuickRect}
+        status={status}
+      />
     </div>
   );
 }
@@ -975,15 +1093,22 @@ function DimensionBadge({ rect }: { rect: Rect }) {
 
 function HintBar({
   selection,
+  quickSelectRect,
   status,
 }: {
   selection: Rect | null;
+  quickSelectRect: Rect | null;
   status: { kind: 'idle' | 'success' | 'error'; message: string };
 }) {
   const isError = status.kind === 'error';
   const isSuccess = status.kind === 'success';
   const text =
-    status.message || (selection ? null : 'Drag to select · Esc to exit');
+    status.message ||
+    (selection
+      ? null
+      : quickSelectRect
+        ? 'Click to capture window · Drag to select custom area · Esc to exit'
+        : 'Drag to select · Esc to exit');
   if (!text) return null;
   return (
     <div

@@ -19,6 +19,25 @@ export interface Rect {
   height: number;
 }
 
+/** Returns true when a point lies inside the rect (inclusive edges). */
+export function rectContainsPoint(rect: Rect, point: Point): boolean {
+  return (
+    point.x >= rect.x &&
+    point.x <= rect.x + rect.width &&
+    point.y >= rect.y &&
+    point.y <= rect.y + rect.height
+  );
+}
+
+/** Shallow rect equality helper used to avoid redundant hover updates. */
+export function rectEquals(a: Rect | null, b: Rect | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+  );
+}
+
 /** Builds a rect from two arbitrary corner points, handling any drag direction. */
 export function rectFromPoints(a: Point, b: Point): Rect {
   return {

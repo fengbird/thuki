@@ -48,6 +48,42 @@ pub fn process_screenshot_result(path: &PathBuf) -> Result<Option<String>, Strin
     Ok(Some(encode_as_base64(&bytes)))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickSelectWindow {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+fn clip_window_to_overlay(
+    overlay_x: f64,
+    overlay_y: f64,
+    overlay_width: f64,
+    overlay_height: f64,
+    window_x: f64,
+    window_y: f64,
+    window_width: f64,
+    window_height: f64,
+) -> Option<QuickSelectWindow> {
+    let left = overlay_x.max(window_x);
+    let top = overlay_y.max(window_y);
+    let right = (overlay_x + overlay_width).min(window_x + window_width);
+    let bottom = (overlay_y + overlay_height).min(window_y + window_height);
+    let width = right - left;
+    let height = bottom - top;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    Some(QuickSelectWindow {
+        x: left - overlay_x,
+        y: top - overlay_y,
+        width,
+        height,
+    })
+}
+
 // ─── Tauri command ──────────────────────────────────────────────────────────
 
 /// Captures a user-selected screen region and returns it as base64-encoded PNG.
@@ -420,7 +456,6 @@ fn capture_window_raw(pid: i32) -> Result<(u32, u32, Vec<u8>), String> {
     const K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS: u32 = 1 << 4;
     const K_CG_NULL_WINDOW_ID: u32 = 0;
     const K_CG_WINDOW_IMAGE_BOUNDS_IGNORE_FRAMING: u32 = 1;
-    const K_CG_WINDOW_IMAGE_NOMINAL_RESOLUTION: u32 = 1 << 4;
 
     const K_CF_NUMBER_S_INT32_TYPE: i32 = 3;
     const K_CG_BITMAP_BYTE_ORDER32_HOST: u32 = 2 << 12;
@@ -566,18 +601,11 @@ fn capture_window_raw(pid: i32) -> Result<(u32, u32, Vec<u8>), String> {
             origin: CGPoint::new(0.0, 0.0),
             size: CGSize::new(0.0, 0.0),
         };
-        // `kCGWindowImageNominalResolution` captures at 1× (logical) pixels
-        // rather than the device's 2× retina backing. On a typical chat
-        // window this cuts the rendered image by 4×, which speeds up the
-        // bitmap-context rasterise, the downstream resize, and JPEG encode
-        // proportionally. The vision model does not benefit from sub-pixel
-        // fidelity — nominal resolution is more than enough for reading
-        // chat bubble text.
         let cg_image = CGWindowListCreateImage(
             null_rect,
             K_CG_WINDOW_LIST_OPTION_INCLUDING_WINDOW,
             target_window_id,
-            K_CG_WINDOW_IMAGE_BOUNDS_IGNORE_FRAMING | K_CG_WINDOW_IMAGE_NOMINAL_RESOLUTION,
+            K_CG_WINDOW_IMAGE_BOUNDS_IGNORE_FRAMING,
         );
         if cg_image.is_null() {
             return Err("Window capture failed.".to_string());
@@ -657,10 +685,193 @@ pub async fn capture_window_command(
         .map_err(|_| "main thread capture channel closed unexpectedly".to_string())??;
 
     tokio::task::spawn_blocking(move || {
-        crate::images::save_rgba_image(&base_dir, width, height, rgba_bytes)
+        crate::images::save_rgba_png_image(&base_dir, width, height, rgba_bytes)
     })
     .await
     .map_err(|e| format!("image encoding task failed: {e}"))?
+}
+
+#[cfg(target_os = "macos")]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn list_quick_select_windows(
+    overlay_x: f64,
+    overlay_y: f64,
+    overlay_width: f64,
+    overlay_height: f64,
+) -> Result<Vec<QuickSelectWindow>, String> {
+    use core_foundation::base::TCFType;
+    use core_foundation::string::CFString;
+    use core_graphics::geometry::{CGPoint, CGRect, CGSize};
+    use std::ffi::c_void;
+
+    type CFArrayRef = *const c_void;
+    type CFDictionaryRef = *const c_void;
+
+    const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: u32 = 1;
+    const K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS: u32 = 1 << 4;
+    const K_CG_NULL_WINDOW_ID: u32 = 0;
+    const K_CF_NUMBER_S_INT32_TYPE: i32 = 3;
+    const MIN_WINDOW_SIDE: f64 = 40.0;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn CGWindowListCopyWindowInfo(option: u32, relativeToWindow: u32) -> CFArrayRef;
+        fn CGRectMakeWithDictionaryRepresentation(dict: CFDictionaryRef, rect: *mut CGRect) -> i32;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFArrayGetCount(array: CFArrayRef) -> isize;
+        fn CFArrayGetValueAtIndex(array: CFArrayRef, idx: isize) -> *const c_void;
+        fn CFDictionaryGetValue(dict: CFDictionaryRef, key: *const c_void) -> *const c_void;
+        fn CFNumberGetValue(number: *const c_void, theType: i32, valuePtr: *mut c_void) -> bool;
+        fn CFBooleanGetValue(b: *const c_void) -> u8;
+        fn CFRelease(cf: *const c_void);
+    }
+
+    unsafe {
+        if !CGPreflightScreenCaptureAccess() {
+            return Err(
+                "Screen Recording permission is required. Grant it in System \
+                 Settings > Privacy & Security > Screen Recording."
+                    .to_string(),
+            );
+        }
+
+        let option =
+            K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY | K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS;
+        let list = CGWindowListCopyWindowInfo(option, K_CG_NULL_WINDOW_ID);
+        if list.is_null() {
+            return Err("Failed to enumerate windows.".to_string());
+        }
+
+        let count = CFArrayGetCount(list);
+        let pid_key = CFString::new("kCGWindowOwnerPID");
+        let wid_key = CFString::new("kCGWindowNumber");
+        let layer_key = CFString::new("kCGWindowLayer");
+        let onscreen_key = CFString::new("kCGWindowIsOnscreen");
+        let bounds_key = CFString::new("kCGWindowBounds");
+        let our_pid = std::process::id() as i32;
+
+        let mut windows = Vec::new();
+        for i in 0..count {
+            let dict = CFArrayGetValueAtIndex(list, i) as CFDictionaryRef;
+            if dict.is_null() {
+                continue;
+            }
+
+            let pid_val =
+                CFDictionaryGetValue(dict, pid_key.as_concrete_TypeRef() as *const c_void);
+            if pid_val.is_null() {
+                continue;
+            }
+            let mut owner_pid: i32 = 0;
+            CFNumberGetValue(
+                pid_val,
+                K_CF_NUMBER_S_INT32_TYPE,
+                &mut owner_pid as *mut i32 as *mut c_void,
+            );
+            if owner_pid == our_pid {
+                continue;
+            }
+
+            let layer_val =
+                CFDictionaryGetValue(dict, layer_key.as_concrete_TypeRef() as *const c_void);
+            if !layer_val.is_null() {
+                let mut layer: i32 = 0;
+                CFNumberGetValue(
+                    layer_val,
+                    K_CF_NUMBER_S_INT32_TYPE,
+                    &mut layer as *mut i32 as *mut c_void,
+                );
+                if layer != 0 {
+                    continue;
+                }
+            }
+
+            let onscreen_val =
+                CFDictionaryGetValue(dict, onscreen_key.as_concrete_TypeRef() as *const c_void);
+            if !onscreen_val.is_null() && CFBooleanGetValue(onscreen_val) == 0 {
+                continue;
+            }
+
+            let bounds_val =
+                CFDictionaryGetValue(dict, bounds_key.as_concrete_TypeRef() as *const c_void);
+            if bounds_val.is_null() {
+                continue;
+            }
+            let mut bounds = CGRect {
+                origin: CGPoint::new(0.0, 0.0),
+                size: CGSize::new(0.0, 0.0),
+            };
+            if CGRectMakeWithDictionaryRepresentation(bounds_val as CFDictionaryRef, &mut bounds)
+                == 0
+            {
+                continue;
+            }
+
+            if bounds.size.width < MIN_WINDOW_SIDE || bounds.size.height < MIN_WINDOW_SIDE {
+                continue;
+            }
+
+            let wid_val =
+                CFDictionaryGetValue(dict, wid_key.as_concrete_TypeRef() as *const c_void);
+            if wid_val.is_null() {
+                continue;
+            }
+            let mut wid: u32 = 0;
+            CFNumberGetValue(
+                wid_val,
+                K_CF_NUMBER_S_INT32_TYPE,
+                &mut wid as *mut u32 as *mut c_void,
+            );
+            if wid == K_CG_NULL_WINDOW_ID {
+                continue;
+            }
+
+            if let Some(clipped) = clip_window_to_overlay(
+                overlay_x,
+                overlay_y,
+                overlay_width,
+                overlay_height,
+                bounds.origin.x,
+                bounds.origin.y,
+                bounds.size.width,
+                bounds.size.height,
+            ) {
+                windows.push(clipped);
+            }
+        }
+
+        CFRelease(list);
+        Ok(windows)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn list_quick_select_windows(
+    _overlay_x: f64,
+    _overlay_y: f64,
+    _overlay_width: f64,
+    _overlay_height: f64,
+) -> Result<Vec<QuickSelectWindow>, String> {
+    Ok(Vec::new())
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn list_quick_select_windows_command(
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<Vec<QuickSelectWindow>, String> {
+    list_quick_select_windows(x, y, width, height)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -730,6 +941,43 @@ mod tests {
         assert_eq!(encode_as_base64(b""), "");
     }
 
+    #[test]
+    fn clip_window_to_overlay_translates_to_overlay_local_space() {
+        let clipped =
+            clip_window_to_overlay(100.0, 50.0, 400.0, 300.0, 150.0, 100.0, 200.0, 120.0).unwrap();
+        assert_eq!(
+            clipped,
+            QuickSelectWindow {
+                x: 50.0,
+                y: 50.0,
+                width: 200.0,
+                height: 120.0,
+            }
+        );
+    }
+
+    #[test]
+    fn clip_window_to_overlay_clamps_partially_visible_windows() {
+        let clipped =
+            clip_window_to_overlay(100.0, 50.0, 400.0, 300.0, 20.0, 10.0, 160.0, 120.0).unwrap();
+        assert_eq!(
+            clipped,
+            QuickSelectWindow {
+                x: 0.0,
+                y: 0.0,
+                width: 80.0,
+                height: 80.0,
+            }
+        );
+    }
+
+    #[test]
+    fn clip_window_to_overlay_rejects_non_intersecting_windows() {
+        assert!(
+            clip_window_to_overlay(100.0, 50.0, 400.0, 300.0, 600.0, 400.0, 80.0, 80.0).is_none()
+        );
+    }
+
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn capture_full_screen_returns_err_on_non_macos() {
@@ -744,5 +992,12 @@ mod tests {
         let result = capture_window_raw(1);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("only supported on macOS"));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn list_quick_select_windows_returns_empty_on_non_macos() {
+        let result = list_quick_select_windows(0.0, 0.0, 100.0, 100.0).unwrap();
+        assert!(result.is_empty());
     }
 }

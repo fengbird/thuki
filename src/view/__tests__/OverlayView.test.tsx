@@ -170,6 +170,79 @@ describe('OverlayView — selection flow', () => {
     });
     expect(screen.queryByTestId('overlay-selection-frame')).toBeNull();
   });
+
+  it('hovering a detected window previews the quick-select frame and hint', async () => {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'list_quick_select_windows_command') {
+        return [{ x: 80, y: 90, width: 220, height: 140 }];
+      }
+    });
+
+    render(<OverlayView imagePath="/tmp/shot.png" />);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    fireEvent.mouseMove(screen.getByTestId('overlay-root'), {
+      clientX: 120,
+      clientY: 110,
+    });
+
+    expect(screen.getByTestId('overlay-selection-frame')).toBeInTheDocument();
+    expect(screen.getByTestId('overlay-dimension-badge').textContent).toBe(
+      '220 × 140',
+    );
+    expect(screen.getByTestId('overlay-hint').textContent).toContain(
+      'Click to capture window',
+    );
+  });
+
+  it('clicking a hovered quick-select window commits the full window selection', async () => {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'list_quick_select_windows_command') {
+        return [{ x: 80, y: 90, width: 220, height: 140 }];
+      }
+    });
+
+    render(<OverlayView imagePath="/tmp/shot.png" />);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    const root = screen.getByTestId('overlay-root');
+    fireEvent.mouseMove(root, { clientX: 120, clientY: 110 });
+    fireEvent.mouseDown(root, { clientX: 120, clientY: 110 });
+    fireEvent.mouseUp(root, { clientX: 120, clientY: 110 });
+
+    expect(screen.getByTestId('overlay-toolbar')).toBeInTheDocument();
+    expect(screen.getByTestId('overlay-dimension-badge').textContent).toBe(
+      '220 × 140',
+    );
+  });
+
+  it('dragging while hovering a quick-select window still creates a custom selection', async () => {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'list_quick_select_windows_command') {
+        return [{ x: 80, y: 90, width: 220, height: 140 }];
+      }
+    });
+
+    render(<OverlayView imagePath="/tmp/shot.png" />);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    const root = screen.getByTestId('overlay-root');
+    fireEvent.mouseMove(root, { clientX: 120, clientY: 110 });
+    fireEvent.mouseDown(root, { clientX: 120, clientY: 110 });
+    fireEvent.mouseMove(root, { clientX: 200, clientY: 180 });
+    fireEvent.mouseUp(root, { clientX: 200, clientY: 180 });
+
+    expect(screen.getByTestId('overlay-toolbar')).toBeInTheDocument();
+    expect(screen.getByTestId('overlay-dimension-badge').textContent).toBe(
+      '80 × 70',
+    );
+  });
 });
 
 describe('OverlayView — annotation stage', () => {

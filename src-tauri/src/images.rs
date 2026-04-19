@@ -147,6 +147,30 @@ pub fn save_rgba_image(
     encode_and_save_jpeg(base_dir, image::DynamicImage::ImageRgba8(buf))
 }
 
+/// Saves raw RGBA pixels as a lossless PNG in the app images directory.
+///
+/// Unlike `save_rgba_image`, this preserves every source pixel and avoids
+/// JPEG artifacts. Used for screenshot-derived assets where fidelity matters
+/// more than disk size, such as reply-draft window captures.
+pub fn save_rgba_png_image(
+    base_dir: &Path,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+) -> Result<String, String> {
+    let dir = images_root(base_dir);
+    std::fs::create_dir_all(&dir).map_err(err("failed to create image directory"))?;
+
+    let filename = format!("{}.png", uuid::Uuid::new_v4());
+    let path = dir.join(&filename);
+    let file = std::fs::File::create(&path).map_err(err("failed to create image file"))?;
+    encode_rgba_png(file, width, height, &rgba)?;
+
+    path.to_str()
+        .map(|s| s.to_string())
+        .ok_or("image path contains non-UTF-8 characters".to_string())
+}
+
 /// Encodes raw RGBA pixels as a lossless PNG into `writer`.
 ///
 /// Uses `CompressionType::Fast` — the resulting PNG is larger than the
@@ -470,6 +494,25 @@ mod tests {
         let saved = image::open(&path).unwrap();
         assert_eq!(saved.width(), 2);
         assert_eq!(saved.height(), 2);
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn save_rgba_png_image_writes_lossless_png() {
+        let base = temp_dir();
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+        ];
+        let path = save_rgba_png_image(&base, 2, 2, rgba).unwrap();
+
+        assert!(Path::new(&path).exists());
+        assert!(path.ends_with(".png"));
+        let saved = image::open(&path).unwrap().to_rgba8();
+        assert_eq!(saved.width(), 2);
+        assert_eq!(saved.height(), 2);
+        assert_eq!(saved.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(saved.get_pixel(1, 0).0, [0, 255, 0, 255]);
 
         fs::remove_dir_all(&base).unwrap();
     }

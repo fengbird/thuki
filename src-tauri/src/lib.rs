@@ -1002,6 +1002,8 @@ pub fn run() {
             #[cfg(not(coverage))]
             screenshot::capture_screenshot_command,
             #[cfg(not(coverage))]
+            screenshot::list_quick_select_windows_command,
+            #[cfg(not(coverage))]
             screenshot::capture_window_command,
             #[cfg(not(coverage))]
             reply::generate_reply,
