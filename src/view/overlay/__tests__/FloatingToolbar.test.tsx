@@ -228,7 +228,7 @@ describe('FloatingToolbar', () => {
   it('renders the long-shot button by default and fires onLongShot', () => {
     const { handlers } = setup();
     const btn = screen.getByTestId('overlay-long');
-    expect(btn.textContent).toContain('Long');
+    expect(btn.textContent).toContain('Scroll');
     fireEvent.click(btn);
     expect(handlers.onLongShot).toHaveBeenCalled();
   });

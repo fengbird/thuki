@@ -297,6 +297,35 @@ fn clone_image_for_overlay(image_path: &str) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+fn generated_image_capture(
+    content_hash: String,
+    image_path: String,
+    text_preview: String,
+) -> ClipboardCapture {
+    ClipboardCapture {
+        kind: ClipboardEntryKind::Image,
+        content_hash,
+        text_preview,
+        text_content: None,
+        image_path: Some(image_path),
+        source_app: Some("Oling".to_string()),
+        source_bundle_id: Some("com.quietnode.oling".to_string()),
+    }
+}
+
+pub fn persist_generated_image(
+    app_handle: &tauri::AppHandle,
+    bytes: &[u8],
+    text_preview: impl Into<String>,
+) -> Result<(), String> {
+    let content_hash = sha256_hex(bytes);
+    let image_path = save_clipboard_image(app_handle, bytes, &content_hash)?;
+    persist_capture(
+        app_handle,
+        generated_image_capture(content_hash, image_path, text_preview.into()),
+    )
+}
+
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -901,6 +930,8 @@ pub fn edit_clipboard_entry(
     };
 
     let overlay_path = clone_image_for_overlay(&image_path)?;
+    let (x, y, width, height) =
+        crate::overlay::centered_editor_bounds(&app_handle, x, y, width, height);
     crate::overlay::open_overlay_window(
         app_handle.clone(),
         overlay_path,
@@ -1100,5 +1131,45 @@ mod tests {
         assert!(state.is_suppressed(Instant::now()));
         std::thread::sleep(Duration::from_millis(25));
         assert!(!state.is_suppressed(Instant::now()));
+    }
+
+    #[test]
+    fn generated_image_capture_marks_entry_as_oling_image() {
+        let capture = generated_image_capture(
+            "hash-1".to_string(),
+            "/tmp/pinned-image.png".to_string(),
+            "Pinned image".to_string(),
+        );
+        assert_eq!(capture.kind, ClipboardEntryKind::Image);
+        assert_eq!(capture.text_preview, "Pinned image");
+        assert_eq!(capture.text_content, None);
+        assert_eq!(capture.image_path.as_deref(), Some("/tmp/pinned-image.png"));
+        assert_eq!(capture.source_app.as_deref(), Some("Oling"));
+        assert_eq!(
+            capture.source_bundle_id.as_deref(),
+            Some("com.quietnode.oling")
+        );
+    }
+
+    #[test]
+    fn upsert_entry_deduplicates_generated_images() {
+        let conn = crate::database::open_in_memory().unwrap();
+        let capture = generated_image_capture(
+            "hash-2".to_string(),
+            "/tmp/pinned-image.png".to_string(),
+            "Pinned image".to_string(),
+        );
+
+        let first_id = upsert_entry(&conn, &capture).unwrap();
+        let second_id = upsert_entry(&conn, &capture).unwrap();
+
+        assert_eq!(first_id, second_id);
+
+        let entries = list_entries(&conn, None, Some("image"), false).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, first_id);
+        assert_eq!(entries[0].kind, ClipboardEntryKind::Image);
+        assert_eq!(entries[0].copy_count, 2);
+        assert_eq!(entries[0].source_app.as_deref(), Some("Oling"));
     }
 }

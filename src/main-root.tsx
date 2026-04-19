@@ -4,6 +4,7 @@ import { ClipboardHistoryView } from './view/ClipboardHistoryView';
 import { LongImageEditorView } from './view/LongImageEditorView';
 import { LongShotHudView } from './view/LongShotHudView';
 import { OverlayView } from './view/OverlayView';
+import { PinContextMenuView } from './view/PinContextMenuView';
 import { PinView } from './view/PinView';
 
 /**
@@ -33,6 +34,18 @@ export function pickRoot(search: string): React.ReactElement {
     const imagePath = params.get('path') ?? '';
     const label = params.get('label') ?? '';
     return <PinView imagePath={imagePath} label={label} />;
+  }
+  if (params.get('pinmenu') === '1') {
+    const imagePath = params.get('path') ?? '';
+    const label = params.get('label') ?? '';
+    const opacity = Number(params.get('opacity') ?? '1');
+    return (
+      <PinContextMenuView
+        imagePath={imagePath}
+        label={label}
+        opacity={Number.isFinite(opacity) ? opacity : 1}
+      />
+    );
   }
   if (params.get('clipboard') === '1') {
     return <ClipboardHistoryView />;

@@ -92,10 +92,9 @@ const ONBOARDING_LOGICAL_HEIGHT: f64 = 640.0;
 /// between the frontend exit animation and rapid activation toggles.
 static OVERLAY_INTENDED_VISIBLE: AtomicBool = AtomicBool::new(false);
 
-/// True on first process launch; cleared when the frontend signals readiness.
-/// Used to show the overlay automatically on startup without a race condition:
-/// the frontend calls `notify_frontend_ready` after its event listener is
-/// registered, so the show event is guaranteed to have a listener.
+/// True until the frontend signals readiness after process launch.
+/// Used only to gate one-time startup work such as onboarding checks; the
+/// main Ask Bar no longer auto-opens on launch.
 static LAUNCH_SHOW_PENDING: AtomicBool = AtomicBool::new(true);
 
 /// Payload emitted to the frontend on every visibility transition.
@@ -472,9 +471,8 @@ fn notify_overlay_hidden() {
 }
 
 /// Called by the frontend once its visibility event listener is registered.
-/// On the first call per process lifetime, shows the overlay so the AskBar
-/// appears automatically at startup without a race between the Rust emit and
-/// the frontend listener registration.
+/// On the first call per process lifetime, runs startup-only onboarding
+/// checks. Normal launches no longer auto-open the Ask Bar.
 #[tauri::command]
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn notify_frontend_ready(app_handle: tauri::AppHandle, db: tauri::State<database::Database>) {
@@ -516,14 +514,14 @@ fn notify_frontend_ready(app_handle: tauri::AppHandle, db: tauri::State<database
                     show_onboarding_window(&app_handle, onboarding::OnboardingStage::Intro);
                     return;
                 }
-                // Complete: fall through to show the overlay.
+                // Complete: startup is finished; keep the app idle until the
+                // user explicitly opens Oling via hotkey, tray, or shortcut.
             } else {
                 // Mutex poisoned; safe fallback.
                 show_onboarding_window(&app_handle, onboarding::OnboardingStage::Permissions);
                 return;
             }
         }
-        show_overlay(&app_handle, crate::context::ActivationContext::empty());
     }
 }
 
@@ -1050,9 +1048,17 @@ pub fn run() {
             #[cfg(not(coverage))]
             pin::pin_base64_png,
             #[cfg(not(coverage))]
+            pin::open_pin_context_menu,
+            #[cfg(not(coverage))]
+            pin::hide_pin_context_menu,
+            #[cfg(not(coverage))]
+            pin::set_pin_opacity,
+            #[cfg(not(coverage))]
             pin::close_pin_window,
             #[cfg(not(coverage))]
             pin::edit_pin_window,
+            #[cfg(not(coverage))]
+            pin::edit_pin_window_from_menu,
             #[cfg(not(coverage))]
             pin::close_all_pin_windows,
             #[cfg(not(coverage))]
@@ -1096,6 +1102,9 @@ pub fn run() {
                 } else if label == clipboard_history::CLIPBOARD_WINDOW_LABEL {
                     api.prevent_close();
                     let _ = clipboard_history::hide_window(app_handle);
+                } else if label == pin::PIN_CONTEXT_MENU_WINDOW_LABEL {
+                    api.prevent_close();
+                    let _ = pin::hide_pin_context_menu(app_handle.clone());
                 }
             }
         });
@@ -1128,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_show_pending_consumed_exactly_once() {
+    fn launch_startup_gate_is_consumed_exactly_once() {
         LAUNCH_SHOW_PENDING.store(true, Ordering::SeqCst);
         assert!(LAUNCH_SHOW_PENDING.swap(false, Ordering::SeqCst));
         assert!(!LAUNCH_SHOW_PENDING.swap(false, Ordering::SeqCst));

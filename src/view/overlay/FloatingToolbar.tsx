@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { Tool } from '../editor/types';
 import { COLOR_PRESETS, FONT_SIZE_PRESETS } from '../editor/types';
 import type { Rect } from './selectionLogic';
@@ -39,8 +39,51 @@ interface FloatingToolbarProps {
   hideLongShot?: boolean;
 }
 
-const TOOLS: { key: Tool; label: string; hint: string }[] = [
-  { key: 'select', label: '↖', hint: 'Select' },
+const TOOL_ICON_STYLE: CSSProperties = {
+  width: 18,
+  height: 18,
+  display: 'block',
+  flexShrink: 0,
+};
+
+function DragHandIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" style={TOOL_ICON_STYLE}>
+      <path
+        d="M12.35 20.25h-1.82a4.48 4.48 0 0 1-3.28-1.43l-1.7-1.84a1.48 1.48 0 0 1 .06-2.08 1.48 1.48 0 0 1 2.08.06l.61.66V9.62c0-.78.63-1.42 1.42-1.42.8 0 1.43.64 1.43 1.42v.88h.46V6.74c0-.8.65-1.44 1.44-1.44.8 0 1.44.64 1.44 1.44v3.76h.45V8.12c0-.78.63-1.42 1.42-1.42.8 0 1.43.64 1.43 1.42v2.38h.43c.8 0 1.44.64 1.44 1.44v2.9c0 .78-.2 1.54-.57 2.23l-.58 1.05a4.37 4.37 0 0 1-3.86 2.13Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function ScrollingCaptureIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" style={TOOL_ICON_STYLE}>
+      <rect
+        x="5"
+        y="3.5"
+        width="14"
+        height="17"
+        rx="2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M12 7.5v9m0 0-2.5-2.5M12 16.5l2.5-2.5M12 7.5 9.5 10M12 7.5l2.5 2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+const TOOLS: { key: Tool; label: ReactNode; hint: string }[] = [
+  { key: 'select', label: <DragHandIcon />, hint: 'Move / Drag' },
   { key: 'rect', label: '▭', hint: 'Rectangle' },
   { key: 'arrow', label: '→', hint: 'Arrow' },
   { key: 'pen', label: '✎', hint: 'Pen' },
@@ -202,7 +245,16 @@ export function FloatingToolbar({
             }}
             title="Scroll-capture the area beneath the selection and stitch"
           >
-            {longShotBusy ? 'Capturing…' : 'Long'}
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <ScrollingCaptureIcon />
+              {longShotBusy ? 'Capturing…' : 'Scroll'}
+            </span>
           </button>
         )}
         <button

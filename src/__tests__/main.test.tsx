@@ -78,6 +78,12 @@ describe('pickRoot', () => {
     expect(screen.getByTestId('pin-empty')).toBeInTheDocument();
   });
 
+  it('mounts PinContextMenuView when pinmenu=1 is set', () => {
+    render(pickRoot('?pinmenu=1&path=/tmp/shot.png&label=pin-abc&opacity=0.7'));
+    expect(screen.getByTestId('pin-menu-root')).toBeInTheDocument();
+    expect(screen.getByTestId('pin-menu-edit')).toBeInTheDocument();
+  });
+
   it('mounts ClipboardHistoryView when clipboard=1 is set', () => {
     render(pickRoot('?clipboard=1'));
     expect(screen.getByTestId('clipboard-root')).toBeInTheDocument();

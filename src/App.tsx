@@ -1120,7 +1120,8 @@ function App() {
           handleClipboardCompose(payload);
         },
       );
-      // Listeners registered — safe to let Rust decide what to show on launch.
+      // Listeners registered — safe to let Rust run one-time startup checks
+      // like onboarding without racing the frontend event subscriptions.
       await invoke('notify_frontend_ready');
     };
 

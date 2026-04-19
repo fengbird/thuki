@@ -112,6 +112,98 @@ pub fn sanitize_bounds(x: f64, y: f64, width: f64, height: f64) -> Option<(f64, 
     Some((x, y, width, height))
 }
 
+/// Centers a window of `(width, height)` inside the given monitor bounds,
+/// clamping the size so it always fits within a small screen margin.
+pub fn center_bounds_in_monitor(
+    monitor_x: f64,
+    monitor_y: f64,
+    monitor_width: f64,
+    monitor_height: f64,
+    width: f64,
+    height: f64,
+) -> (f64, f64, f64, f64) {
+    let max_width = (monitor_width - 24.0).max(240.0);
+    let max_height = (monitor_height - 24.0).max(180.0);
+    let clamped_width = width.min(max_width).max(240.0);
+    let clamped_height = height.min(max_height).max(180.0);
+    (
+        monitor_x + (monitor_width - clamped_width) / 2.0,
+        monitor_y + (monitor_height - clamped_height) / 2.0,
+        clamped_width,
+        clamped_height,
+    )
+}
+
+pub fn default_editor_size_for_monitor(monitor_width: f64, monitor_height: f64) -> (f64, f64) {
+    let width = (monitor_width - 2.0 * (monitor_width * 0.07).clamp(28.0, 120.0))
+        .clamp(840.0, 1440.0)
+        .min((monitor_width - 28.0).max(420.0));
+    let height = (monitor_height - 2.0 * (monitor_height * 0.08).clamp(28.0, 110.0))
+        .clamp(620.0, 1100.0)
+        .min((monitor_height - 28.0).max(360.0));
+    (width, height)
+}
+
+#[cfg(target_os = "macos")]
+pub fn centered_editor_bounds(
+    app_handle: &tauri::AppHandle,
+    anchor_x: f64,
+    anchor_y: f64,
+    anchor_width: f64,
+    anchor_height: f64,
+) -> (f64, f64, f64, f64) {
+    let anchor_cx = anchor_x + anchor_width / 2.0;
+    let anchor_cy = anchor_y + anchor_height / 2.0;
+
+    let monitor = app_handle
+        .available_monitors()
+        .ok()
+        .and_then(|monitors| {
+            monitors.into_iter().find_map(|monitor| {
+                let scale = monitor.scale_factor();
+                let size = monitor.size();
+                let pos = monitor.position();
+                let mx = pos.x as f64 / scale;
+                let my = pos.y as f64 / scale;
+                let mw = size.width as f64 / scale;
+                let mh = size.height as f64 / scale;
+                let contains_anchor = anchor_cx >= mx
+                    && anchor_cx <= mx + mw
+                    && anchor_cy >= my
+                    && anchor_cy <= my + mh;
+                contains_anchor.then_some((mx, my, mw, mh))
+            })
+        })
+        .or_else(|| {
+            app_handle.primary_monitor().ok().flatten().map(|monitor| {
+                let scale = monitor.scale_factor();
+                let size = monitor.size();
+                let pos = monitor.position();
+                (
+                    pos.x as f64 / scale,
+                    pos.y as f64 / scale,
+                    size.width as f64 / scale,
+                    size.height as f64 / scale,
+                )
+            })
+        })
+        .unwrap_or((0.0, 0.0, 1440.0, 900.0));
+
+    let (width, height) = default_editor_size_for_monitor(monitor.2, monitor.3);
+    center_bounds_in_monitor(monitor.0, monitor.1, monitor.2, monitor.3, width, height)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn centered_editor_bounds(
+    _app_handle: &tauri::AppHandle,
+    anchor_x: f64,
+    anchor_y: f64,
+    _anchor_width: f64,
+    _anchor_height: f64,
+) -> (f64, f64, f64, f64) {
+    (anchor_x, anchor_y, 960.0, 720.0)
+}
+
 /// Makes the overlay window visible + key via the NSPanel path, with a plain
 /// `show()` + `set_focus()` fallback if the panel handle has gone missing.
 /// Shared by `open_overlay_window`'s fresh-build and reuse-after-navigate
@@ -349,6 +441,36 @@ mod tests {
     #[test]
     fn percent_encode_encodes_non_ascii_as_bytes() {
         assert_eq!(percent_encode("中"), "%E4%B8%AD");
+    }
+
+    #[test]
+    fn center_bounds_in_monitor_centers_requested_size() {
+        let bounds = center_bounds_in_monitor(100.0, 50.0, 1440.0, 900.0, 420.0, 300.0);
+        assert_eq!(bounds, (610.0, 350.0, 420.0, 300.0));
+    }
+
+    #[test]
+    fn center_bounds_in_monitor_clamps_oversized_window_to_monitor() {
+        let (_, _, width, height) =
+            center_bounds_in_monitor(0.0, 0.0, 800.0, 600.0, 2000.0, 1200.0);
+        assert_eq!(width, 776.0);
+        assert_eq!(height, 576.0);
+    }
+
+    #[test]
+    fn default_editor_size_prefers_large_centered_canvas() {
+        let (width, height) = default_editor_size_for_monitor(1512.0, 982.0);
+        assert!((1000.0..=1440.0).contains(&width));
+        assert!((620.0..=900.0).contains(&height));
+    }
+
+    #[test]
+    fn default_editor_size_respects_small_monitors() {
+        let (width, height) = default_editor_size_for_monitor(900.0, 700.0);
+        assert!(width <= 872.0);
+        assert!(height <= 672.0);
+        assert!(width >= 420.0);
+        assert!(height >= 360.0);
     }
 
     #[test]
