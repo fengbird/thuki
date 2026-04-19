@@ -5,8 +5,11 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { ClipboardHistoryView } from '../ClipboardHistoryView';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  ClipboardHistoryView,
+  __resetSourceAppIconCacheForTests,
+} from '../ClipboardHistoryView';
 import {
   emitTauriEvent,
   invoke,
@@ -54,6 +57,7 @@ describe('ClipboardHistoryView', () => {
   let entries: ReturnType<typeof createEntries>;
 
   beforeEach(() => {
+    __resetSourceAppIconCacheForTests();
     entries = createEntries();
     invoke.mockClear();
     clearEventHandlers();
@@ -255,5 +259,351 @@ describe('ClipboardHistoryView', () => {
     await screen.findByTestId('clipboard-root');
 
     expect(screen.getByTestId('clipboard-detail-scroll')).toBeInTheDocument();
+  });
+
+  it('groups pinned and dated entries and renders section headers', async () => {
+    const now = Date.now();
+    const startOfToday = new Date(
+      new Date().getFullYear(),
+      new Date().getMonth(),
+      new Date().getDate(),
+    ).getTime();
+    const yesterdayTs = startOfToday - 3_600_000;
+    const earlierTs = startOfToday - 3 * 86_400_000;
+
+    entries = [
+      {
+        id: 'today-1',
+        kind: 'text',
+        text_preview: 'https://example.com/today',
+        text_content: 'https://example.com/today',
+        image_path: null,
+        source_app: 'Arc',
+        source_bundle_id: 'co.arc',
+        created_at: now - 1_000,
+        last_copied_at: now - 1_000,
+        copy_count: 1,
+        is_favorite: false,
+      },
+      {
+        id: 'pinned-1',
+        kind: 'text',
+        text_preview: '#ff8d5c',
+        text_content: '#ff8d5c',
+        image_path: null,
+        source_app: 'Figma',
+        source_bundle_id: 'com.figma',
+        created_at: now - 2_000,
+        last_copied_at: now - 2_000,
+        copy_count: 5,
+        is_favorite: true,
+      },
+      {
+        id: 'yesterday-1',
+        kind: 'text',
+        text_preview: 'const x = { y: 1 };',
+        text_content: 'const x = { y: 1 };\nconsole.log(x);',
+        image_path: null,
+        source_app: 'Cursor',
+        source_bundle_id: 'com.cursor',
+        created_at: yesterdayTs,
+        last_copied_at: yesterdayTs,
+        copy_count: 2,
+        is_favorite: false,
+      },
+      {
+        id: 'earlier-1',
+        kind: 'text',
+        text_preview: 'Old plain text',
+        text_content: 'Old plain text',
+        image_path: null,
+        source_app: null,
+        source_bundle_id: null,
+        created_at: earlierTs,
+        last_copied_at: earlierTs,
+        copy_count: 1,
+        is_favorite: false,
+      },
+    ];
+
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-root');
+
+    expect(screen.getByTestId('clipboard-section-pinned')).toBeInTheDocument();
+    expect(screen.getByTestId('clipboard-section-today')).toBeInTheDocument();
+    expect(
+      screen.getByTestId('clipboard-section-yesterday'),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('clipboard-section-earlier')).toBeInTheDocument();
+  });
+
+  it('navigates entries with ArrowUp/ArrowDown and pastes on Enter', async () => {
+    entries = entries.map((entry) => ({ ...entry, is_favorite: false }));
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-entry-image-1');
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'ArrowDown' });
+    });
+    expect(
+      screen.getByTestId('clipboard-entry-image-1').getAttribute('style'),
+    ).toContain('141, 92');
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'ArrowUp' });
+    });
+    expect(
+      screen.getByTestId('clipboard-entry-text-1').getAttribute('style'),
+    ).toContain('141, 92');
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Enter' });
+    });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('paste_clipboard_entry', {
+        entryId: 'text-1',
+      });
+    });
+  });
+
+  it('focuses the search input on Cmd+F and closes on Escape', async () => {
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-root');
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'f', metaKey: true });
+    });
+    expect(screen.getByTestId('clipboard-search')).toHaveFocus();
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Escape' });
+    });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('close_clipboard_window');
+    });
+  });
+
+  it('saves text edits via Cmd+Enter while editing', async () => {
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-root');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('clipboard-start-edit-btn'));
+    });
+    const textarea = screen.getByTestId(
+      'clipboard-edit-textarea',
+    ) as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'Fresh text' } });
+      fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('update_clipboard_text_entry', {
+        entryId: 'text-1',
+        text: 'Fresh text',
+      });
+    });
+  });
+
+  it('deletes the active entry on Cmd+Backspace', async () => {
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-entry-text-1');
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Backspace', metaKey: true });
+    });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('delete_clipboard_entry', {
+        entryId: 'text-1',
+      });
+    });
+  });
+
+  it('cancels text edit and restores the read-only preview', async () => {
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-root');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('clipboard-start-edit-btn'));
+    });
+    expect(screen.getByTestId('clipboard-edit-textarea')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('clipboard-cancel-edit-btn'));
+    });
+    expect(screen.getByTestId('clipboard-preview-text')).toBeInTheDocument();
+  });
+
+  it('toggles favorite, clears the history, and fires backend invocations', async () => {
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-root');
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Pin entry/i }));
+      fireEvent.click(screen.getByTestId('clipboard-clear-btn'));
+    });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('toggle_clipboard_entry_favorite', {
+        entryId: 'text-1',
+      });
+      expect(invoke).toHaveBeenCalledWith('clear_clipboard_history');
+    });
+  });
+
+  describe('status flashes', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('auto-dismisses copy status after the timer elapses', async () => {
+      render(<ClipboardHistoryView />);
+      await screen.findByTestId('clipboard-root');
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('clipboard-copy-btn'));
+      });
+      await waitFor(() => {
+        expect(
+          screen.getByText('Copied back to clipboard'),
+        ).toBeInTheDocument();
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(2500);
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.queryByText('Copied back to clipboard'),
+        ).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  it('reports backend load errors in the footer', async () => {
+    invoke.mockImplementationOnce(async () => {
+      throw 'boom';
+    });
+    render(<ClipboardHistoryView />);
+    await waitFor(() => {
+      expect(screen.getByText('boom')).toBeInTheDocument();
+    });
+  });
+
+  it('surfaces save errors from update_clipboard_text_entry', async () => {
+    invoke.mockImplementation(
+      async (cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === 'list_clipboard_entries') {
+          return entries;
+        }
+        if (cmd === 'update_clipboard_text_entry') {
+          throw new Error('save failed: ' + String(args?.entryId));
+        }
+        return undefined;
+      },
+    );
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-root');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('clipboard-start-edit-btn'));
+    });
+    const textarea = screen.getByTestId(
+      'clipboard-edit-textarea',
+    ) as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'boom' } });
+      fireEvent.click(screen.getByTestId('clipboard-save-edit-btn'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/save failed/)).toBeInTheDocument();
+    });
+  });
+
+  it('falls back to window.hide when close_clipboard_window fails', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_clipboard_entries') {
+        return entries;
+      }
+      if (cmd === 'close_clipboard_window') {
+        throw new Error('nope');
+      }
+      return undefined;
+    });
+    __mockWindow.hide.mockReset();
+    __mockWindow.hide.mockResolvedValue(undefined);
+
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-root');
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Escape' });
+    });
+    await waitFor(() => {
+      expect(__mockWindow.hide).toHaveBeenCalled();
+    });
+  });
+
+  it('does not paste when Enter is pressed while text editing is active', async () => {
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-entry-text-1');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('clipboard-start-edit-btn'));
+    });
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Enter' });
+    });
+    expect(invoke).not.toHaveBeenCalledWith(
+      'paste_clipboard_entry',
+      expect.anything(),
+    );
+  });
+
+  it('renders a resolved source app icon when the backend returns one', async () => {
+    invoke.mockImplementation(
+      async (cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === 'list_clipboard_entries') return entries;
+        if (cmd === 'get_source_app_icon') {
+          return `/tmp/app-icons/${String(args?.bundleId)}.png`;
+        }
+        return undefined;
+      },
+    );
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-entry-text-1');
+
+    await waitFor(() => {
+      const img = document.querySelector(
+        'img[src*="com.tinyspeck.slackmacgap.png"]',
+      );
+      expect(img).not.toBeNull();
+    });
+  });
+
+  it('ignores navigation keys while typing into a text input', async () => {
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-root');
+
+    const search = screen.getByTestId('clipboard-search');
+    (search as HTMLInputElement).focus();
+    await act(async () => {
+      fireEvent.keyDown(search, { key: 'ArrowDown' });
+      fireEvent.keyDown(search, { key: 'ArrowUp' });
+      fireEvent.keyDown(search, { key: 'Enter' });
+    });
+    expect(screen.getByTestId('clipboard-preview-text')).toHaveTextContent(
+      'Fix the release checklist before Friday',
+    );
   });
 });

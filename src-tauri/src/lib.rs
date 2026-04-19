@@ -15,6 +15,7 @@
 
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
+pub mod app_icons;
 pub mod clipboard_history;
 pub mod commands;
 pub mod database;
@@ -1039,6 +1040,8 @@ pub fn run() {
             clipboard_history::edit_clipboard_entry,
             #[cfg(not(coverage))]
             clipboard_history::close_clipboard_window,
+            #[cfg(not(coverage))]
+            app_icons::get_source_app_icon,
             #[cfg(not(coverage))]
             long_shot::start_manual_long_capture,
             #[cfg(not(coverage))]

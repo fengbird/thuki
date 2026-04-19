@@ -32,6 +32,7 @@
         "scope": [
           "$APPDATA/images/**",
           "$APPDATA/clipboard/**",
+          "$APPDATA/app-icons/**",
           "/tmp/*-oling*.png"
         ]
       },
