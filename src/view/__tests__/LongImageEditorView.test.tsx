@@ -89,6 +89,9 @@ describe('LongImageEditorView', () => {
         'copy_base64_png_to_clipboard',
         expect.objectContaining({ base64Data: 'TEST' }),
       );
+      expect(invoke).toHaveBeenCalledWith('remove_image_command', {
+        path: '/tmp/long.png',
+      });
       expect(invoke).toHaveBeenCalledWith('close_overlay_window');
     } finally {
       restore();
@@ -97,12 +100,14 @@ describe('LongImageEditorView', () => {
 
   it('OCR uses the configured settings prompt when available', async () => {
     const restore = installImageStub();
-    invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'get_settings') {
-        return { ocr_prompt: '请识别长图中的全部文字，只输出文本。' };
-      }
-      return args;
-    });
+    invoke.mockImplementation(
+      async (cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === 'get_settings') {
+          return { ocr_prompt: '请识别长图中的全部文字，只输出文本。' };
+        }
+        return args;
+      },
+    );
     try {
       render(<LongImageEditorView imagePath="/tmp/long.png" />);
       await act(async () => {
@@ -110,7 +115,9 @@ describe('LongImageEditorView', () => {
       });
       fireEvent.click(screen.getByTestId('overlay-ocr'));
       await act(async () => {});
-      const call = invoke.mock.calls.find(([cmd]) => cmd === 'send_image_to_chat');
+      const call = invoke.mock.calls.find(
+        ([cmd]) => cmd === 'send_image_to_chat',
+      );
       expect(call?.[1]).toMatchObject({
         prompt: '请识别长图中的全部文字，只输出文本。',
         autoSubmit: true,

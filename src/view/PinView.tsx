@@ -27,12 +27,19 @@ export function PinView({ imagePath, label }: PinViewProps) {
   const src = imagePath ? convertFileSrc(imagePath) : '';
 
   const handleClose = useCallback(async () => {
+    if (imagePath) {
+      try {
+        await invoke('remove_image_command', { path: imagePath });
+      } catch {
+        // Best-effort cleanup only — close should still proceed.
+      }
+    }
     try {
       await invoke('close_pin_window', { label });
     } catch {
       // Window may already be closing.
     }
-  }, [label]);
+  }, [imagePath, label]);
 
   const handleCopy = useCallback(async () => {
     if (!imagePath) return;

@@ -604,7 +604,7 @@ mod macos {
             ));
             let thread_shared = shared.clone();
             let _ = std::thread::Builder::new()
-                .name("thuki-clipboard-monitor".to_string())
+                .name("oling-clipboard-monitor".to_string())
                 .spawn(move || run_clipboard_monitor(thread_shared));
             Self { shared }
         }

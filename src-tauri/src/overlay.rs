@@ -18,7 +18,7 @@ use tauri::Manager as _;
 #[cfg(target_os = "macos")]
 use tauri_nspanel::{tauri_panel, CollectionBehavior, PanelLevel, StyleMask, WebviewWindowExt};
 
-// ThukiOverlayPanel — custom NSPanel subclass for the selection overlay.
+// OlingOverlayPanel — custom NSPanel subclass for the selection overlay.
 //
 // `can_become_key_window: true` is the critical setting: a borderless +
 // transparent NSWindow defaults to `canBecomeKeyWindow = NO`, which means
@@ -28,7 +28,7 @@ use tauri_nspanel::{tauri_panel, CollectionBehavior, PanelLevel, StyleMask, Webv
 // text-tool input on macOS.
 #[cfg(target_os = "macos")]
 tauri_panel! {
-    panel!(ThukiOverlayPanel {
+    panel!(OlingOverlayPanel {
         config: {
             can_become_key_window: true,
             is_floating_panel: true
@@ -207,7 +207,7 @@ pub fn open_overlay_window(
         OVERLAY_WINDOW_LABEL,
         tauri::WebviewUrl::App(url.into()),
     )
-    .title("Thuki Overlay")
+    .title("Oling Overlay")
     .inner_size(width, height)
     .position(x, y)
     .resizable(false)
@@ -230,7 +230,7 @@ pub fn open_overlay_window(
         // keyboard input (required for the text-tool textarea). Panel level
         // `Floating` keeps it above normal windows; `full_screen_auxiliary`
         // lets it appear over fullscreen apps like a screenshot utility.
-        match window.to_panel::<ThukiOverlayPanel>() {
+        match window.to_panel::<OlingOverlayPanel>() {
             Ok(panel) => {
                 panel.set_level(PanelLevel::Floating.value());
                 // Under `ActivationPolicy::Accessory`, a borderless panel does
@@ -241,7 +241,7 @@ pub fn open_overlay_window(
                 // panel's WKWebView, so `<textarea>` input drops every
                 // keystroke. This mirrors the tauri-nspanel fullscreen example
                 // at examples/fullscreen/src-tauri/src/main.rs and is
-                // consistent with what the main ThukiPanel does in lib.rs.
+                // consistent with what the main OlingPanel does in lib.rs.
                 panel.set_style_mask(StyleMask::empty().nonactivating_panel().into());
                 panel.set_collection_behavior(
                     CollectionBehavior::new()
@@ -256,7 +256,7 @@ pub fn open_overlay_window(
                 panel.show_and_make_key();
             }
             Err(e) => {
-                eprintln!("thuki: [overlay] NSPanel conversion failed: {e:?} — falling back to plain show");
+                eprintln!("oling: [overlay] NSPanel conversion failed: {e:?} — falling back to plain show");
                 let _ = window.show();
                 let _ = window.set_focus();
             }
@@ -354,7 +354,7 @@ mod tests {
     #[test]
     fn validate_image_path_accepts_existing_file() {
         let tmp =
-            std::env::temp_dir().join(format!("thuki-overlay-test-{}.png", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("oling-overlay-test-{}.png", uuid::Uuid::new_v4()));
         std::fs::File::create(&tmp)
             .unwrap()
             .write_all(b"x")
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn validate_image_path_rejects_missing() {
-        let err = validate_image_path("/tmp/nonexistent-thuki-overlay-12345.png").unwrap_err();
+        let err = validate_image_path("/tmp/nonexistent-oling-overlay-12345.png").unwrap_err();
         assert!(err.contains("does not exist"));
     }
 

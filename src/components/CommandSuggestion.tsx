@@ -248,8 +248,6 @@ const ACTION_ICON = (
 /** Returns the icon for a given command trigger. */
 function iconForTrigger(trigger: string): React.ReactNode {
   switch (trigger) {
-    case '/screen':
-      return SCREEN_ICON;
     case '/think':
       return THINK_ICON;
     case '/translate':

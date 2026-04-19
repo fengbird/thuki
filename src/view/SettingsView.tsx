@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSettings } from '../hooks/useSettings';
 import type { SettingsData } from '../hooks/useSettings';
 import { COMMANDS, EMPTY_COMMANDS_CONFIG } from '../config/commands';
+import {
+  DEFAULT_SHORTCUT_CONFIG,
+  captureKeyComboFromEvent,
+  formatShortcut,
+  modifierFromKeyboardEvent,
+  normalizeShortcutConfig,
+  type ShortcutModifier,
+} from '../config/shortcuts';
 import type {
   CommandsConfig,
   CommandOverride,
@@ -53,11 +61,13 @@ export interface SettingsViewProps {
   onDismiss: (saved: boolean) => void;
 }
 
-type SettingsTab = 'model' | 'prompts' | 'commands';
+type SettingsTab = 'model' | 'prompts' | 'shortcuts' | 'commands';
+type RecordingShortcutField = 'overlay_activation' | 'screenshot_capture';
 
 const TAB_ITEMS: { key: SettingsTab; label: string }[] = [
   { key: 'model', label: 'AI Model' },
   { key: 'prompts', label: 'Prompts' },
+  { key: 'shortcuts', label: 'Shortcuts' },
   { key: 'commands', label: 'Commands' },
 ];
 
@@ -81,10 +91,21 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('model');
   /** Which command is currently expanded for editing (trigger key). */
   const [editingCommand, setEditingCommand] = useState<string | null>(null);
+  /** Which shortcut field is currently waiting for keyboard capture. */
+  const [recordingShortcut, setRecordingShortcut] =
+    useState<RecordingShortcutField | null>(null);
+  /** Double-tap capture state for modifier-only overlay shortcuts. */
+  const lastModifierReleaseRef = useRef<{
+    modifier: ShortcutModifier;
+    at: number;
+  } | null>(null);
 
   useEffect(() => {
     if (settings && !draft) {
-      setDraft(settings);
+      setDraft({
+        ...settings,
+        shortcut_config: normalizeShortcutConfig(settings.shortcut_config),
+      });
     }
   }, [settings, draft]);
 
@@ -115,6 +136,13 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
   const setConfig = useCallback(
     (cfg: CommandsConfig) => {
       update('commands_config', cfg);
+    },
+    [update],
+  );
+
+  const updateShortcutConfig = useCallback(
+    (next: SettingsData['shortcut_config']) => {
+      update('shortcut_config', normalizeShortcutConfig(next));
     },
     [update],
   );
@@ -228,6 +256,20 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
     [getConfig, setConfig],
   );
 
+  const resetShortcutDefaults = useCallback(() => {
+    updateShortcutConfig(DEFAULT_SHORTCUT_CONFIG);
+    setRecordingShortcut(null);
+    lastModifierReleaseRef.current = null;
+  }, [updateShortcutConfig]);
+
+  const beginShortcutRecording = useCallback(
+    (field: RecordingShortcutField) => {
+      lastModifierReleaseRef.current = null;
+      setRecordingShortcut(field);
+    },
+    [],
+  );
+
   // ─── Save / dismiss ────────────────────────────────────────────────────
 
   const handleSave = useCallback(async () => {
@@ -252,7 +294,87 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
   }, [draft, testConnection]);
 
   useEffect(() => {
+    if (!recordingShortcut || !draft) {
+      return;
+    }
+
+    const finishCapture = (next: SettingsData['shortcut_config']) => {
+      updateShortcutConfig(next);
+      setRecordingShortcut(null);
+      lastModifierReleaseRef.current = null;
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === 'Escape') {
+        setRecordingShortcut(null);
+        lastModifierReleaseRef.current = null;
+        return;
+      }
+
+      const combo = captureKeyComboFromEvent(event);
+      if (!combo) {
+        return;
+      }
+
+      if (recordingShortcut === 'overlay_activation') {
+        finishCapture({
+          ...draft.shortcut_config,
+          overlay_activation: combo,
+        });
+        return;
+      }
+
+      finishCapture({
+        ...draft.shortcut_config,
+        screenshot_capture: combo,
+      });
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (recordingShortcut !== 'overlay_activation') {
+        return;
+      }
+
+      const modifier = modifierFromKeyboardEvent(event);
+      if (!modifier) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const now = Date.now();
+      const last = lastModifierReleaseRef.current;
+      if (last && last.modifier === modifier && now - last.at < 450) {
+        finishCapture({
+          ...draft.shortcut_config,
+          overlay_activation: {
+            kind: 'double_tap_modifier',
+            modifier,
+          },
+        });
+        return;
+      }
+
+      lastModifierReleaseRef.current = { modifier, at: now };
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+    };
+  }, [draft, recordingShortcut, updateShortcutConfig]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (recordingShortcut) {
+        return;
+      }
       /* v8 ignore start -- keyboard shortcut alternative modifiers */
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -265,7 +387,7 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onDismiss, handleSave]);
+  }, [onDismiss, handleSave, recordingShortcut]);
 
   if (isLoading || !draft) {
     return (
@@ -505,6 +627,74 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
                   style={inputStyle}
                   value={draft.ocr_prompt}
                   onChange={(e) => update('ocr_prompt', e.target.value)}
+                />
+              </Section>
+            </>
+          )}
+
+          {activeTab === 'shortcuts' && (
+            <>
+              <Section title="Global Shortcuts">
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                  }}
+                >
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: 11.5,
+                      color: 'rgba(255,255,255,0.45)',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Capture a new shortcut directly from the keyboard. Overlay
+                    activation supports either a normal combo or a double-tap
+                    modifier gesture.
+                  </p>
+                  <button
+                    data-testid="settings-shortcuts-reset-all"
+                    onClick={resetShortcutDefaults}
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: 8,
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      background: 'transparent',
+                      color: 'rgba(255,255,255,0.68)',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      fontFamily: THEME.fontFamily,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Reset All Defaults
+                  </button>
+                </div>
+                <ShortcutRow
+                  testIdPrefix="settings-shortcut-activation"
+                  title="Ask Bar Activation"
+                  description="Used to open or hide the main Oling popup."
+                  value={formatShortcut(
+                    draft.shortcut_config.overlay_activation,
+                  )}
+                  isRecording={recordingShortcut === 'overlay_activation'}
+                  hint="Press a shortcut, or double-tap a modifier like Control."
+                  onRecord={() => beginShortcutRecording('overlay_activation')}
+                />
+                <ShortcutRow
+                  testIdPrefix="settings-shortcut-screenshot"
+                  title="Screenshot Capture"
+                  description="Used for the unified screenshot flow."
+                  value={formatShortcut(
+                    draft.shortcut_config.screenshot_capture,
+                  )}
+                  isRecording={recordingShortcut === 'screenshot_capture'}
+                  hint="Press the full shortcut combination you want to use."
+                  onRecord={() => beginShortcutRecording('screenshot_capture')}
                 />
               </Section>
             </>
@@ -866,6 +1056,114 @@ function CommandRow({
 }
 
 // ─── Command edit panel ────────────────────────────────────────────────────
+
+interface ShortcutRowProps {
+  testIdPrefix: string;
+  title: string;
+  description: string;
+  value: string;
+  hint: string;
+  isRecording: boolean;
+  onRecord: () => void;
+}
+
+function ShortcutRow({
+  testIdPrefix,
+  title,
+  description,
+  value,
+  hint,
+  isRecording,
+  onRecord,
+}: ShortcutRowProps) {
+  return (
+    <div
+      style={{
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: 12,
+        padding: '12px 14px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          gap: 12,
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <strong
+            style={{
+              color: THEME.textPrimary,
+              fontSize: 12.5,
+              fontWeight: 600,
+            }}
+          >
+            {title}
+          </strong>
+          <span
+            style={{
+              color: 'rgba(255,255,255,0.45)',
+              fontSize: 11.5,
+              lineHeight: 1.45,
+            }}
+          >
+            {description}
+          </span>
+        </div>
+        <button
+          data-testid={`${testIdPrefix}-record`}
+          onClick={onRecord}
+          style={{
+            padding: '6px 10px',
+            borderRadius: 8,
+            border: `1px solid ${isRecording ? THEME.accent : 'rgba(255,255,255,0.12)'}`,
+            background: isRecording ? 'rgba(255,141,92,0.12)' : 'transparent',
+            color: isRecording ? THEME.accent : 'rgba(255,255,255,0.78)',
+            fontSize: 11,
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontFamily: THEME.fontFamily,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {isRecording ? 'Recording…' : 'Change Shortcut'}
+        </button>
+      </div>
+      <div
+        data-testid={`${testIdPrefix}-value`}
+        style={{
+          display: 'inline-flex',
+          alignSelf: 'flex-start',
+          padding: '5px 10px',
+          borderRadius: 999,
+          background: 'rgba(255,255,255,0.05)',
+          color: THEME.textPrimary,
+          fontSize: 12,
+          fontWeight: 600,
+          letterSpacing: '0.02em',
+        }}
+      >
+        {value}
+      </div>
+      <span
+        data-testid={`${testIdPrefix}-hint`}
+        style={{
+          color: isRecording ? THEME.accent : 'rgba(255,255,255,0.3)',
+          fontSize: 10.5,
+          lineHeight: 1.45,
+        }}
+      >
+        {isRecording ? hint : 'Changes take effect immediately after saving.'}
+      </span>
+    </div>
+  );
+}
 
 interface CommandEditPanelProps {
   trigger: string;

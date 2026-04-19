@@ -240,24 +240,9 @@ describe('ChatBubble', () => {
   });
 
   describe('Slash command styling', () => {
-    it('styles a leading /screen command', () => {
-      const { container } = render(
-        <ChatBubble role="user" content="/screen explain this" index={0} />,
-      );
-      const styled = container.querySelector(
-        '.font-semibold.text-\\[\\#7C2D12\\]',
-      );
-      expect(styled).not.toBeNull();
-      expect(styled!.textContent).toBe('/screen');
-    });
-
     it('styles a leading /think command', () => {
       const { container } = render(
-        <ChatBubble
-          role="user"
-          content="/think why is the sky blue?"
-          index={0}
-        />,
+        <ChatBubble role="user" content="/think explain this" index={0} />,
       );
       const styled = container.querySelector(
         '.font-semibold.text-\\[\\#7C2D12\\]',
@@ -270,7 +255,7 @@ describe('ChatBubble', () => {
       const { container } = render(
         <ChatBubble
           role="user"
-          content="/screen /think explain this"
+          content="/think /translate explain this"
           index={0}
         />,
       );
@@ -278,8 +263,8 @@ describe('ChatBubble', () => {
         '.font-semibold.text-\\[\\#7C2D12\\]',
       );
       expect(styled).toHaveLength(2);
-      expect(styled[0].textContent).toBe('/screen');
-      expect(styled[1].textContent).toBe('/think');
+      expect(styled[0].textContent).toBe('/think');
+      expect(styled[1].textContent).toBe('/translate');
     });
 
     it('styles a command in the middle of text', () => {
@@ -296,6 +281,16 @@ describe('ChatBubble', () => {
     it('does not style partial matches like /screensaver', () => {
       const { container } = render(
         <ChatBubble role="user" content="/screensaver is nice" index={0} />,
+      );
+      const styled = container.querySelector(
+        '.font-semibold.text-\\[\\#7C2D12\\]',
+      );
+      expect(styled).toBeNull();
+    });
+
+    it('does not style removed /screen text as a command', () => {
+      const { container } = render(
+        <ChatBubble role="user" content="/screen explain this" index={0} />,
       );
       const styled = container.querySelector(
         '.font-semibold.text-\\[\\#7C2D12\\]',

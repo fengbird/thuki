@@ -110,12 +110,19 @@ export function LongImageEditorView({ imagePath }: LongImageEditorViewProps) {
     image && displayWidth > 0 ? image.naturalWidth / displayWidth : 1;
 
   const handleClose = useCallback(async () => {
+    if (imagePath) {
+      try {
+        await invoke('remove_image_command', { path: imagePath });
+      } catch {
+        // Best-effort cleanup only — close should still proceed.
+      }
+    }
     try {
       await invoke('close_overlay_window');
     } catch {
       // Window may already be closing.
     }
-  }, []);
+  }, [imagePath]);
 
   const handleWindowDrag = useCallback(async (e: React.MouseEvent) => {
     if (e.button !== 0) return;

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Thuki",
+  "productName": "Oling",
   "version": "0.1.0",
-  "identifier": "com.quietnode.thuki",
+  "identifier": "com.quietnode.oling",
   "build": {
     "beforeDevCommand": "bun run frontend:dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Thuki",
+        "title": "Oling",
         "width": 600,
         "height": 700,
         "resizable": true,
@@ -29,7 +29,7 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: asset: https://asset.localhost;",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/images/**", "/tmp/*-thuki*.png"]
+        "scope": ["$APPDATA/images/**", "/tmp/*-oling*.png"]
       },
       "capabilities": ["default"]
     },

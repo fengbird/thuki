@@ -2385,6 +2385,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "oling"
+version = "0.6.1"
+dependencies = [
+ "base64 0.22.1",
+ "core-foundation 0.10.1",
+ "core-graphics",
+ "dirs",
+ "dotenvy",
+ "futures-util",
+ "image",
+ "mockito",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-nspanel",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4224,33 +4251,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "thuki"
-version = "0.6.1"
-dependencies = [
- "base64 0.22.1",
- "core-foundation 0.10.1",
- "core-graphics",
- "dirs",
- "dotenvy",
- "futures-util",
- "image",
- "mockito",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-nspanel",
- "tokio",
- "tokio-util",
- "uuid",
 ]
 
 [[package]]

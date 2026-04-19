@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import type React from 'react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import thukiLogo from '../../../src-tauri/icons/128x128.png';
+import olingLogo from '../../../src-tauri/icons/128x128.png';
 
 /** How often to poll for permission grants after the user requests them. */
 const POLL_INTERVAL_MS = 500;
@@ -217,7 +217,7 @@ export function PermissionsStep() {
   }, [stopAxPolling]);
 
   const handleOpenScreenRecording = useCallback(async () => {
-    // Register Thuki in TCC (adds it to the Screen Recording list) then open
+    // Register Oling in TCC (adds it to the Screen Recording list) then open
     // System Settings directly so the user can toggle it on without hunting.
     // The registration call may briefly show a macOS system prompt on first use.
     await invoke('request_screen_recording_access');
@@ -302,10 +302,10 @@ export function PermissionsStep() {
           style={{ textAlign: 'center', marginBottom: 18, cursor: 'grab' }}
         >
           <img
-            src={thukiLogo}
+            src={olingLogo}
             width={64}
             height={64}
-            alt="Thuki"
+            alt="Oling"
             style={{
               objectFit: 'contain',
               pointerEvents: 'none',
@@ -327,7 +327,7 @@ export function PermissionsStep() {
             margin: '0 0 20px',
           }}
         >
-          {"Let's get Thuki set up"}
+          {"Let's get Oling set up"}
         </h1>
 
         {/* Steps */}
@@ -370,7 +370,7 @@ export function PermissionsStep() {
                 Accessibility
               </div>
               <div style={{ fontSize: 12, color: '#6b6660', lineHeight: 1.5 }}>
-                Lets Thuki respond to activator key (<KeyChip label="⌃" />
+                Lets Oling respond to activator key (<KeyChip label="⌃" />
                 <KeyChip label="⌃" />)
               </div>
             </div>
@@ -412,7 +412,7 @@ export function PermissionsStep() {
                 Screen Recording
               </div>
               <div style={{ fontSize: 12, color: '#6b6660', lineHeight: 1.35 }}>
-                Needed for /screen to capture your entire screen
+                Needed for screenshots and smart reply capture
               </div>
             </div>
           </StepCard>
@@ -457,9 +457,9 @@ export function PermissionsStep() {
               <>
                 <CTAButton
                   onClick={handleQuitAndRelaunch}
-                  aria-label="Quit and Reopen Thuki"
+                  aria-label="Quit and Reopen Oling"
                 >
-                  Quit & Reopen Thuki
+                  Quit & Reopen Oling
                 </CTAButton>
                 <p
                   style={{

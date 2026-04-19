@@ -3,7 +3,7 @@
 //! Flow:
 //! 1. The global ⌃⇧R hotkey fires (registered in `activator`) → `lib.rs`
 //!    captures the frontmost app info + a full-screen screenshot and emits
-//!    the `thuki://reply-draft` event to the frontend.
+//!    the `oling://reply-draft` event to the frontend.
 //! 2. The frontend shows a "draft reply" mode in the overlay and calls
 //!    `generate_reply` — a stateless Tauri command that streams a reply
 //!    from the configured LLM using the screenshot as an image attachment
@@ -11,7 +11,7 @@
 //! 3. When the user confirms, the frontend calls `paste_reply_and_hide`
 //!    which stashes the user's clipboard, copies the reply in, activates
 //!    the original app by bundle id, synthesises a ⌘V keystroke, hides
-//!    Thuki, and restores the old clipboard after a short delay.
+//!    Oling, and restores the old clipboard after a short delay.
 //!
 //! Nothing here is WeChat-specific — the flow works for any macOS app with
 //! a text input (iMessage, Slack, Telegram, Feishu, Mail, …). The screenshot
@@ -28,7 +28,7 @@ use crate::commands::{
     stream_ollama_chat, ApiConfig, ChatMessage, GenerationState, ModelConfig, StreamChunk,
 };
 
-/// Built-in reply system prompt used when `THUKI_REPLY_PROMPT` is unset.
+/// Built-in reply system prompt used when `OLING_REPLY_PROMPT` is unset.
 pub const DEFAULT_REPLY_PROMPT: &str = include_str!("../prompts/reply_prompt.txt");
 
 /// Delay between copying the reply in and actually synthesising ⌘V so the
@@ -43,10 +43,10 @@ pub const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(700);
 /// System prompt used for reply generation. Loaded once at startup.
 pub struct ReplyPrompt(pub String);
 
-/// Reads `THUKI_REPLY_PROMPT` from the environment, falling back to the
+/// Reads `OLING_REPLY_PROMPT` from the environment, falling back to the
 /// built-in default when unset or whitespace-only.
 pub fn load_reply_prompt() -> String {
-    std::env::var("THUKI_REPLY_PROMPT")
+    std::env::var("OLING_REPLY_PROMPT")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_REPLY_PROMPT.to_string())
@@ -86,11 +86,11 @@ pub struct FrontmostApp {
     pub pid: i32,
 }
 
-/// Payload emitted on the `thuki://reply-draft-open` event — fires
+/// Payload emitted on the `oling://reply-draft-open` event — fires
 /// synchronously the moment the reply hotkey is detected so the overlay
 /// can appear with a "Capturing screenshot…" state before the screenshot
 /// itself finishes. Carries only app identity; the screenshot path
-/// arrives separately via `thuki://reply-draft-image`.
+/// arrives separately via `oling://reply-draft-image`.
 #[derive(Clone, serde::Serialize)]
 pub struct ReplyDraftOpenPayload {
     /// macOS bundle identifier of the app that was frontmost when the
@@ -101,7 +101,7 @@ pub struct ReplyDraftOpenPayload {
     pub app_name: String,
 }
 
-/// Payload emitted on the `thuki://reply-draft-image` event once the
+/// Payload emitted on the `oling://reply-draft-image` event once the
 /// window screenshot has been captured (or capture failed). Exactly one
 /// of `image_path` / `error` is populated per emission.
 #[derive(Clone, serde::Serialize)]
@@ -320,7 +320,7 @@ pub async fn generate_reply(
 }
 
 /// Pastes `text` into the app identified by `bundle_id` via the clipboard +
-/// ⌘V technique, then hides Thuki's own overlay. The previous clipboard
+/// ⌘V technique, then hides Oling's own overlay. The previous clipboard
 /// content is restored asynchronously after a short delay.
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg_attr(not(coverage), tauri::command)]
@@ -346,7 +346,7 @@ pub async fn paste_reply_and_hide(
         return Err(format!("target app '{bundle_id}' is not running"));
     }
 
-    // Hide Thuki so keyboard focus snaps back to the target app.
+    // Hide Oling so keyboard focus snaps back to the target app.
     if let Some(w) = app_handle.get_webview_window("main") {
         let _ = w.hide();
     }
@@ -378,25 +378,25 @@ mod tests {
     #[test]
     fn load_reply_prompt_returns_default_when_unset() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("THUKI_REPLY_PROMPT");
+        std::env::remove_var("OLING_REPLY_PROMPT");
         assert_eq!(load_reply_prompt(), DEFAULT_REPLY_PROMPT);
     }
 
     #[test]
     fn load_reply_prompt_reads_env_var() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("THUKI_REPLY_PROMPT", "custom reply guidance");
+        std::env::set_var("OLING_REPLY_PROMPT", "custom reply guidance");
         let got = load_reply_prompt();
-        std::env::remove_var("THUKI_REPLY_PROMPT");
+        std::env::remove_var("OLING_REPLY_PROMPT");
         assert_eq!(got, "custom reply guidance");
     }
 
     #[test]
     fn load_reply_prompt_ignores_whitespace_only_env_var() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("THUKI_REPLY_PROMPT", "   ");
+        std::env::set_var("OLING_REPLY_PROMPT", "   ");
         let got = load_reply_prompt();
-        std::env::remove_var("THUKI_REPLY_PROMPT");
+        std::env::remove_var("OLING_REPLY_PROMPT");
         assert_eq!(got, DEFAULT_REPLY_PROMPT);
     }
 

@@ -3,7 +3,7 @@
  * window-first capture model.
  *
  * The previous implementation repeatedly captured a screen rect below
- * Thuki's own window and treated the entire selection as scrollable
+ * Oling's own window and treated the entire selection as scrollable
  * content. That breaks badly on chat apps like WeChat and Feishu:
  *
  * - the bottom of the selection often contains a fixed input bar, so the
@@ -41,7 +41,7 @@ use tauri_nspanel::{tauri_panel, CollectionBehavior, PanelLevel, StyleMask, Webv
 
 #[cfg(target_os = "macos")]
 tauri_panel! {
-    panel!(ThukiLongHudPanel {
+    panel!(OlingLongHudPanel {
         config: {
             can_become_key_window: false,
             is_floating_panel: true
@@ -389,12 +389,12 @@ pub fn append_frame(stitched: &mut Frame, frame: &Frame, strip_rows: u32) -> u32
 }
 
 pub fn long_shot_temp_path() -> PathBuf {
-    PathBuf::from(format!("/tmp/{}-thuki-longshot.png", uuid::Uuid::new_v4()))
+    PathBuf::from(format!("/tmp/{}-oling-longshot.png", uuid::Uuid::new_v4()))
 }
 
 pub fn long_shot_preview_path() -> PathBuf {
     PathBuf::from(format!(
-        "/tmp/{}-thuki-longshot-preview.png",
+        "/tmp/{}-oling-longshot-preview.png",
         uuid::Uuid::new_v4()
     ))
 }
@@ -458,10 +458,10 @@ impl LongCaptureState {
 
 static CURRENT_LONG_STATE: Mutex<Option<Arc<LongCaptureState>>> = Mutex::new(None);
 
-pub const PROGRESS_EVENT: &str = "thuki://long-capture-progress";
-pub const DONE_EVENT: &str = "thuki://long-capture-done";
-pub const CANCELLED_EVENT: &str = "thuki://long-capture-cancelled";
-pub const ERROR_EVENT: &str = "thuki://long-capture-error";
+pub const PROGRESS_EVENT: &str = "oling://long-capture-progress";
+pub const DONE_EVENT: &str = "oling://long-capture-done";
+pub const CANCELLED_EVENT: &str = "oling://long-capture-cancelled";
+pub const ERROR_EVENT: &str = "oling://long-capture-error";
 pub const LONG_HUD_WINDOW_LABEL: &str = "longshot-hud";
 
 #[derive(serde::Serialize, Clone)]
@@ -1154,7 +1154,7 @@ fn open_long_capture_hud(
     .build()
     .map_err(|e| format!("failed to open long-capture HUD: {e}"))?;
 
-    match window.to_panel::<ThukiLongHudPanel>() {
+    match window.to_panel::<OlingLongHudPanel>() {
         Ok(panel) => {
             panel.set_level(PanelLevel::Floating.value());
             panel.set_style_mask(StyleMask::empty().nonactivating_panel().into());
@@ -1170,7 +1170,7 @@ fn open_long_capture_hud(
         }
         Err(e) => {
             eprintln!(
-                "thuki: [long-hud] NSPanel conversion failed: {e:?} — falling back to plain show"
+                "oling: [long-hud] NSPanel conversion failed: {e:?} — falling back to plain show"
             );
             let _ = window.show();
         }
@@ -1444,6 +1444,7 @@ pub async fn finish_manual_long_capture(app_handle: tauri::AppHandle) -> Result<
         .await??;
 
         let _ = app_handle.emit(DONE_EVENT, &path);
+        let _ = std::fs::remove_file(&path);
         Ok(path)
     }
     .await;
@@ -1776,7 +1777,7 @@ mod tests {
         let p = long_shot_temp_path();
         let s = p.to_str().unwrap();
         assert!(s.starts_with("/tmp/"));
-        assert!(s.ends_with("-thuki-longshot.png"));
+        assert!(s.ends_with("-oling-longshot.png"));
     }
 
     #[test]
@@ -1793,10 +1794,10 @@ mod tests {
 
     #[test]
     fn event_constants_are_stable() {
-        assert_eq!(PROGRESS_EVENT, "thuki://long-capture-progress");
-        assert_eq!(DONE_EVENT, "thuki://long-capture-done");
-        assert_eq!(CANCELLED_EVENT, "thuki://long-capture-cancelled");
-        assert_eq!(ERROR_EVENT, "thuki://long-capture-error");
+        assert_eq!(PROGRESS_EVENT, "oling://long-capture-progress");
+        assert_eq!(DONE_EVENT, "oling://long-capture-done");
+        assert_eq!(CANCELLED_EVENT, "oling://long-capture-cancelled");
+        assert_eq!(ERROR_EVENT, "oling://long-capture-error");
         assert_eq!(LONG_HUD_WINDOW_LABEL, "longshot-hud");
     }
 
@@ -1813,7 +1814,7 @@ mod tests {
         assert_eq!(s.count.load(Ordering::SeqCst), 0);
         let p = s.preview_path.to_str().unwrap();
         assert!(p.starts_with("/tmp/"));
-        assert!(p.ends_with("-thuki-longshot-preview.png"));
+        assert!(p.ends_with("-oling-longshot-preview.png"));
     }
 
     #[cfg(target_os = "macos")]

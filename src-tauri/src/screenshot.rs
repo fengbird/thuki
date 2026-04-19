@@ -1,17 +1,17 @@
 /*!
  * Screenshot capture.
  *
- * Exposes two Tauri commands:
+ * Exposes one Tauri command plus internal full-screen/window capture helpers:
  *
  * 1. `capture_screenshot_command`: hides the main window, invokes the
  *    macOS `screencapture -i` tool (interactive crosshair region select), and
  *    returns the captured image as a base64 string, or `None` if the user
  *    cancelled (pressed Escape without selecting).
  *
- * 2. `capture_full_screen_command`: silently captures all screens using
- *    CoreGraphics `CGWindowListCreateImageFromArray`, excluding Thuki's own
- *    windows by PID. No window hide, no flicker. Returns the absolute file
- *    path of the saved image in `<app_data_dir>/images/`.
+ * 2. `capture_full_screen_pixels`: silently captures all screens using
+ *    CoreGraphics `CGWindowListCreateImageFromArray`, excluding Oling's own
+ *    windows by PID. No window hide, no flicker. Returns raw RGBA pixels for
+ *    the screenshot overlay flow.
  *
  * `temp_screenshot_path` and `encode_as_base64` are pure helpers extracted
  * from the command wrapper so they can be unit-tested without Tauri context.
@@ -23,10 +23,10 @@ use std::path::PathBuf;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use tauri::Manager;
 
-/// Returns a unique `/tmp/<uuid>-thuki.png` path for a single screenshot capture.
+/// Returns a unique `/tmp/<uuid>-oling.png` path for a single screenshot capture.
 /// A new UUID is generated on every call, preventing collisions.
 pub fn temp_screenshot_path() -> PathBuf {
-    PathBuf::from(format!("/tmp/{}-thuki.png", uuid::Uuid::new_v4()))
+    PathBuf::from(format!("/tmp/{}-oling.png", uuid::Uuid::new_v4()))
 }
 
 /// Encodes raw bytes to a standard base64 string for IPC transfer.
@@ -113,8 +113,8 @@ pub async fn capture_screenshot_command(
 
 /// Captures raw RGBA pixel bytes of the full screen using CoreGraphics.
 ///
-/// Captures all on-screen content below Thuki's own window in the Z-order,
-/// effectively excluding Thuki from the screenshot without hiding the window.
+/// Captures all on-screen content below Oling's own window in the Z-order,
+/// effectively excluding Oling from the screenshot without hiding the window.
 /// Returns `(width, height, rgba_bytes)` on success.
 ///
 /// MUST run on the macOS main thread. CoreGraphics APIs internally dispatch
@@ -229,14 +229,16 @@ fn capture_full_screen_raw() -> Result<(u32, u32, Vec<u8>), String> {
             // has never been granted (or was revoked).
             let probe = CGWindowListCopyWindowInfo(option, K_CG_NULL_WINDOW_ID);
             if probe.is_null() {
-                return Err("Screen Recording permission is required to use /screen. \
+                return Err(
+                    "Screen Recording permission is required to capture the screen. \
                      Grant it in System Settings > Privacy & Security > Screen Recording."
-                    .to_string());
+                        .to_string(),
+                );
             }
             CFRelease(probe);
             return Err(
                 "Screen Recording permission was just granted but needs a restart to \
-                 activate. Please quit and relaunch Thuki, then try /screen again."
+                 activate. Please quit and relaunch Oling, then try the screenshot again."
                     .to_string(),
             );
         }
@@ -245,11 +247,11 @@ fn capture_full_screen_raw() -> Result<(u32, u32, Vec<u8>), String> {
         if window_info_list.is_null() {
             // Defensive: should not happen after preflight passed, but handle gracefully.
             return Err("Screen Recording permission check failed unexpectedly. \
-                 Try restarting Thuki."
+                 Try restarting Oling."
                 .to_string());
         }
 
-        // Find Thuki's own topmost window ID so we can capture everything
+        // Find Oling's own topmost window ID so we can capture everything
         // below it in Z-order. The window list is front-to-back, so the
         // first entry matching our PID is the topmost.
         let count = CFArrayGetCount(window_info_list);
@@ -295,11 +297,11 @@ fn capture_full_screen_raw() -> Result<(u32, u32, Vec<u8>), String> {
         // intentional: that flag strips the desktop window (the wallpaper layer),
         // which produces a black image on an empty desktop. Including it gives a
         // faithful "what the user sees" composite, matching macOS Screenshot.app.
-        // kCGWindowListOptionOnScreenBelowWindow already excludes Thuki itself by
+        // kCGWindowListOptionOnScreenBelowWindow already excludes Oling itself by
         // compositing only windows lower than our_window_id in Z-order.
         //
         // Fallback (our_window_id == 0, should not occur in practice): capture all
-        // on-screen windows. Thuki is transparent so its presence in the list does
+        // on-screen windows. Oling is transparent so its presence in the list does
         // not corrupt the image.
         let (list_option, relative_to) = if our_window_id != K_CG_NULL_WINDOW_ID {
             (
@@ -661,46 +663,6 @@ pub async fn capture_window_command(
     .map_err(|e| format!("image encoding task failed: {e}"))?
 }
 
-/// Tauri command: silently captures the full screen (excluding Thuki's own
-/// windows) and returns the absolute file path of the saved image.
-///
-/// CoreGraphics APIs internally dispatch to the main thread, so calling them
-/// from a tokio pool thread (via `spawn_blocking`) causes a deadlock. Instead,
-/// `capture_full_screen` runs on the main thread via `run_on_main_thread`,
-/// producing raw RGBA pixel bytes. The heavy image encoding and disk I/O then
-/// happen on a blocking thread to avoid stalling the UI.
-#[cfg_attr(coverage_nightly, coverage(off))]
-#[cfg_attr(not(coverage), tauri::command)]
-pub async fn capture_full_screen_command(app_handle: tauri::AppHandle) -> Result<String, String> {
-    use tauri::Manager;
-    let base_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
-
-    // Phase 1: Capture raw RGBA pixels on the main thread (CoreGraphics
-    // requirement). Returns (width, height, rgba_bytes).
-    let (tx, rx) = tokio::sync::oneshot::channel::<Result<(u32, u32, Vec<u8>), String>>();
-    app_handle
-        .run_on_main_thread(move || {
-            tx.send(capture_full_screen_pixels()).ok();
-        })
-        .map_err(|e| format!("failed to dispatch capture to main thread: {e}"))?;
-
-    let (width, height, rgba_bytes) = rx
-        .await
-        .map_err(|_| "main thread capture channel closed unexpectedly".to_string())??;
-
-    // Phase 2: Resize + JPEG-encode + save directly from the RGBA buffer on
-    // a blocking thread. Skips a PNG encode/decode round-trip — on retina
-    // captures that round-trip alone cost 1.5–3 s.
-    tokio::task::spawn_blocking(move || {
-        crate::images::save_rgba_image(&base_dir, width, height, rgba_bytes)
-    })
-    .await
-    .map_err(|e| format!("image encoding task failed: {e}"))?
-}
-
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -743,8 +705,8 @@ mod tests {
         let s = path.to_str().unwrap();
         assert!(s.starts_with("/tmp/"), "expected /tmp/ prefix, got: {s}");
         assert!(
-            s.ends_with("-thuki.png"),
-            "expected -thuki.png suffix, got: {s}"
+            s.ends_with("-oling.png"),
+            "expected -oling.png suffix, got: {s}"
         );
     }
 

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "thuki",
+      "name": "oling",
       "dependencies": {
         "@tauri-apps/api": "^2.10.1",
         "framer-motion": "^12.38.0",

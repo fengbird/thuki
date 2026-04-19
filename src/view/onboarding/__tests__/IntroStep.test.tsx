@@ -28,7 +28,7 @@ describe('IntroStep', () => {
       screen.getByText('Select text, then double-tap'),
     ).toBeInTheDocument();
     expect(screen.getByText('Drop in any image')).toBeInTheDocument();
-    expect(screen.getByText('for context')).toBeInTheDocument();
+    expect(screen.getByText('to capture')).toBeInTheDocument();
     expect(screen.getByText('Floats above everything')).toBeInTheDocument();
   });
 

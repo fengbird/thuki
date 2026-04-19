@@ -14,37 +14,28 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { LogicalSize } from '@tauri-apps/api/dpi';
 import { useOllama } from './hooks/useOllama';
 import type { Message } from './hooks/useOllama';
-import { useConversationHistory } from './hooks/useConversationHistory';
 import { ConversationView } from './view/ConversationView';
 import { AskBarView, MAX_IMAGES } from './view/AskBarView';
 import { OnboardingView } from './view/onboarding/index';
 import type { OnboardingStage } from './view/onboarding/index';
 import { ReplyDraftView } from './view/ReplyDraftView';
 import { SettingsView } from './view/SettingsView';
-import { HistoryPanel } from './components/HistoryPanel';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import type { AttachedImage } from './types/image';
 import { MAX_IMAGE_SIZE_BYTES } from './types/image';
 import { quote } from './config';
-import {
-  SCREEN_CAPTURE_PLACEHOLDER,
-  buildPrompt,
-  mergeCommands,
-} from './config/commands';
+import { buildPrompt, mergeCommands } from './config/commands';
 import type { CommandsConfig, ActiveCommand } from './config/commands';
 import './App.css';
 
-/** Fallback model name used before get_model_config resolves at startup. */
-const DEFAULT_MODEL_FALLBACK = 'gemma4:e2b';
+const OVERLAY_VISIBILITY_EVENT = 'oling://visibility';
+const ONBOARDING_EVENT = 'oling://onboarding';
+const REPLY_DRAFT_OPEN_EVENT = 'oling://reply-draft-open';
+const REPLY_DRAFT_IMAGE_EVENT = 'oling://reply-draft-image';
+const SETTINGS_OPEN_EVENT = 'oling://settings-open';
+const OVERLAY_SUBMIT_EVENT = 'oling://overlay-submit';
 
-const OVERLAY_VISIBILITY_EVENT = 'thuki://visibility';
-const ONBOARDING_EVENT = 'thuki://onboarding';
-const REPLY_DRAFT_OPEN_EVENT = 'thuki://reply-draft-open';
-const REPLY_DRAFT_IMAGE_EVENT = 'thuki://reply-draft-image';
-const SETTINGS_OPEN_EVENT = 'thuki://settings-open';
-const OVERLAY_SUBMIT_EVENT = 'thuki://overlay-submit';
-
-/** Payload for `thuki://overlay-submit` — image-bridge from the overlay
+/** Payload for `oling://overlay-submit` — image-bridge from the overlay
  *  window to the main chat. `autoSubmit` is true for the "OCR" shortcut. */
 interface OverlaySubmitPayload {
   imagePath: string;
@@ -52,14 +43,14 @@ interface OverlaySubmitPayload {
   autoSubmit: boolean;
 }
 
-/** Payload for `thuki://reply-draft-open` — app identity only; the
+/** Payload for `oling://reply-draft-open` — app identity only; the
  * screenshot arrives in a separate image event once CG capture finishes. */
 interface ReplyDraftOpenPayload {
   bundle_id: string;
   app_name: string;
 }
 
-/** Payload for `thuki://reply-draft-image` — exactly one of `image_path`
+/** Payload for `oling://reply-draft-image` — exactly one of `image_path`
  * (success) or `error` (failure) is populated per emission. */
 interface ReplyDraftImagePayload {
   image_path: string | null;
@@ -134,7 +125,7 @@ type OverlayVisibilityPayload =
 type OverlayState = 'visible' | 'hidden' | 'hiding';
 
 /**
- * Main application orchestrator for Thuki.
+ * Main application orchestrator for Oling.
  *
  * Implements an adaptive morphing UI container. It starts as a minimal spotlight-style
  * input bar (`AskBarView`), then smoothly transforms into a full chat window
@@ -169,53 +160,13 @@ function App() {
   );
 
   /**
-   * Whether the ask-bar history panel is currently open.
-   * Distinct from the chat-mode history dropdown (controlled by the same toggle
-   * but rendered differently based on `isChatMode`).
-   */
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  /**
-   * True when the user clicked + while an unsaved conversation is active.
-   * Causes the history dropdown to show a SwitchConfirmation prompt instead
-   * of the conversation list.
-   */
-  const [pendingNewConversation, setPendingNewConversation] = useState(false);
-
-  /**
    * Direct reference to the morphing container DOM node, stored alongside the
    * ResizeObserver so the dropdown sync effect can mutate `style.minHeight`
    * without going through React state (direct DOM mutation + CSS transition).
    */
   const morphingContainerNodeRef = useRef<HTMLDivElement | null>(null);
 
-  const {
-    conversationId,
-    isSaved,
-    save,
-    unsave,
-    persistTurn,
-    loadConversation,
-    deleteConversation,
-    listConversations,
-    reset: resetHistory,
-  } = useConversationHistory();
-
-  /**
-   * Persist a completed user/assistant turn to SQLite if the conversation
-   * has been saved. Passed as `onTurnComplete` to `useOllama`.
-   */
-  const handleTurnComplete = useCallback(
-    async (
-      userMsg: Parameters<typeof persistTurn>[0],
-      assistantMsg: Parameters<typeof persistTurn>[1],
-    ) => {
-      await persistTurn(userMsg, assistantMsg);
-    },
-    [persistTurn],
-  );
-
-  const { messages, ask, cancel, isGenerating, reset, loadMessages } =
-    useOllama(handleTurnComplete);
+  const { messages, ask, cancel, isGenerating, reset } = useOllama();
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -245,24 +196,6 @@ function App() {
   /** True while waiting for images to finish processing before a deferred
    *  submit. Drives the "waiting" UI state in the ask bar. */
   const [isSubmitPending, setIsSubmitPending] = useState(false);
-  /** Error message from a failed /screen capture. Shown inline above the ask
-   *  bar so the user knows capture failed rather than seeing no response. */
-  const [captureError, setCaptureError] = useState<string | null>(null);
-  /**
-   * Set to true when a /screen capture is dispatched, false when it resolves
-   * or when the user cancels. Lets the async tail in handleScreenSubmit
-   * detect a mid-flight cancellation and skip the ask() call.
-   */
-  const screenCapturePendingRef = useRef(false);
-  /**
-   * Stores the input state (query + context) captured just before a /screen
-   * submit clears them. Used by handleCancel to restore the ask bar if the
-   * user aborts the in-flight capture.
-   */
-  const screenCaptureInputSnapshotRef = useRef<{
-    query: string;
-    context: string | undefined;
-  } | null>(null);
   /** User message shown in the chat while waiting for images to finish
    *  processing. Cleared when `ask()` fires and adds the real message. */
   const [pendingUserMessage, setPendingUserMessage] = useState<Message | null>(
@@ -284,11 +217,6 @@ function App() {
       setSelectedContextSource(null);
     }
   }, [selectedContext]);
-  const [modelConfig, setModelConfig] = useState<{
-    active: string;
-    all: string[];
-  } | null>(null);
-
   /**
    * True when the window is near the screen bottom and should grow upward.
    * Flips the outer container to `justify-end` so content pins to the bottom.
@@ -303,12 +231,6 @@ function App() {
   const isChatMode = messages.length > 0 || isGenerating || isSubmitPending;
   const previousIsChatModeRef = useRef(isChatMode);
 
-  /**
-   * The bookmark save button is active once the AI has produced at least one
-   * complete response. We check for an assistant message rather than any message
-   * so the button never appears during the very first user-only half-turn.
-   */
-  const canSave = !isGenerating && messages.some((m) => m.role === 'assistant');
   const shouldRenderOverlay = overlayState === 'visible';
 
   /**
@@ -465,6 +387,47 @@ function App() {
   }, [isGenerating]);
 
   /**
+   * Deletes transient image files that were staged for the current ephemeral
+   * session. This intentionally runs on best effort only.
+   */
+  const cleanupSessionImages = useCallback(() => {
+    const paths = new Set<string>();
+
+    for (const image of attachedImages) {
+      if (image.filePath) {
+        paths.add(image.filePath);
+      }
+    }
+
+    for (const message of messages) {
+      for (const imagePath of message.imagePaths ?? []) {
+        if (imagePath && !imagePath.startsWith('blob:')) {
+          paths.add(imagePath);
+        }
+      }
+    }
+
+    for (const imagePath of pendingUserMessage?.imagePaths ?? []) {
+      if (imagePath && !imagePath.startsWith('blob:')) {
+        paths.add(imagePath);
+      }
+    }
+
+    if (
+      replyContext?.imagePath &&
+      !replyContext.imagePath.startsWith('blob:')
+    ) {
+      paths.add(replyContext.imagePath);
+    }
+
+    for (const path of paths) {
+      void invoke('remove_image_command', { path }).catch(() => {
+        // Best-effort cleanup only — session teardown should not surface noise.
+      });
+    }
+  }, [attachedImages, messages, pendingUserMessage, replyContext]);
+
+  /**
    * Replays the entrance sequence by transitioning the overlay to the visible state.
    * Clears conversation state for a fresh session each time the overlay appears.
    */
@@ -490,26 +453,22 @@ function App() {
         };
       }
       setSessionId((id) => id + 1);
+      cleanupSessionImages();
       setQuery('');
       setSelectedContext(context);
       setSelectedContextSource(context ? source : null);
-      setIsHistoryOpen(false);
       setAttachedImages((prev) => {
         for (const img of prev) URL.revokeObjectURL(img.blobUrl);
         return [];
       });
       pendingSubmitRef.current = null;
-      screenCapturePendingRef.current = false;
-      screenCaptureInputSnapshotRef.current = null;
       setIsSubmitPending(false);
       setPendingUserMessage(null);
-      setCaptureError(null);
 
       reset();
-      resetHistory();
       setOverlayState('visible');
     },
-    [reset, resetHistory],
+    [cleanupSessionImages, reset],
   );
 
   /**
@@ -518,10 +477,9 @@ function App() {
    */
   const requestHideOverlay = useCallback(() => {
     cancel();
+    cleanupSessionImages();
     growsUpwardRef.current = false;
     setGrowsUpward(false);
-    screenCapturePendingRef.current = false;
-    screenCaptureInputSnapshotRef.current = null;
     setSelectedContext(null);
     setSelectedContextSource(null);
     setPreviewImageUrl(null);
@@ -535,48 +493,9 @@ function App() {
       }
       return 'hiding';
     });
-  }, [cancel]);
+  }, [cancel, cleanupSessionImages]);
 
-  /** Ref attached to the chat-mode history dropdown for click-outside detection. */
-  const historyDropdownRef = useRef<HTMLDivElement>(null);
-
-  /** Toggles the history panel open/closed. */
-  const handleHistoryToggle = useCallback(() => {
-    setIsHistoryOpen((prev) => !prev);
-  }, []);
-
-  /**
-   * Close the chat-mode history dropdown when the user clicks outside it.
-   * Clicks on the toggle button itself are excluded so the button's own
-   * onClick handler (handleHistoryToggle) can manage the toggle normally.
-   */
-  useEffect(() => {
-    if (!(isChatMode && isHistoryOpen)) return;
-
-    const handleMouseDown = (e: MouseEvent) => {
-      const target = e.target as Element;
-      if (
-        historyDropdownRef.current?.contains(target) ||
-        target.closest?.('[data-history-toggle]')
-      ) {
-        return;
-      }
-      setIsHistoryOpen(false);
-    };
-
-    document.addEventListener('mousedown', handleMouseDown);
-    return () => document.removeEventListener('mousedown', handleMouseDown);
-  }, [isChatMode, isHistoryOpen]);
-
-  // Clear any pending new-conversation confirmation whenever the panel closes.
-  // Uses a ref-based approach to avoid the @eslint-react/set-state-in-effect
-  // warning from calling setState synchronously inside an effect body.
-  const prevHistoryOpenRef = useRef(isHistoryOpen);
   const prevHeightRef = useRef<number>(COLLAPSED_WINDOW_HEIGHT);
-  if (prevHistoryOpenRef.current && !isHistoryOpen) {
-    setPendingNewConversation(false);
-  }
-  prevHistoryOpenRef.current = isHistoryOpen;
 
   /**
    * When a submit flips the UI from ask-bar mode into chat mode while the
@@ -591,7 +510,7 @@ function App() {
     previousIsChatModeRef.current = isChatMode;
 
     if (!container) return;
-    if (!growsUpward || isHistoryOpen || !isChatMode || wasChatMode) {
+    if (!growsUpward || !isChatMode || wasChatMode) {
       return;
     }
 
@@ -612,193 +531,30 @@ function App() {
 
     return () => cancelAnimationFrame(frameId);
     /* v8 ignore stop */
-  }, [growsUpward, isChatMode, isHistoryOpen]);
-
-  /**
-   * Observes the dropdown's height while it's open and mutates the morphing
-   * container's `min-height` style directly (bypassing React state) so the
-   * native window grows exactly as tall as the dropdown needs. A CSS transition
-   * on the container drives the smooth resize; the existing ResizeObserver fires
-   * per-frame and calls `setSize()` as the transition runs.
-   *
-   * Direct DOM mutation avoids the React state → Framer Motion → ResizeObserver
-   * indirect chain that broke timing. ResizeObserver tracks async conversation
-   * list load so `min-height` stays accurate as content populates.
-   */
-  useLayoutEffect(() => {
-    /* v8 ignore start -- ResizeObserver + DOM mutations require a real browser */
-    const container = morphingContainerNodeRef.current;
-    if (!container) return;
-
-    // Track the height when we are NOT in chat mode natively.
-    if (!isChatMode) {
-      const h = container.offsetHeight;
-      // offsetHeight might read 0 if hidden, so default to collapsed
-      prevHeightRef.current = h > 0 ? h : COLLAPSED_WINDOW_HEIGHT;
-      container.style.transition =
-        'min-height 0.25s cubic-bezier(0.16, 1, 0.3, 1)';
-      container.style.height = '';
-      container.style.minHeight = '';
-      return;
-    }
-
-    if (!isHistoryOpen) {
-      container.style.transition =
-        'min-height 0.25s cubic-bezier(0.16, 1, 0.3, 1)';
-      container.style.minHeight = '';
-      return;
-    }
-
-    const dropdown = historyDropdownRef.current;
-    if (!dropdown) return;
-
-    container.style.transition =
-      'min-height 0.25s cubic-bezier(0.16, 1, 0.3, 1)';
-    container.style.height = ''; // Let history panel dictate it via minHeight
-
-    const sync = () => {
-      container.style.minHeight = `${dropdown.offsetTop + dropdown.offsetHeight + 8}px`;
-    };
-
-    sync();
-    const ro = new ResizeObserver(sync);
-    ro.observe(dropdown);
-    return () => ro.disconnect();
-    /* v8 ignore stop */
-  }, [isChatMode, isHistoryOpen]);
-
-  /**
-   * Toggles the save state of the current conversation.
-   * - Not saved → saves to SQLite (bookmark fills).
-   * - Already saved → deletes from SQLite, marks unsaved (bookmark empties);
-   *   messages remain in the UI so the session can be re-saved if desired.
-   */
-  const handleSave = useCallback(async () => {
-    try {
-      if (isSaved) {
-        await unsave();
-      } else {
-        await save(messages, modelConfig?.active ?? DEFAULT_MODEL_FALLBACK);
-      }
-    } catch {
-      // State stays unchanged on failure; feedback is implicit in the icon.
-    }
-  }, [isSaved, unsave, save, messages, modelConfig]);
-
-  /**
-   * Loads a conversation from history, replacing the current session.
-   *
-   * Closes the history panel regardless of success or failure: on success the
-   * loaded messages replace the current session; on failure the current session
-   * is preserved and the panel is dismissed so the user is not left in a
-   * half-open state.
-   */
-  const handleLoadConversation = useCallback(
-    async (id: string) => {
-      try {
-        const loaded = await loadConversation(id);
-        loadMessages(loaded);
-      } catch {
-        // Load failed — current session is preserved intact.
-      } finally {
-        setIsHistoryOpen(false);
-      }
-    },
-    [loadConversation, loadMessages],
-  );
-
-  /**
-   * Saves the current unsaved session then loads the requested conversation.
-   *
-   * If save fails the operation is aborted — we do not load the target
-   * conversation because the current session has not been persisted yet.
-   * If save succeeds but load fails the panel is still dismissed; the
-   * current session has been saved so no data is lost.
-   */
-  const handleSaveAndLoad = useCallback(
-    async (id: string) => {
-      try {
-        await save(messages, modelConfig?.active ?? DEFAULT_MODEL_FALLBACK);
-      } catch {
-        // Save failed — abort to avoid leaving the current session unprotected.
-        return;
-      }
-      try {
-        const loaded = await loadConversation(id);
-        loadMessages(loaded);
-      } catch {
-        // Load failed — save already committed; dismiss panel, keep current view.
-      } finally {
-        setIsHistoryOpen(false);
-      }
-    },
-    [save, messages, loadConversation, loadMessages, modelConfig],
-  );
-
-  /**
-   * Deletes a conversation from the history panel.
-   *
-   * When the deleted conversation is the currently active one, only the
-   * persistence state (`resetHistory`) is cleared — messages remain visible
-   * so the user can continue chatting or re-save. The error is intentionally
-   * re-thrown so `HistoryPanel` can roll back its optimistic removal.
-   */
-  const handleDeleteConversation = useCallback(
-    async (id: string) => {
-      await deleteConversation(id);
-      if (id === conversationId) {
-        resetHistory();
-      }
-    },
-    [deleteConversation, conversationId, resetHistory],
-  );
+  }, [growsUpward, isChatMode]);
 
   /**
    * Shared reset sequence for all "start a new conversation" paths.
    */
   const resetForNewConversation = useCallback(() => {
+    cleanupSessionImages();
     reset();
-    resetHistory();
-    setIsHistoryOpen(false);
     setQuery('');
     setAttachedImages((prev) => {
       for (const img of prev) URL.revokeObjectURL(img.blobUrl);
       return [];
     });
     pendingSubmitRef.current = null;
-    screenCapturePendingRef.current = false;
-    screenCaptureInputSnapshotRef.current = null;
     setIsSubmitPending(false);
     setPendingUserMessage(null);
-  }, [reset, resetHistory]);
+    setSelectedContext(null);
+    setSelectedContextSource(null);
+  }, [cleanupSessionImages, reset]);
 
   /**
    * Starts a fresh conversation from within conversation view.
-   * If the current conversation has unsaved messages, opens the history
-   * dropdown and surfaces a SwitchConfirmation prompt instead of resetting
-   * immediately.
    */
   const handleNewConversation = useCallback(() => {
-    if (!isSaved && messages.length > 0) {
-      setPendingNewConversation(true);
-      setIsHistoryOpen(true);
-      return;
-    }
-    resetForNewConversation();
-  }, [isSaved, messages.length, resetForNewConversation]);
-
-  /** Saves the current conversation then starts a fresh one. */
-  const handleSaveAndNew = useCallback(async () => {
-    try {
-      await save(messages, modelConfig?.active ?? DEFAULT_MODEL_FALLBACK);
-    } catch {
-      return;
-    }
-    resetForNewConversation();
-  }, [save, messages, resetForNewConversation, modelConfig]);
-
-  /** Discards the current conversation and starts a fresh one. */
-  const handleJustNew = useCallback(() => {
     resetForNewConversation();
   }, [resetForNewConversation]);
 
@@ -830,11 +586,20 @@ function App() {
           const base64 = (reader.result as string).split(',')[1];
           invoke<string>('save_image_command', { imageDataBase64: base64 })
             .then((filePath) => {
-              setAttachedImages((prev) =>
-                prev.map((img) =>
+              setAttachedImages((prev) => {
+                const stillAttached = prev.some((img) => img.id === imageId);
+                if (!stillAttached) {
+                  void invoke('remove_image_command', { path: filePath }).catch(
+                    () => {
+                      // Best-effort cleanup for images removed before processing finished.
+                    },
+                  );
+                  return prev;
+                }
+                return prev.map((img) =>
                   img.id === imageId ? { ...img, filePath } : img,
-                ),
-              );
+                );
+              });
             })
             .catch(() => {
               setAttachedImages((prev) => {
@@ -908,29 +673,6 @@ function App() {
     ],
   );
 
-  /**
-   * Invokes the Rust `capture_screenshot` command, which hides the window,
-   * lets the user drag-select a screen region, then returns the captured image
-   * as a base64 PNG string (or null if the user cancelled).
-   * On success, converts the base64 to a File and feeds it into the existing
-   * handleImagesAttached pipeline — identical to a paste or drag-drop.
-   */
-  const handleScreenshot = useCallback(async () => {
-    /* v8 ignore start -- defensive guard: button is always disabled at max images, so this branch is unreachable through normal UI interaction */
-    if (attachedImages.length >= MAX_IMAGES) return;
-    /* v8 ignore stop */
-    const base64 = await invoke<string | null>('capture_screenshot_command');
-    if (!base64) return;
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    const blob = new Blob([bytes], { type: 'image/png' });
-    const file = new File([blob], 'screenshot.png', { type: 'image/png' });
-    handleImagesAttached([file]);
-  }, [attachedImages, handleImagesAttached]);
-
   /** Removes an attached image from state, revokes the blob URL, and
    *  deletes the staged file from disk if processing completed. */
   const handleImageRemove = useCallback((id: string) => {
@@ -980,103 +722,6 @@ function App() {
     [ask, attachedImages, setSelectedContext],
   );
 
-  /**
-   * Async handler for the `/screen` command path. Invokes the Rust
-   * `capture_full_screen_command`, which silently captures the screen
-   * (excluding Thuki's own windows) and returns the saved file path.
-   * On success, merges the screenshot path with any manually attached
-   * images and calls ask(). On error, restores the query so no input is lost.
-   */
-  const handleScreenSubmit = useCallback(
-    async (fullQuery: string, think?: boolean) => {
-      // eslint-disable-next-line no-control-regex
-      const CONTROL_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
-      const sanitized = selectedContext
-        ?.replace(CONTROL_CHARS, '')
-        .slice(0, quote.maxContextLength);
-      const context = sanitized?.trim() ? sanitized : undefined;
-
-      // Snapshot display paths for the pending bubble: use resolved file paths
-      // for already-processed images, blob URLs for still-processing ones.
-      const existingDisplayPaths = attachedImages.map(
-        (img) => img.filePath ?? img.blobUrl,
-      );
-
-      // Store the original input so handleCancel can restore it if the user
-      // aborts the capture before it resolves.
-      screenCaptureInputSnapshotRef.current = {
-        query: fullQuery,
-        context,
-      };
-
-      // Immediately show the user's message in chat with a loading placeholder
-      // for the screenshot. This prevents double-submit spam and gives instant
-      // feedback that the capture is in progress.
-      screenCapturePendingRef.current = true;
-      setIsSubmitPending(true);
-      setPendingUserMessage({
-        id: crypto.randomUUID(),
-        role: 'user',
-        content: fullQuery,
-        quotedText: context,
-        imagePaths: [...existingDisplayPaths, SCREEN_CAPTURE_PLACEHOLDER],
-      });
-      setQuery('');
-      setSelectedContext(null);
-      /* v8 ignore start -- inputRef always set when overlay is visible */
-      if (inputRef.current) inputRef.current.style.height = 'auto';
-      /* v8 ignore stop */
-
-      let screenshotPath: string;
-      try {
-        screenshotPath = await invoke<string>('capture_full_screen_command');
-      } catch (e) {
-        screenCapturePendingRef.current = false;
-        screenCaptureInputSnapshotRef.current = null;
-        // Capture failed: restore input state so the user can retry or edit.
-        setIsSubmitPending(false);
-        setPendingUserMessage(null);
-        setQuery(fullQuery);
-        setSelectedContext(context ?? null);
-        // Surface the Rust error directly: the backend already provides
-        // descriptive messages (permission prompts, null-image diagnostics, etc.).
-        // Tauri v2 rejects with the Err(String) value as a plain string.
-        setCaptureError(
-          typeof e === 'string'
-            ? e
-            : e instanceof Error
-              ? e.message
-              : String(e),
-        );
-        return;
-      }
-
-      // Check for mid-flight cancellation before touching any state.
-      // handleCancel sets screenCapturePendingRef.current = false as a signal.
-      const wasCancelled = !screenCapturePendingRef.current;
-      screenCapturePendingRef.current = false;
-      screenCaptureInputSnapshotRef.current = null;
-      if (wasCancelled) return;
-
-      // Capture succeeded: finalize the submit.
-      setCaptureError(null);
-      setIsSubmitPending(false);
-      setPendingUserMessage(null);
-
-      const readyPaths = attachedImages
-        .filter((img) => img.filePath !== null)
-        .map((img) => img.filePath as string);
-      readyPaths.push(screenshotPath);
-
-      ask(fullQuery, context, readyPaths, think);
-      for (const img of attachedImages) {
-        URL.revokeObjectURL(img.blobUrl);
-      }
-      setAttachedImages([]);
-    },
-    [selectedContext, attachedImages, ask, setSelectedContext, setCaptureError],
-  );
-
   const handleSubmit = useCallback(() => {
     if (
       (query.trim().length === 0 && attachedImages.length === 0) ||
@@ -1084,23 +729,23 @@ function App() {
     )
       return;
 
-    // Clear any stale capture error from a previous attempt.
-    setCaptureError(null);
-
     // Parse all valid commands from anywhere in the message.
     const trimmedQuery = query.trim();
     const { found, strippedMessage } = parseCommands(
       trimmedQuery,
       activeCommands,
     );
-    const hasScreen = found.has('/screen');
-    const hasThink = found.has('/think');
+    const foundCommands = Array.from(found)
+      .map((trigger) => activeCommands.find((cmd) => cmd.trigger === trigger))
+      .filter((cmd): cmd is ActiveCommand => cmd !== undefined);
+    const hasThink = foundCommands.some(
+      (cmd) => (cmd.originalTrigger ?? cmd.trigger) === '/think',
+    );
 
     // Check for utility commands with prompt templates.
-    const utilityTrigger = Array.from(found).find((t) => {
-      const cmd = activeCommands.find((c) => c.trigger === t);
-      return !!cmd?.promptTemplate;
-    });
+    const utilityTrigger = foundCommands.find(
+      (cmd) => !!cmd.promptTemplate,
+    )?.trigger;
 
     // Nothing to send if the message is only commands with no content or images.
     // Exception: a utility command or /think with pre-filled selected context is
@@ -1108,16 +753,9 @@ function App() {
     if (
       !strippedMessage &&
       attachedImages.length === 0 &&
-      !hasScreen &&
       !((utilityTrigger || hasThink) && selectedContext?.trim())
     )
       return;
-
-    if (hasScreen) {
-      // Fire-and-forget: the async path handles cleanup and ask() invocation.
-      void handleScreenSubmit(trimmedQuery, hasThink);
-      return;
-    }
 
     if (utilityTrigger) {
       // Sanitize selectedContext before passing to buildPrompt so that control
@@ -1140,7 +778,7 @@ function App() {
       if (!composedPrompt) return;
 
       // Show the full original query (including command trigger) in the chat
-      // bubble, matching the behaviour of /screen and the normal submit path.
+      // bubble, matching the behaviour of the normal submit path.
       const displayText = trimmedQuery;
 
       const hasPendingImages = attachedImages.some(
@@ -1236,11 +874,9 @@ function App() {
     query,
     isGenerating,
     executeSubmit,
-    handleScreenSubmit,
     selectedContext,
     setSelectedContext,
     attachedImages,
-    setCaptureError,
     activeCommands,
   ]);
 
@@ -1302,18 +938,8 @@ function App() {
   /* eslint-enable @eslint-react/set-state-in-effect */
 
   /**
-   * Unified cancel handler: reverts a pending submit (undo-send), clears an
-   * in-flight /screen capture, or cancels an active Ollama generation.
-   *
-   * Three cases:
-   * 1. Image-processing pending (`pendingSubmitRef.current` is set): restore
-   *    query and attached images so the user can re-submit or edit.
-   * 2. Screen-capture in-flight (`isSubmitPending` true but ref is null):
-   *    clear pending state. The async capture may still complete on the Rust
-   *    side, but `isSubmitPending` being false when the result arrives will
-   *    cause `handleScreenSubmit` to attempt ask() on stale state. To prevent
-   *    that, we track the abandonment via a flag so the async tail is a no-op.
-   * 3. Ollama generation active: delegate to the streaming cancel.
+   * Unified cancel handler: reverts a pending submit (undo-send) or cancels an
+   * active Ollama generation.
    */
   const handleCancel = useCallback(() => {
     if (isSubmitPending && pendingSubmitRef.current) {
@@ -1326,33 +952,8 @@ function App() {
       requestAnimationFrame(() => inputRef.current?.focus());
       return;
     }
-    if (isSubmitPending) {
-      // Case 2: /screen capture in flight. Signal cancellation via ref so the
-      // async tail in handleScreenSubmit skips ask() when capture resolves.
-      // Restore the ask bar to what it looked like before the capture started.
-      screenCapturePendingRef.current = false;
-      const snapshot = screenCaptureInputSnapshotRef.current;
-      screenCaptureInputSnapshotRef.current = null;
-      setIsSubmitPending(false);
-      setPendingUserMessage(null);
-      /* v8 ignore start -- snapshot is always set when isSubmitPending is true via /screen */
-      if (snapshot) {
-        setQuery(snapshot.query);
-        setSelectedContext(snapshot.context ?? null);
-      }
-      /* v8 ignore stop */
-      requestAnimationFrame(() => inputRef.current?.focus());
-      return;
-    }
     cancel();
   }, [isSubmitPending, cancel, setSelectedContext]);
-
-  /** Fetches model configuration from the backend once at mount. */
-  useEffect(() => {
-    void invoke<{ active: string; all: string[] }>('get_model_config').then(
-      setModelConfig,
-    );
-  }, []);
 
   /** Loads commands config from the backend on mount. */
   const loadCommandsConfig = useCallback(() => {
@@ -1655,157 +1256,51 @@ function App() {
             transition={{ type: 'spring', stiffness: 260, damping: 24 }}
             className="w-full max-w-2xl px-4 py-2 overflow-visible"
           >
-            {/* Relative wrapper — serves as the positioning context for the
-                chat-mode history dropdown so it can sit outside the morphing
-                container's overflow-hidden boundary without being clipped. */}
-            <div className="relative">
-              {/* Morphing Container — flex column ensures the input bar
-                  always sticks to the bottom without spring animation lag.
-                  A CSS `transition: min-height` drives smooth window growth
-                  when the chat-mode history dropdown is open; the existing
-                  ResizeObserver fires per-frame and calls setSize() so the
-                  native window tracks the animation. The dropdown is a sibling
-                  (not a child) so overflow-hidden never clips it. */}
-              <div
-                ref={setContainerRef}
-                style={{
-                  transition:
-                    'height 0.25s cubic-bezier(0.16, 1, 0.3, 1), min-height 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
-                }}
-                className={`morphing-container relative flex flex-col bg-surface-base backdrop-blur-2xl border border-surface-border max-h-[600px] overflow-hidden ${
-                  isChatMode
-                    ? `rounded-lg shadow-chat`
-                    : 'rounded-2xl shadow-bar'
-                }`}
-              >
-                {/* Chat Messages Area — morphs in when in chat mode */}
-                <AnimatePresence>
-                  {isChatMode ? (
-                    <ConversationView
-                      messages={
-                        pendingUserMessage
-                          ? [...messages, pendingUserMessage]
-                          : messages
-                      }
-                      isGenerating={isGenerating || isSubmitPending}
-                      onClose={handleCloseOverlay}
-                      onSave={handleSave}
-                      isSaved={isSaved}
-                      canSave={canSave}
-                      onNewConversation={handleNewConversation}
-                      onHistoryOpen={handleHistoryToggle}
-                      onImagePreview={handleChatImagePreview}
-                    />
-                  ) : null}
-                </AnimatePresence>
-
-                {/* Ask-bar mode history panel — inline below the input bar.
-                    The !isChatMode gate lives OUTSIDE AnimatePresence so that when
-                    a conversation is loaded (isChatMode → true) the panel unmounts
-                    instantly — no exit animation runs alongside ConversationView
-                    mounting. Without this, AnimatePresence would hold the panel in
-                    the DOM during its exit while ConversationView is also present,
-                    causing two rapid ResizeObserver → setSize() calls (jitter).
-                    AnimatePresence is still used for the manual toggle (isHistoryOpen)
-                    so the drawer height-animates smoothly open and closed. */}
-                {!isChatMode && (
-                  <AnimatePresence>
-                    {isHistoryOpen ? (
-                      <motion.div
-                        key="ask-bar-history"
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{
-                          height: {
-                            duration: 0.3,
-                            ease: [0.33, 1, 0.68, 1],
-                          },
-                          opacity: { duration: 0.2, delay: 0.08 },
-                        }}
-                        style={{ overflow: 'hidden' }}
-                        className="border-t border-surface-border"
-                      >
-                        <HistoryPanel
-                          listConversations={listConversations}
-                          onLoadConversation={handleLoadConversation}
-                          onSaveAndLoad={handleSaveAndLoad}
-                          onDeleteConversation={handleDeleteConversation}
-                          hasCurrentMessages={false}
-                          showNewConversation={false}
-                          currentConversationId={conversationId}
-                        />
-                      </motion.div>
-                    ) : null}
-                  </AnimatePresence>
-                )}
-
-                {/* Capture error banner: shown when /screen capture fails so
-                    the user knows why the message was not sent. */}
-                {captureError && (
-                  <div className="px-4 py-2 border-t border-red-900/30">
-                    <p className="text-red-400 text-xs leading-relaxed">
-                      {captureError}
-                    </p>
-                  </div>
-                )}
-
-                {/* Input Bar — always pinned to the bottom */}
-                <AskBarView
-                  query={query}
-                  setQuery={setQuery}
-                  isChatMode={isChatMode}
-                  isGenerating={isGenerating}
-                  isSubmitPending={isSubmitPending}
-                  onSubmit={handleSubmit}
-                  onCancel={handleCancel}
-                  inputRef={inputRef}
-                  selectedText={selectedContext ?? undefined}
-                  selectedSource={selectedContextSource ?? undefined}
-                  onHistoryOpen={handleHistoryToggle}
-                  attachedImages={isSubmitPending ? [] : attachedImages}
-                  onImagesAttached={handleImagesAttached}
-                  onImageRemove={handleImageRemove}
-                  onImagePreview={handleAskBarImagePreview}
-                  onScreenshot={handleScreenshot}
-                  isDragOver={isDragOver ?? undefined}
-                  commands={activeCommands}
-                  isHistoryOpen={isHistoryOpen}
-                />
-              </div>
-
-              {/* Chat-mode history dropdown — sibling of the morphing container so
-                  it is never clipped by its overflow-hidden. Positioned absolutely
-                  within this relative wrapper (same coordinate space as the
-                  container). The container's minHeight animation grows the native
-                  window tall enough to reveal the full dropdown. */}
+            <div
+              ref={setContainerRef}
+              style={{
+                transition: 'height 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+              }}
+              className={`morphing-container relative flex flex-col bg-surface-base backdrop-blur-2xl border border-surface-border max-h-[600px] overflow-hidden ${
+                isChatMode ? 'rounded-lg shadow-chat' : 'rounded-2xl shadow-bar'
+              }`}
+            >
+              {/* Chat Messages Area — morphs in when in chat mode */}
               <AnimatePresence>
-                {isChatMode && isHistoryOpen ? (
-                  <motion.div
-                    ref={historyDropdownRef}
-                    key="chat-history"
-                    initial={{ opacity: 0, y: -8, scale: 0.97 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -8, scale: 0.97 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                    className="history-dropdown absolute right-3 top-10 z-50 w-56 rounded-xl border border-surface-border bg-surface-base shadow-chat overflow-hidden flex flex-col"
-                  >
-                    <HistoryPanel
-                      listConversations={listConversations}
-                      onLoadConversation={handleLoadConversation}
-                      onSaveAndLoad={handleSaveAndLoad}
-                      onDeleteConversation={handleDeleteConversation}
-                      hasCurrentMessages={messages.length > 0 && !isSaved}
-                      currentConversationId={conversationId}
-                      showNewConversation={false}
-                      pendingNewConversation={pendingNewConversation}
-                      onSaveAndNew={handleSaveAndNew}
-                      onJustNew={handleJustNew}
-                      onCancelNew={() => setIsHistoryOpen(false)}
-                    />
-                  </motion.div>
+                {isChatMode ? (
+                  <ConversationView
+                    messages={
+                      pendingUserMessage
+                        ? [...messages, pendingUserMessage]
+                        : messages
+                    }
+                    isGenerating={isGenerating || isSubmitPending}
+                    onClose={handleCloseOverlay}
+                    onNewConversation={handleNewConversation}
+                    onImagePreview={handleChatImagePreview}
+                  />
                 ) : null}
               </AnimatePresence>
+
+              {/* Input Bar — always pinned to the bottom */}
+              <AskBarView
+                query={query}
+                setQuery={setQuery}
+                isChatMode={isChatMode}
+                isGenerating={isGenerating}
+                isSubmitPending={isSubmitPending}
+                onSubmit={handleSubmit}
+                onCancel={handleCancel}
+                inputRef={inputRef}
+                selectedText={selectedContext ?? undefined}
+                selectedSource={selectedContextSource ?? undefined}
+                attachedImages={isSubmitPending ? [] : attachedImages}
+                onImagesAttached={handleImagesAttached}
+                onImageRemove={handleImageRemove}
+                onImagePreview={handleAskBarImagePreview}
+                isDragOver={isDragOver ?? undefined}
+                commands={activeCommands}
+              />
             </div>
           </motion.div>
         ) : null}

@@ -2,35 +2,15 @@
 
 Commands are typed at the start of a message using the `/` prefix. Press `/` to open the command suggestion menu, then Tab to complete or Enter to select.
 
+Screen capture is no longer a slash command. Use `⌘⇧X` to open the screenshot flow, or `⌃⇧R` for smart reply's automatic window capture.
+
 Commands that operate on text follow a consistent input priority:
 
 1. **Highlighted text + no typed text:** highlighted text is the input
 2. **No highlighted text + typed text after command:** typed text is the input
 3. **Both present:** highlighted text is the primary input; typed text is appended as an additional instruction
 
-This means you can highlight a paragraph anywhere on screen, summon Thuki with double-tap Control, type a command, and hit Enter without typing anything else.
-
----
-
-## /screen
-
-Captures your screen and attaches it as context for the current message.
-
-**Usage:** `/screen [optional message]`
-
-**Examples:**
-- `/screen`: sends a screenshot with no additional message
-- `/screen what is this error?`: attaches a screenshot and asks the question
-
-**Behavior:** The screenshot is taken the moment you press Enter. Thuki's own window is excluded from the capture: no flicker, no hide. The image appears in your message bubble exactly like a pasted screenshot.
-
-**Composable:** `/screen` works with all other commands. `/screen /rewrite` captures the screen and rewrites whatever text the model sees. `/screen /think` enables extended reasoning on the captured content.
-
-**Limit:** One `/screen` capture per message. You may also attach up to 3 images manually (paste, drag, or the camera button) for a total of 4 images per message.
-
-**Permission:** Requires Screen Recording permission. On first use, macOS will prompt you to grant it. If denied, Thuki cannot capture the screen. Grant access in System Settings > Privacy & Security > Screen Recording.
-
----
+This means you can highlight a paragraph anywhere on screen, summon Oling with double-tap Control, type a command, and hit Enter without typing anything else.
 
 ## /think
 

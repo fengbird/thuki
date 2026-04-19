@@ -16,15 +16,9 @@ interface CommandPaletteProps {
   commands: readonly Command[];
   /** Called with the trigger string when a row is clicked. */
   onSelect: (trigger: string) => void;
-  /** Called when the screenshot shortcut row is clicked. */
-  onScreenshot?: () => void;
 }
 
-export function CommandPalette({
-  commands,
-  onSelect,
-  onScreenshot,
-}: CommandPaletteProps) {
+export function CommandPalette({ commands, onSelect }: CommandPaletteProps) {
   const items = commands.slice(0, MAX_PALETTE_ITEMS);
 
   return (
@@ -71,25 +65,6 @@ export function CommandPalette({
           </li>
         ))}
       </ul>
-
-      {/* Screenshot shortcut hint */}
-      {onScreenshot && (
-        <div
-          data-testid="palette-screenshot"
-          className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer select-none transition-colors duration-100 text-text-secondary hover:bg-white/5 hover:text-text-primary border-t border-surface-border"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            onScreenshot();
-          }}
-        >
-          <span className="shrink-0 h-5 px-1 flex items-center justify-center rounded text-[10px] font-semibold text-text-secondary border border-surface-border leading-none">
-            ⌃R
-          </span>
-          <span className="text-xs text-text-secondary">
-            Free-form screenshot
-          </span>
-        </div>
-      )}
     </div>
   );
 }

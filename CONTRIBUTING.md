@@ -1,4 +1,4 @@
-# Contributing to Thuki
+# Contributing to Oling
 
 Thank you for your interest in contributing! This guide will walk you through everything you need to get started.
 
@@ -15,7 +15,7 @@ Thank you for your interest in contributing! This guide will walk you through ev
 
 ## Prerequisites
 
-You'll need the following tools installed before you can build Thuki:
+You'll need the following tools installed before you can build Oling:
 
 ### Required
 
@@ -31,7 +31,7 @@ curl -fsSL https://bun.sh/install | bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-After installation, restart your shell or run `source ~/.cargo/env` to make `cargo` available. Thuki builds against stable Rust.
+After installation, restart your shell or run `source ~/.cargo/env` to make `cargo` available. Oling builds against stable Rust.
 
 Running the coverage suite (required before submitting a PR) also needs the `nightly-2026-03-30` toolchain with `llvm-tools`:
 
@@ -39,7 +39,7 @@ Running the coverage suite (required before submitting a PR) also needs the `nig
 rustup toolchain install nightly-2026-03-30 --component llvm-tools
 ```
 
-**macOS:** Thuki is macOS-only. It uses NSPanel and Core Graphics APIs that are not available on other platforms.
+**macOS:** Oling is macOS-only. It uses NSPanel and Core Graphics APIs that are not available on other platforms.
 
 ### Optional
 
@@ -58,8 +58,8 @@ rustup toolchain install nightly-2026-03-30 --component llvm-tools
 1. **Fork and clone the repository**
 
    ```bash
-   git clone https://github.com/quiet-node/thuki.git
-   cd thuki
+   git clone https://github.com/quiet-node/oling.git
+   cd oling
    ```
 
 2. **Install frontend dependencies**
@@ -86,14 +86,14 @@ rustup toolchain install nightly-2026-03-30 --component llvm-tools
    ollama pull gemma4:e2b
    ```
 
-   Thuki talks to an OpenAI-compatible `/chat/completions` endpoint. To use a local Ollama, point it at Ollama's OpenAI-compat URL:
+   Oling talks to an OpenAI-compatible `/chat/completions` endpoint. To use a local Ollama, point it at Ollama's OpenAI-compat URL:
 
    ```bash
-   export THUKI_API_BASE_URL=http://127.0.0.1:11434/v1
-   export THUKI_SUPPORTED_AI_MODELS=gemma4:e2b
+   export OLING_API_BASE_URL=http://127.0.0.1:11434/v1
+   export OLING_SUPPORTED_AI_MODELS=gemma4:e2b
    ```
 
-   Other supported backends: LM Studio, vLLM, llama.cpp server, hosted providers (OpenAI, DeepSeek, 硅基流动, …). Configure with `THUKI_API_BASE_URL` and `THUKI_API_KEY`.
+   Other supported backends: LM Studio, vLLM, llama.cpp server, hosted providers (OpenAI, DeepSeek, 硅基流动, …). Configure with `OLING_API_BASE_URL` and `OLING_API_KEY`.
 
 4. **Configure environment** (optional)
 
@@ -211,6 +211,6 @@ Key style rules:
 
 ## Good First Issues
 
-New to the codebase? Look for issues tagged [`good first issue`](https://github.com/quiet-node/thuki/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) on GitHub. These are scoped to be approachable without deep knowledge of the full system.
+New to the codebase? Look for issues tagged [`good first issue`](https://github.com/quiet-node/oling/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) on GitHub. These are scoped to be approachable without deep knowledge of the full system.
 
 If you have a question or want to discuss an approach before writing code, open an issue or start a discussion; we're happy to help.

@@ -15,7 +15,7 @@
  * - **Remove:** user clicks "X" on a thumbnail → `remove_image` deletes the
  *   file from disk.
  * - **Cleanup:** `cleanup_orphaned_images` removes files not referenced by
- *   any saved message. Runs on startup and periodically.
+ *   any persisted message. Runs on startup.
  */
 
 use std::path::{Path, PathBuf};
@@ -32,12 +32,39 @@ const MAX_DIMENSION: u32 = 1920;
 /// for vision model consumption.
 const JPEG_QUALITY: u8 = 85;
 
-/// Maximum number of images allowed per message (3 manual + 1 /screen = 4).
-pub const MAX_IMAGES_PER_MESSAGE: usize = 4;
+/// Maximum number of images allowed per message.
+pub const MAX_IMAGES_PER_MESSAGE: usize = 3;
 
 /// Resolves the root images directory: `<base_dir>/images/`.
 pub fn images_root(base_dir: &Path) -> PathBuf {
     base_dir.join("images")
+}
+
+fn is_allowed_uuid_temp_path(path: &Path, suffix: &str) -> bool {
+    let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let Some(prefix) = file_name.strip_suffix(suffix) else {
+        return false;
+    };
+    let Ok(temp_root) = std::env::temp_dir().canonicalize() else {
+        return false;
+    };
+    path.parent() == Some(temp_root.as_path())
+        && !prefix.is_empty()
+        && prefix.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+fn is_allowed_temp_image_path(path: &Path) -> bool {
+    [
+        "-oling-overlay.png",
+        "-oling-pin.png",
+        "-oling-longshot.png",
+        "-oling-longshot-preview.png",
+        "-oling.png",
+    ]
+    .into_iter()
+    .any(|suffix| is_allowed_uuid_temp_path(path, suffix))
 }
 
 /// Returns a closure that formats an error with a contextual message prefix.
@@ -150,7 +177,7 @@ pub fn encode_rgba_png<W: std::io::Write>(
     Ok(())
 }
 
-/// Writes a lossless PNG of raw RGBA pixels to `/tmp/<uuid>-thuki-overlay.png`
+/// Writes a lossless PNG of raw RGBA pixels to `/tmp/<uuid>-oling-overlay.png`
 /// at native resolution. Used by the overlay so the user sees a pixel-perfect
 /// screenshot (never downscaled, never JPEG-compressed).
 ///
@@ -159,7 +186,7 @@ pub fn encode_rgba_png<W: std::io::Write>(
 /// excluded from coverage (standard pattern for filesystem wrappers).
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub fn save_rgba_png_to_tmp(width: u32, height: u32, rgba: Vec<u8>) -> Result<String, String> {
-    let path = PathBuf::from(format!("/tmp/{}-thuki-overlay.png", uuid::Uuid::new_v4()));
+    let path = PathBuf::from(format!("/tmp/{}-oling-overlay.png", uuid::Uuid::new_v4()));
     let file = std::fs::File::create(&path).map_err(err("failed to create overlay png"))?;
     encode_rgba_png(file, width, height, &rgba)?;
     path.to_str()
@@ -168,8 +195,9 @@ pub fn save_rgba_png_to_tmp(width: u32, height: u32, rgba: Vec<u8>) -> Result<St
 }
 
 /// Deletes a single image file from disk, provided it resides within the
-/// given `base_dir/images/` directory. Rejects paths outside the images root
-/// to prevent path-traversal attacks via the IPC boundary.
+/// given `base_dir/images/` directory or is one of Oling's known `/tmp`
+/// image artifacts. Rejects all other paths to prevent path-traversal attacks
+/// via the IPC boundary.
 ///
 /// # Errors
 ///
@@ -183,6 +211,10 @@ pub fn remove_image(base_dir: &Path, path: &str) -> Result<(), String> {
     let canonical = p
         .canonicalize()
         .map_err(err("failed to resolve image path"))?;
+    if is_allowed_temp_image_path(&canonical) {
+        std::fs::remove_file(p).map_err(err("failed to remove image"))?;
+        return Ok(());
+    }
     let root = images_root(base_dir)
         .canonicalize()
         .map_err(err("failed to resolve images root"))?;
@@ -221,6 +253,32 @@ pub fn cleanup_orphaned_images(
         }
         let path_str = path.to_string_lossy().to_string();
         if !referenced_paths.contains(&path_str) && std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+
+    Ok(removed)
+}
+
+/// Removes Oling-generated `/tmp` image artifacts left behind by crashes or
+/// interrupted flows. This intentionally targets only files that match our
+/// UUID-based naming conventions.
+pub fn cleanup_transient_tmp_images() -> Result<usize, String> {
+    let temp_root = std::env::temp_dir()
+        .canonicalize()
+        .map_err(err("failed to resolve temp directory"))?;
+    let entries = std::fs::read_dir(&temp_root).map_err(err("failed to read temp directory"))?;
+
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if !is_allowed_temp_image_path(&path) {
+            continue;
+        }
+        if std::fs::remove_file(&path).is_ok() {
             removed += 1;
         }
     }
@@ -381,7 +439,7 @@ mod tests {
     }
 
     fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("thuki-test-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("oling-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -515,7 +573,7 @@ mod tests {
     #[test]
     fn remove_image_idempotent_on_missing_file() {
         let base = temp_dir();
-        let result = remove_image(&base, "/tmp/nonexistent-thuki-image.jpg");
+        let result = remove_image(&base, "/tmp/nonexistent-oling-image.jpg");
         assert!(result.is_ok());
         fs::remove_dir_all(&base).unwrap();
     }
@@ -533,6 +591,91 @@ mod tests {
         // File must still exist — not deleted.
         assert!(outside.exists());
 
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn remove_image_deletes_allowed_overlay_tmp_file() {
+        let base = temp_dir();
+        let overlay =
+            std::env::temp_dir().join(format!("{}-oling-overlay.png", uuid::Uuid::new_v4()));
+        fs::write(&overlay, b"overlay").unwrap();
+
+        remove_image(&base, overlay.to_str().unwrap()).unwrap();
+        assert!(!overlay.exists());
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn remove_image_deletes_allowed_pin_tmp_file() {
+        let base = temp_dir();
+        let pin = std::env::temp_dir().join(format!("{}-oling-pin.png", uuid::Uuid::new_v4()));
+        fs::write(&pin, b"pin").unwrap();
+
+        remove_image(&base, pin.to_str().unwrap()).unwrap();
+        assert!(!pin.exists());
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn remove_image_deletes_allowed_longshot_tmp_file() {
+        let base = temp_dir();
+        let longshot =
+            std::env::temp_dir().join(format!("{}-oling-longshot.png", uuid::Uuid::new_v4()));
+        fs::write(&longshot, b"longshot").unwrap();
+
+        remove_image(&base, longshot.to_str().unwrap()).unwrap();
+        assert!(!longshot.exists());
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn cleanup_transient_tmp_images_removes_known_temp_artifacts() {
+        let overlay =
+            std::env::temp_dir().join(format!("{}-oling-overlay.png", uuid::Uuid::new_v4()));
+        let pin = std::env::temp_dir().join(format!("{}-oling-pin.png", uuid::Uuid::new_v4()));
+        let longshot =
+            std::env::temp_dir().join(format!("{}-oling-longshot.png", uuid::Uuid::new_v4()));
+        let preview = std::env::temp_dir().join(format!(
+            "{}-oling-longshot-preview.png",
+            uuid::Uuid::new_v4()
+        ));
+        let unrelated =
+            std::env::temp_dir().join(format!("{}-not-oling-overlay.png", uuid::Uuid::new_v4()));
+
+        fs::write(&overlay, b"overlay").unwrap();
+        fs::write(&pin, b"pin").unwrap();
+        fs::write(&longshot, b"longshot").unwrap();
+        fs::write(&preview, b"preview").unwrap();
+        fs::write(&unrelated, b"keep").unwrap();
+
+        let removed = cleanup_transient_tmp_images().unwrap();
+
+        assert!(removed >= 4);
+        assert!(!overlay.exists());
+        assert!(!pin.exists());
+        assert!(!longshot.exists());
+        assert!(!preview.exists());
+        assert!(unrelated.exists());
+
+        let _ = fs::remove_file(unrelated);
+    }
+
+    #[test]
+    fn remove_image_rejects_unrelated_tmp_file() {
+        let base = temp_dir();
+        let unrelated =
+            std::env::temp_dir().join(format!("{}-not-oling-overlay.png", uuid::Uuid::new_v4()));
+        fs::write(&unrelated, b"overlay").unwrap();
+
+        let result = remove_image(&base, unrelated.to_str().unwrap());
+        assert!(result.is_err());
+        assert!(unrelated.exists());
+
+        let _ = fs::remove_file(&unrelated);
         fs::remove_dir_all(&base).unwrap();
     }
 
@@ -626,19 +769,19 @@ mod tests {
 
     #[test]
     fn encode_images_as_base64_rejects_missing_file() {
-        let result = encode_images_as_base64(&["/tmp/nonexistent-thuki.jpg".to_string()]);
+        let result = encode_images_as_base64(&["/tmp/nonexistent-oling.jpg".to_string()]);
         assert!(result.is_err());
     }
 
     #[test]
     fn images_root_resolves_correctly() {
-        let base = Path::new("/tmp/thuki-test");
-        assert_eq!(images_root(base), PathBuf::from("/tmp/thuki-test/images"));
+        let base = Path::new("/tmp/oling-test");
+        assert_eq!(images_root(base), PathBuf::from("/tmp/oling-test/images"));
     }
 
     #[test]
-    fn max_images_per_message_is_four() {
-        assert_eq!(MAX_IMAGES_PER_MESSAGE, 4);
+    fn max_images_per_message_is_three() {
+        assert_eq!(MAX_IMAGES_PER_MESSAGE, 3);
     }
 
     #[test]

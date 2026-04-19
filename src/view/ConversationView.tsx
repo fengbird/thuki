@@ -17,26 +17,6 @@ interface ConversationViewProps {
   /** Callback fired when the user requests to close the overlay. */
   onClose: () => void;
   /**
-   * Called when the bookmark icon is clicked to persist the conversation.
-   * Omit to hide the save button.
-   */
-  onSave?: () => void;
-  /**
-   * True once the conversation has been saved. Renders the bookmark filled
-   * and disables the button.
-   */
-  isSaved?: boolean;
-  /**
-   * True when there is at least one completed AI response available to save.
-   * Controls whether the bookmark button is interactive.
-   */
-  canSave?: boolean;
-  /**
-   * Called when the "History ▾" button is clicked.
-   * Omit to hide the history button.
-   */
-  onHistoryOpen?: () => void;
-  /**
    * Called when the new-conversation (+) button is clicked.
    * Omit to hide the button.
    */
@@ -46,7 +26,7 @@ interface ConversationViewProps {
 }
 
 /**
- * Renders the expanded chat history area of the Thuki application.
+ * Renders the expanded chat area of the Oling application.
  *
  * Always fills its parent's available height (flex-1) so the window expands
  * to the morphing container's max-h-[600px] immediately — no dynamic height
@@ -59,10 +39,6 @@ export function ConversationView({
   messages,
   isGenerating,
   onClose,
-  onSave,
-  isSaved,
-  canSave,
-  onHistoryOpen,
   onNewConversation,
   onImagePreview,
 }: ConversationViewProps) {
@@ -158,14 +134,7 @@ export function ConversationView({
       transition={{ opacity: { duration: 0.2 } }}
       className="chat-area flex-1 min-h-0 flex flex-col"
     >
-      <WindowControls
-        onClose={onClose}
-        onSave={onSave}
-        isSaved={isSaved}
-        canSave={canSave}
-        onNewConversation={onNewConversation}
-        onHistoryOpen={onHistoryOpen}
-      />
+      <WindowControls onClose={onClose} onNewConversation={onNewConversation} />
 
       <div
         ref={scrollContainerRef}

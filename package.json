@@ -1,13 +1,13 @@
 {
-  "name": "thuki",
+  "name": "oling",
   "version": "0.6.1",
   "description": "A floating AI secretary for macOS, powered by local Ollama models",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/quiet-node/thuki"
+    "url": "https://github.com/quiet-node/oling"
   },
-  "homepage": "https://github.com/quiet-node/thuki",
+  "homepage": "https://github.com/quiet-node/oling",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",

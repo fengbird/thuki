@@ -39,37 +39,15 @@ describe('WindowControls', () => {
     expect(svg).not.toBeNull();
   });
 
-  it('save button shows "Save conversation" aria-label when not saved', () => {
+  it('new conversation button calls onNewConversation when clicked', () => {
+    const onNewConversation = vi.fn();
     render(
       <WindowControls
         onClose={vi.fn()}
-        onSave={vi.fn()}
-        canSave
-        isSaved={false}
+        onNewConversation={onNewConversation}
       />,
     );
-    expect(
-      screen.getByRole('button', { name: 'Save conversation' }),
-    ).toBeInTheDocument();
-  });
-
-  it('save button shows "Remove from history" aria-label when saved', () => {
-    render(
-      <WindowControls onClose={vi.fn()} onSave={vi.fn()} canSave isSaved />,
-    );
-    expect(
-      screen.getByRole('button', { name: 'Remove from history' }),
-    ).toBeInTheDocument();
-  });
-
-  it('save button calls onSave when clicked while saved', () => {
-    const onSave = vi.fn();
-    render(
-      <WindowControls onClose={vi.fn()} onSave={onSave} canSave isSaved />,
-    );
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Remove from history' }),
-    );
-    expect(onSave).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    expect(onNewConversation).toHaveBeenCalledTimes(1);
   });
 });

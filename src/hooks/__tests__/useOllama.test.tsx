@@ -706,50 +706,6 @@ describe('useOllama', () => {
     });
   });
 
-  // ─── loadMessages() ──────────────────────────────────────────────────────────
-
-  describe('loadMessages()', () => {
-    it('replaces messages state with provided array', async () => {
-      const { result } = renderHook(() => useOllama());
-
-      await act(async () => {
-        await result.current.ask('original question');
-      });
-      const channel = getChannel();
-      act(() => {
-        channel!.simulateMessage({ type: 'Done' });
-      });
-      expect(result.current.messages).toHaveLength(2);
-
-      const loaded = [
-        { id: 'l1', role: 'user' as const, content: 'loaded question' },
-        { id: 'l2', role: 'assistant' as const, content: 'loaded answer' },
-      ];
-
-      act(() => {
-        result.current.loadMessages(loaded);
-      });
-
-      expect(result.current.messages).toEqual(loaded);
-    });
-
-    it('clears generating state when loading messages', async () => {
-      invoke.mockRejectedValueOnce(new Error('boom'));
-      const { result } = renderHook(() => useOllama());
-
-      await act(async () => {
-        await result.current.ask('fail');
-      });
-      expect(result.current.isGenerating).toBe(false);
-
-      act(() => {
-        result.current.loadMessages([]);
-      });
-
-      expect(result.current.isGenerating).toBe(false);
-    });
-  });
-
   // ─── ThinkingToken handling ──────────────────────────────────────────────────
 
   describe('ThinkingToken handling', () => {

@@ -132,12 +132,19 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
   }, [fit, image, viewport]);
 
   const handleClose = useCallback(async () => {
+    if (imagePath) {
+      try {
+        await invoke('remove_image_command', { path: imagePath });
+      } catch {
+        // Best-effort cleanup only — close should still proceed.
+      }
+    }
     try {
       await invoke('close_overlay_window');
     } catch {
       // Window already closing; ignore.
     }
-  }, []);
+  }, [imagePath]);
 
   const resetSelection = useCallback(() => {
     setSelection(null);
@@ -395,7 +402,7 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
   // themselves; each time the selection's content changes the backend
   // appends a frame. When the user clicks Save in the HUD, the backend
   // stitches + copies the PNG to the clipboard in the backend, then emits
-  // `thuki://long-capture-done` so we can show success and close the overlay.
+  // `oling://long-capture-done` so we can show success and close the overlay.
   const handleLongShot = useCallback(async () => {
     /* v8 ignore next -- button only renders when selection is set and is
        disabled while busy; these guards are defensive. */
@@ -435,7 +442,7 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
     let unlistenError: (() => void) | undefined;
     void (async () => {
       unlistenDone = await listen<string>(
-        'thuki://long-capture-done',
+        'oling://long-capture-done',
         async () => {
           setStatus({ kind: 'success', message: 'Long screenshot copied' });
           window.setTimeout(() => {
@@ -444,12 +451,12 @@ export function OverlayView({ imagePath, fit = false }: OverlayViewProps) {
           setLongShotBusy(false);
         },
       );
-      unlistenCancelled = await listen('thuki://long-capture-cancelled', () => {
+      unlistenCancelled = await listen('oling://long-capture-cancelled', () => {
         setLongShotBusy(false);
         setStatus({ kind: 'idle', message: '' });
       });
       unlistenError = await listen<string>(
-        'thuki://long-capture-error',
+        'oling://long-capture-error',
         (e) => {
           setLongShotBusy(false);
           setStatus({ kind: 'error', message: e.payload });

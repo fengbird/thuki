@@ -6,7 +6,6 @@ import { quote } from '../config';
 import { ImageThumbnails } from '../components/ImageThumbnails';
 import { CommandSuggestion } from '../components/CommandSuggestion';
 import { CommandPalette } from '../components/CommandPalette';
-import { Tooltip } from '../components/Tooltip';
 import type { AttachedImage } from '../types/image';
 import { MAX_IMAGE_SIZE_BYTES } from '../types/image';
 import type { Command } from '../config/commands';
@@ -94,54 +93,6 @@ const BORDER_TRACE_RING = (
   </svg>
 );
 
-/** Hoisted static history (clock) icon — prevents re-allocation on every render. */
-const HISTORY_ICON = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 24 24"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <circle
-      cx="12"
-      cy="12"
-      r="10"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-    />
-    <polyline
-      points="12 6 12 12 16 14"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
-);
-
-/** Hoisted static camera icon — triggers screenshot capture. */
-const CAMERA_ICON = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 16 16"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    aria-hidden="true"
-  >
-    <path
-      d="M2 6 L2 2 L6 2 M10 2 L14 2 L14 6 M2 10 L2 14 L6 14 M10 14 L14 14 L14 10"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
-);
-
 /**
  * Renders text with command triggers highlighted in violet for the mirror div.
  * Only the first occurrence of each command is highlighted; duplicates render plain.
@@ -195,9 +146,7 @@ export function renderHighlightedText(
 }
 
 /**
- * Maximum number of manually attached images per message. The backend allows
- * one additional image from /screen capture, for a total of 4 per message
- * (MAX_IMAGES_PER_MESSAGE in images.rs).
+ * Maximum number of attached images per message.
  */
 export const MAX_IMAGES = 3;
 
@@ -207,7 +156,7 @@ interface AskBarViewProps {
   query: string;
   /** State setter to update the user input text. */
   setQuery: React.Dispatch<React.SetStateAction<string>>;
-  /** True if the chat history is expanded or currently generating. */
+  /** True once the UI has morphed into the expanded chat surface. */
   isChatMode: boolean;
   /** True if the AI is actively generating a response. */
   isGenerating: boolean;
@@ -223,11 +172,6 @@ interface AskBarViewProps {
   selectedText?: string;
   /** Semantic source for the externally provided context. */
   selectedSource?: 'selection' | 'clipboard';
-  /**
-   * Called when the compact history icon is clicked in ask-bar mode.
-   * Omit to hide the history icon entirely.
-   */
-  onHistoryOpen?: () => void;
   /** Currently attached images (may still be processing in the background). */
   attachedImages: AttachedImage[];
   /** Called when the user pastes image files. */
@@ -236,8 +180,6 @@ interface AskBarViewProps {
   onImageRemove: (id: string) => void;
   /** Called when the user clicks a thumbnail to preview it. */
   onImagePreview: (id: string) => void;
-  /** Called when the user clicks the screenshot capture button. */
-  onScreenshot: () => void;
   /**
    * Drag state passed down from the root window handler.
    * "normal" = violet ring; "max" = red ring + label; undefined = no ring.
@@ -245,8 +187,6 @@ interface AskBarViewProps {
   isDragOver?: 'normal' | 'max';
   /** Active command list for autocomplete and highlighting. Falls back to built-in COMMANDS. */
   commands?: readonly Command[];
-  /** Whether the history panel is currently open (hides the command palette). */
-  isHistoryOpen?: boolean;
 }
 
 /**
@@ -266,15 +206,12 @@ export function AskBarView({
   inputRef,
   selectedText,
   selectedSource,
-  onHistoryOpen,
   attachedImages,
   onImagesAttached,
   onImageRemove,
   onImagePreview,
-  onScreenshot,
   isDragOver,
   commands: commandsProp,
-  isHistoryOpen = false,
 }: AskBarViewProps) {
   /** Resolved command list — prop overrides the static registry. */
   const commands = commandsProp ?? COMMANDS;
@@ -285,7 +222,6 @@ export function AskBarView({
   const isBusy = isGenerating || isSubmitPending;
   const canSubmit =
     (query.trim().length > 0 || attachedImages.length > 0) && !isBusy;
-  const isAtMaxImages = attachedImages.length >= MAX_IMAGES;
 
   /** True briefly after a paste attempt is rejected because max images reached. */
   const [pasteMaxError, setPasteMaxError] = useState(false);
@@ -331,11 +267,7 @@ export function AskBarView({
    *  and idle in ask-bar mode. Once the user starts typing, the palette
    *  hides so digit keys and R type normally into the textarea. */
   const showPalette =
-    !isChatMode &&
-    !isBusy &&
-    !showSuggestions &&
-    !isHistoryOpen &&
-    query.trim().length === 0;
+    !isChatMode && !isBusy && !showSuggestions && query.trim().length === 0;
 
   /** The active command prefix (e.g. "/sc"). Empty when not suggesting. */
   const commandPrefix = showSuggestions ? lastSlashWord : '';
@@ -446,7 +378,7 @@ export function AskBarView({
    */
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // Palette-mode shortcuts: Ctrl+1…9 inserts a command, Ctrl+R screenshots.
+      // Palette-mode shortcuts: Ctrl+1…9 inserts a command.
       // Using Ctrl modifier avoids conflicts with normal text input.
       if (showPalette && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
         if (e.key >= '1' && e.key <= '9') {
@@ -456,11 +388,6 @@ export function AskBarView({
             handlePaletteSelect(commands[idx].trigger);
             return;
           }
-        }
-        if (e.key === 'r' || e.key === 'R') {
-          e.preventDefault();
-          onScreenshot();
-          return;
         }
       }
 
@@ -522,7 +449,6 @@ export function AskBarView({
       showPalette,
       commands,
       handlePaletteSelect,
-      onScreenshot,
       showSuggestions,
       filteredCommands,
       highlightedIndex,
@@ -649,26 +575,13 @@ export function AskBarView({
       <div className="relative">
         <div className="flex items-center w-full px-3 py-2.5 gap-2">
           <img
-            src="/thuki-logo.png"
-            alt="Thuki"
+            src="/oling-logo.png"
+            alt="Oling"
             className={`shrink-0 transition-all duration-300 ease-out ${
               isChatMode ? 'w-6 h-6 rounded-lg' : 'w-10 h-10 rounded-xl'
             }`}
             draggable={false}
           />
-
-          {/* Compact history entry point: ask-bar mode only. In chat mode the
-            history button lives in the ConversationView header. */}
-          {!isChatMode && onHistoryOpen && (
-            <button
-              type="button"
-              onClick={onHistoryOpen}
-              aria-label="Open history"
-              className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-white/8 transition-colors duration-150 cursor-pointer outline-none"
-            >
-              {HISTORY_ICON}
-            </button>
-          )}
 
           <div className="relative flex-1 min-w-0">
             {/* Mirror div: renders the same text with highlighted commands.
@@ -690,38 +603,11 @@ export function AskBarView({
               disabled={isBusy}
               autoFocus
               rows={1}
-              placeholder={isChatMode ? 'Reply...' : 'Ask Thuki anything...'}
+              placeholder={isChatMode ? 'Reply...' : 'Ask Oling anything...'}
               className="relative w-full bg-transparent border-none outline-none text-transparent text-sm placeholder:text-text-secondary py-2 px-1 disabled:opacity-50 resize-none leading-relaxed"
               style={{ caretColor: 'var(--color-text-primary)' }}
             />
           </div>
-
-          {isAtMaxImages ? (
-            <Tooltip label="Maximum 3 images attached">
-              <button
-                type="button"
-                onClick={onScreenshot}
-                disabled
-                aria-label="Take screenshot"
-                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-text-secondary transition-colors duration-150 disabled:opacity-40 disabled:cursor-default cursor-pointer"
-              >
-                {CAMERA_ICON}
-              </button>
-            </Tooltip>
-          ) : (
-            <Tooltip label="Take a screenshot">
-              <button
-                type="button"
-                onClick={onScreenshot}
-                disabled={isBusy}
-                aria-label="Take screenshot"
-                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-white/8 transition-colors duration-150 disabled:opacity-40 disabled:cursor-default cursor-pointer"
-              >
-                {CAMERA_ICON}
-              </button>
-            </Tooltip>
-          )}
-
           <motion.button
             type="button"
             onClick={isBusy ? onCancel : onSubmit}
@@ -750,9 +636,9 @@ export function AskBarView({
       </div>
 
       {/* Command palette — numbered quick-access list below the input.
-          Visible in ask-bar mode when the CommandSuggestion popover and
-          history panel are both closed. AnimatePresence mirrors the
-          suggestion popover's height transition for visual consistency. */}
+          Visible in ask-bar mode when the CommandSuggestion popover is
+          closed. AnimatePresence mirrors the suggestion popover's height
+          transition for visual consistency. */}
       <AnimatePresence>
         {showPalette && (
           <motion.div
@@ -769,7 +655,6 @@ export function AskBarView({
             <CommandPalette
               commands={commands}
               onSelect={handlePaletteSelect}
-              onScreenshot={onScreenshot}
             />
           </motion.div>
         )}

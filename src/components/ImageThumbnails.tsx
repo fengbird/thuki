@@ -9,8 +9,7 @@ interface ThumbnailItem {
   loading?: boolean;
   /**
    * When true, renders a branded screen-capture loading tile instead of an
-   * image. Use this when no preview image is available yet (e.g. the /screen
-   * capture is in flight and there is no blob URL to show).
+   * image. Use this when no preview image is available yet.
    */
   placeholder?: boolean;
 }

@@ -1,20 +1,29 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SettingsView } from '../SettingsView';
+import type { SettingsData } from '../../hooks/useSettings';
 import { invoke } from '../../testUtils/mocks/tauri';
 
-const MOCK_SETTINGS = {
+const MOCK_SETTINGS: SettingsData = {
   api_base_url: 'http://10.0.0.4:1234/v1',
   api_key: 'lm-studio',
   model_name: 'qwen3-vl-8b-thinking',
   system_prompt: 'Default system prompt',
   reply_prompt: 'Default reply prompt',
   ocr_prompt: '请提取图中所有文字，原样输出。',
+  shortcut_config: {
+    overlay_activation: { kind: 'double_tap_modifier', modifier: 'ctrl' },
+    screenshot_capture: {
+      kind: 'key_combo',
+      key_code: 0x07,
+      modifiers: ['cmd', 'shift'],
+    },
+  },
   commands_config: { overrides: {}, custom: [], disabled: [] },
 };
 
 /** Navigate to a sidebar tab after settings has loaded. */
-async function switchTab(tab: 'model' | 'prompts' | 'commands') {
+async function switchTab(tab: 'model' | 'prompts' | 'shortcuts' | 'commands') {
   await act(async () => {
     fireEvent.click(screen.getByTestId(`settings-tab-${tab}`));
   });
@@ -259,6 +268,94 @@ describe('SettingsView', () => {
     );
   });
 
+  it('shows configurable shortcut defaults', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('shortcuts');
+
+    expect(
+      screen.getByTestId('settings-shortcut-activation-value').textContent,
+    ).toBe('Double Control');
+    expect(
+      screen.getByTestId('settings-shortcut-screenshot-value').textContent,
+    ).toBe('⌘⇧X');
+  });
+
+  it('records a new screenshot shortcut and saves it', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('shortcuts');
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId('settings-shortcut-screenshot-record'),
+      );
+    });
+
+    expect(
+      screen.getByTestId('settings-shortcut-screenshot-hint').textContent,
+    ).toContain('Press the full shortcut');
+
+    await act(async () => {
+      fireEvent.keyDown(window, {
+        key: 'Z',
+        code: 'KeyZ',
+        metaKey: true,
+        shiftKey: true,
+      });
+    });
+
+    expect(
+      screen.getByTestId('settings-shortcut-screenshot-value').textContent,
+    ).toBe('⌘⇧Z');
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-save-btn'));
+    });
+
+    const saveCall = invoke.mock.calls.find(
+      ([cmd]) => cmd === 'update_settings',
+    );
+    expect(saveCall?.[1]?.data?.shortcut_config?.screenshot_capture).toEqual({
+      kind: 'key_combo',
+      key_code: 0x06,
+      modifiers: ['cmd', 'shift'],
+    });
+  });
+
+  it('records a double-shift activation shortcut and can reset defaults', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('shortcuts');
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId('settings-shortcut-activation-record'),
+      );
+    });
+
+    await act(async () => {
+      fireEvent.keyUp(window, { key: 'Shift' });
+      fireEvent.keyUp(window, { key: 'Shift' });
+    });
+
+    expect(
+      screen.getByTestId('settings-shortcut-activation-value').textContent,
+    ).toBe('Double Shift');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-shortcuts-reset-all'));
+    });
+
+    expect(
+      screen.getByTestId('settings-shortcut-activation-value').textContent,
+    ).toBe('Double Control');
+    expect(
+      screen.getByTestId('settings-shortcut-screenshot-value').textContent,
+    ).toBe('⌘⇧X');
+  });
+
   it('unregisters keydown listener on unmount', async () => {
     const { unmount } = render(<SettingsView onDismiss={vi.fn()} />);
     await act(async () => {});
@@ -291,15 +388,15 @@ describe('SettingsView', () => {
     await act(async () => {});
     await switchTab('commands');
 
-    // All commands visible — including former "system" ones
-    expect(screen.getByTestId('cmd-row-screen')).toBeInTheDocument();
+    // /screen has been removed, so only the remaining commands appear here.
+    expect(screen.queryByTestId('cmd-row-screen')).toBeNull();
     expect(screen.getByTestId('cmd-row-think')).toBeInTheDocument();
     expect(screen.getByTestId('cmd-row-translate')).toBeInTheDocument();
 
     // Each has toggle, edit, and delete
-    expect(screen.getByTestId('cmd-row-screen-toggle')).toBeInTheDocument();
-    expect(screen.getByTestId('cmd-row-screen-edit')).toBeInTheDocument();
-    expect(screen.getByTestId('cmd-row-screen-delete')).toBeInTheDocument();
+    expect(screen.getByTestId('cmd-row-think-toggle')).toBeInTheDocument();
+    expect(screen.getByTestId('cmd-row-think-edit')).toBeInTheDocument();
+    expect(screen.getByTestId('cmd-row-think-delete')).toBeInTheDocument();
     expect(screen.getByTestId('cmd-row-translate-edit')).toBeInTheDocument();
     expect(screen.getByTestId('cmd-row-translate-delete')).toBeInTheDocument();
   });
@@ -309,14 +406,14 @@ describe('SettingsView', () => {
     await act(async () => {});
     await switchTab('commands');
 
-    expect(screen.getByTestId('cmd-row-screen')).toBeInTheDocument();
+    expect(screen.getByTestId('cmd-row-think')).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId('cmd-row-screen-delete'));
+      fireEvent.click(screen.getByTestId('cmd-row-think-delete'));
     });
 
     // Should be gone from the list
-    expect(screen.queryByTestId('cmd-row-screen')).toBeNull();
+    expect(screen.queryByTestId('cmd-row-think')).toBeNull();
 
     // Save and verify it's in the disabled list
     invoke.mockClear();
@@ -326,7 +423,7 @@ describe('SettingsView', () => {
     const saveCall = invoke.mock.calls.find(
       ([cmd]) => cmd === 'update_settings',
     );
-    expect(saveCall?.[1]?.data?.commands_config.disabled).toContain('/screen');
+    expect(saveCall?.[1]?.data?.commands_config.disabled).toContain('/think');
   });
 
   it('toggling a command removes it from the visible list', async () => {

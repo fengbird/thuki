@@ -126,6 +126,9 @@ describe('PinView', () => {
     expect(invoke).toHaveBeenCalledWith('close_pin_window', {
       label: 'pin-abc',
     });
+    expect(invoke).toHaveBeenCalledWith('remove_image_command', {
+      path: '/tmp/shot.png',
+    });
   });
 
   it('Close swallows errors', async () => {
@@ -175,6 +178,9 @@ describe('PinView', () => {
     });
     expect(invoke).toHaveBeenCalledWith('close_pin_window', {
       label: 'pin-abc',
+    });
+    expect(invoke).toHaveBeenCalledWith('remove_image_command', {
+      path: '/tmp/shot.png',
     });
   });
 

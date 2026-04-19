@@ -27,7 +27,7 @@ type ProgressPayload = {
  * The backend polls the selection rect, incrementally appends only the
  * non-overlapping bottom of each new capture onto the stitched image,
  * re-encodes the preview PNG at a stable path, and emits
- * `thuki://long-capture-progress` with `{count, version, path, ...}`.
+ * `oling://long-capture-progress` with `{count, version, path, ...}`.
  * We reload the `<img>` via a `?v=<version>` cache-buster so the webview
  * actually picks up the new bytes.
  */
@@ -43,7 +43,7 @@ export function LongShotHudView() {
     let cleanup: (() => void) | undefined;
     void (async () => {
       cleanup = await listen<ProgressPayload>(
-        'thuki://long-capture-progress',
+        'oling://long-capture-progress',
         (e) => {
           setErrorMessage('');
           setPreview(e.payload);

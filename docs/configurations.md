@@ -1,6 +1,6 @@
 # Configurations
 
-Thuki uses environment variables for runtime configuration. Vite loads these from `.env` files at build/dev time and exposes variables prefixed with `VITE_` to the frontend via `import.meta.env`.
+Oling uses environment variables for runtime configuration. Vite loads these from `.env` files at build/dev time and exposes variables prefixed with `VITE_` to the frontend via `import.meta.env`.
 
 ## Setup
 
@@ -30,27 +30,27 @@ Controls the system prompt prepended to every conversation sent to Ollama.
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
-| `THUKI_SYSTEM_PROMPT` | Custom system prompt for all conversations. If unset or empty, the built-in default is used. | Built-in secretary persona prompt (see `src-tauri/src/commands.rs`) |
+| `OLING_SYSTEM_PROMPT` | Custom system prompt for all conversations. If unset or empty, the built-in default is used. | Built-in secretary persona prompt (see `src-tauri/src/commands.rs`) |
 
 ### Model Configuration
 
-Controls which Ollama model(s) Thuki uses for inference.
+Controls which Ollama model(s) Oling uses for inference.
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
-| `THUKI_SUPPORTED_AI_MODELS` | Comma-separated list of Ollama model names. The first entry is the active model used for all inference. Additional entries are available for future in-app model switching. | `gemma4:e2b` |
+| `OLING_SUPPORTED_AI_MODELS` | Comma-separated list of Ollama model names. The first entry is the active model used for all inference. Additional entries are available for future in-app model switching. | `gemma4:e2b` |
 
 **Example:**
 
 ```bash
 # Single model (default behavior)
-THUKI_SUPPORTED_AI_MODELS=gemma4:e2b
+OLING_SUPPORTED_AI_MODELS=gemma4:e2b
 
 # Multiple models (first is active; others available for future UI picker)
-THUKI_SUPPORTED_AI_MODELS=gemma4:e2b,gemma4:e4b
+OLING_SUPPORTED_AI_MODELS=gemma4:e2b,gemma4:e4b
 ```
 
-Whitespace around each entry is trimmed. Empty entries are ignored. If the variable is unset or empty, Thuki falls back to `gemma4:e2b`.
+Whitespace around each entry is trimmed. Empty entries are ignored. If the variable is unset or empty, Oling falls back to `gemma4:e2b`.
 
 ### Validation Rules
 

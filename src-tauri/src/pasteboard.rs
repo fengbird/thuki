@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn read_image_bytes_reads_file_contents() {
-        let tmp = std::env::temp_dir().join(format!("thuki-pb-test-{}.bin", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("oling-pb-test-{}.bin", uuid::Uuid::new_v4()));
         let mut f = std::fs::File::create(&tmp).unwrap();
         f.write_all(b"\x89PNG\r\n\x1a\n").unwrap();
         drop(f);
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn read_image_bytes_errors_for_missing_file() {
-        let missing = Path::new("/tmp/nonexistent-thuki-pasteboard-test-12345.png");
+        let missing = Path::new("/tmp/nonexistent-oling-pasteboard-test-12345.png");
         let err = read_image_bytes(missing).unwrap_err();
         assert!(err.contains("Failed to read image"));
     }

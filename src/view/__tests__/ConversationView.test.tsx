@@ -393,21 +393,21 @@ describe('ConversationView', () => {
   });
 
   describe('header controls', () => {
-    it('renders History button when onHistoryOpen is provided', () => {
+    it('renders New conversation button when onNewConversation is provided', () => {
       render(
         <ConversationView
           messages={[]}
           isGenerating={false}
           onClose={vi.fn()}
-          onHistoryOpen={vi.fn()}
+          onNewConversation={vi.fn()}
         />,
       );
       expect(
-        screen.getByRole('button', { name: /history/i }),
+        screen.getByRole('button', { name: /new conversation/i }),
       ).toBeInTheDocument();
     });
 
-    it('does not render History button when onHistoryOpen is not provided', () => {
+    it('does not render New conversation button when onNewConversation is not provided', () => {
       render(
         <ConversationView
           messages={[]}
@@ -415,83 +415,25 @@ describe('ConversationView', () => {
           onClose={vi.fn()}
         />,
       );
-      expect(screen.queryByRole('button', { name: /history/i })).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: /new conversation/i }),
+      ).toBeNull();
     });
 
-    it('calls onHistoryOpen when History button is clicked', () => {
-      const onHistoryOpen = vi.fn();
+    it('calls onNewConversation when New conversation button is clicked', () => {
+      const onNewConversation = vi.fn();
       render(
         <ConversationView
           messages={[]}
           isGenerating={false}
           onClose={vi.fn()}
-          onHistoryOpen={onHistoryOpen}
+          onNewConversation={onNewConversation}
         />,
       );
-      fireEvent.click(screen.getByRole('button', { name: /history/i }));
-      expect(onHistoryOpen).toHaveBeenCalledOnce();
-    });
-
-    it('renders Save button when onSave is provided', () => {
-      render(
-        <ConversationView
-          messages={[]}
-          isGenerating={false}
-          onClose={vi.fn()}
-          onSave={vi.fn()}
-          isSaved={false}
-          canSave={true}
-        />,
+      fireEvent.click(
+        screen.getByRole('button', { name: /new conversation/i }),
       );
-      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
-    });
-
-    it('calls onSave when Save button is clicked', () => {
-      const onSave = vi.fn();
-      render(
-        <ConversationView
-          messages={[]}
-          isGenerating={false}
-          onClose={vi.fn()}
-          onSave={onSave}
-          isSaved={false}
-          canSave={true}
-        />,
-      );
-      fireEvent.click(screen.getByRole('button', { name: /save/i }));
-      expect(onSave).toHaveBeenCalledOnce();
-    });
-
-    it('Save button is disabled when canSave is false', () => {
-      render(
-        <ConversationView
-          messages={[]}
-          isGenerating={false}
-          onClose={vi.fn()}
-          onSave={vi.fn()}
-          isSaved={false}
-          canSave={false}
-        />,
-      );
-      const saveBtn = screen.getByRole('button', { name: /save/i });
-      expect(saveBtn).toBeDisabled();
-    });
-
-    it('Save button is enabled (for unsave) when isSaved is true', () => {
-      render(
-        <ConversationView
-          messages={[]}
-          isGenerating={false}
-          onClose={vi.fn()}
-          onSave={vi.fn()}
-          isSaved={true}
-          canSave={true}
-        />,
-      );
-      const saveBtn = screen.getByRole('button', {
-        name: /remove from history/i,
-      });
-      expect(saveBtn).not.toBeDisabled();
+      expect(onNewConversation).toHaveBeenCalledOnce();
     });
   });
 

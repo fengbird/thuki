@@ -2,7 +2,8 @@
  * Registry of all slash commands supported by the ask bar.
  *
  * Commands are categorised into three tiers:
- * - **system**: `/screen`, `/think` — hard-wired behaviour, not editable.
+ * - **system**: `/think` — hard-wired behaviour command with no prompt
+ *   template. It still participates in trigger/description overrides.
  * - **builtin**: `/translate`, `/rewrite`, … — ships with the app, users may
  *   override trigger / description / template, disable, or reset to defaults.
  * - **custom**: user-created commands with full CRUD.
@@ -17,7 +18,7 @@
 export type CommandCategory = 'system' | 'builtin' | 'custom';
 
 export interface Command {
-  /** The slash trigger, e.g. "/screen". Must start with "/". */
+  /** The slash trigger, e.g. "/think". Must start with "/". */
   readonly trigger: string;
   /** Short label shown in the suggestion row. */
   readonly label: string;
@@ -74,15 +75,10 @@ export const EMPTY_COMMANDS_CONFIG: CommandsConfig = {
 
 // ─── Built-in registry ─────────────────────────────────────────────────────
 
-/** Triggers that are hard-wired system commands (not editable / disableable). */
-export const SYSTEM_TRIGGERS = new Set(['/screen', '/think']);
+/** Triggers that are handled by dedicated runtime behaviour instead of a prompt template. */
+export const SYSTEM_TRIGGERS = new Set(['/think']);
 
 export const COMMANDS: readonly Command[] = [
-  {
-    trigger: '/screen',
-    label: '/screen',
-    description: 'Capture your screen and include it as context',
-  },
   {
     trigger: '/think',
     label: '/think',
@@ -134,20 +130,13 @@ export const COMMANDS: readonly Command[] = [
   },
 ] as const;
 
-/**
- * Sentinel image-path value used as a loading placeholder while the
- * /screen capture is in flight. ChatBubble detects this value and
- * renders a branded screen-capture loading tile instead of a broken image.
- */
-export const SCREEN_CAPTURE_PLACEHOLDER = 'blob:screen-capture-loading';
-
 // ─── Runtime merge ─────────────────────────────────────────────────────────
 
 /**
  * Merges the built-in command registry with user configuration to produce
  * the runtime-active command list.
  *
- * Order: system commands first (always), then built-in (minus disabled),
+ * Order: system commands first (minus disabled), then built-in (minus disabled),
  * then custom (minus disabled).
  */
 export function mergeCommands(config?: CommandsConfig | null): ActiveCommand[] {
@@ -156,28 +145,32 @@ export function mergeCommands(config?: CommandsConfig | null): ActiveCommand[] {
 
   for (const cmd of COMMANDS) {
     const isSystem = SYSTEM_TRIGGERS.has(cmd.trigger);
-    if (isSystem) {
-      result.push({ ...cmd, category: 'system' });
-      continue;
-    }
-
-    // Built-in: skip if disabled.
     if (cfg.disabled.includes(cmd.trigger)) continue;
 
     const override = cfg.overrides[cmd.trigger];
-    if (!override) {
-      result.push({ ...cmd, category: 'builtin' });
+    const newTrigger = override?.trigger ?? cmd.trigger;
+    const description = override?.description ?? cmd.description;
+    const originalTrigger = override?.trigger ? cmd.trigger : undefined;
+
+    if (isSystem) {
+      result.push({
+        trigger: newTrigger,
+        label: newTrigger,
+        description,
+        category: 'system',
+        originalTrigger,
+      });
       continue;
     }
 
-    const newTrigger = override.trigger ?? cmd.trigger;
     result.push({
       trigger: newTrigger,
       label: newTrigger,
-      description: override.description ?? cmd.description,
-      promptTemplate: override.prompt_template ?? cmd.promptTemplate,
+      description,
+      promptTemplate: override?.prompt_template ?? cmd.promptTemplate,
+      imageInputHint: cmd.imageInputHint,
       category: 'builtin',
-      originalTrigger: override.trigger ? cmd.trigger : undefined,
+      originalTrigger,
     });
   }
 

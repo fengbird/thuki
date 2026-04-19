@@ -1,16 +1,21 @@
 /*!
- * SQLite persistence layer for conversation history.
+ * SQLite persistence layer for app configuration and ephemeral cleanup metadata.
  *
- * Stores conversations and messages in `~/.thuki/thuki.db` using rusqlite
- * with WAL journal mode for concurrent read access during streaming writes.
+ * Stores data in `<app_data_dir>/oling.db` using rusqlite with WAL journal mode
+ * for concurrent read access during streaming writes.
  *
  * All public functions accept a `&Connection` and are synchronous — callers
  * in async Tauri commands should use `spawn_blocking` or hold the connection
  * behind a `Mutex`.
  */
 
+use std::sync::Mutex;
+
 use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
 use serde::Serialize;
+
+/// Thread-safe wrapper around the SQLite connection shared through Tauri state.
+pub struct Database(pub Mutex<Connection>);
 
 /// Tuple representing a message for batch insertion:
 /// (role, content, quoted_text, image_paths, thinking_content).
@@ -44,9 +49,10 @@ pub struct PersistedMessage {
     pub created_at: i64,
 }
 
-/// Opens (or creates) the SQLite database at `<app_data_dir>/thuki.db` and
-/// runs migrations. If an existing database is found at the legacy location
-/// (`~/.thuki/thuki.db`), it is moved to the new location automatically.
+/// Opens (or creates) the SQLite database at `<app_data_dir>/oling.db` and
+/// runs migrations. If an existing database is found in a sibling
+/// `com.quietnode.*` application-support directory, it is moved to the new
+/// location automatically.
 ///
 /// # Errors
 ///
@@ -57,10 +63,9 @@ pub fn open_database(app_data_dir: &std::path::Path) -> SqlResult<Connection> {
     std::fs::create_dir_all(app_data_dir)
         .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
 
-    let db_path = app_data_dir.join("thuki.db");
+    let db_path = app_data_dir.join("oling.db");
 
-    // One-time migration: move database from the legacy ~/.thuki/ location.
-    migrate_legacy_db(&db_path);
+    migrate_existing_db(app_data_dir, &db_path);
 
     let conn = Connection::open(&db_path)?;
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -79,27 +84,78 @@ pub fn open_in_memory() -> SqlResult<Connection> {
     Ok(conn)
 }
 
-/// Moves the database from `~/.thuki/thuki.db` to the Tauri app data
-/// directory if the legacy file exists and the target does not.
+/// Moves an older branded app database from a sibling application-support
+/// directory into the current app data directory if the target does not exist.
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn migrate_legacy_db(new_path: &std::path::Path) {
+fn migrate_existing_db(app_data_dir: &std::path::Path, new_path: &std::path::Path) {
     if new_path.exists() {
         return;
     }
-    let legacy_path = match dirs::home_dir() {
-        Some(home) => home.join(".thuki").join("thuki.db"),
-        None => return,
+
+    for legacy_path in sibling_app_db_candidates(app_data_dir) {
+        if move_db_file_set(&legacy_path, new_path) {
+            break;
+        }
+    }
+}
+
+fn sibling_app_db_candidates(app_data_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Some(parent) = app_data_dir.parent() else {
+        return Vec::new();
     };
-    if !legacy_path.exists() {
-        return;
+    let Some(current_dir_name) = app_data_dir.file_name().and_then(|name| name.to_str()) else {
+        return Vec::new();
+    };
+    let Some((vendor_prefix, _)) = current_dir_name.rsplit_once('.') else {
+        return Vec::new();
+    };
+    let sibling_prefix = format!("{vendor_prefix}.");
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Vec::new();
+    };
+
+    let mut candidates = Vec::new();
+    for entry in entries.flatten() {
+        let sibling_path = entry.path();
+        if sibling_path == app_data_dir || !sibling_path.is_dir() {
+            continue;
+        }
+        let Some(name) = sibling_path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !name.starts_with(&sibling_prefix) {
+            continue;
+        }
+
+        let Ok(files) = std::fs::read_dir(&sibling_path) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let path = file.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("db") {
+                candidates.push(path);
+            }
+        }
+    }
+
+    candidates.sort();
+    candidates
+}
+
+fn move_db_file_set(legacy_path: &std::path::Path, new_path: &std::path::Path) -> bool {
+    if !legacy_path.exists() || new_path.exists() {
+        return false;
     }
     // Move the database file. If the move fails (e.g. cross-device), fall
     // back to copy + delete so the migration succeeds across filesystem
     // boundaries.
-    if std::fs::rename(&legacy_path, new_path).is_err()
-        && std::fs::copy(&legacy_path, new_path).is_ok()
+    if std::fs::rename(legacy_path, new_path).is_err()
+        && std::fs::copy(legacy_path, new_path).is_ok()
     {
-        let _ = std::fs::remove_file(&legacy_path);
+        let _ = std::fs::remove_file(legacy_path);
+    }
+    if !new_path.exists() {
+        return false;
     }
     // Also move the WAL and SHM journal files if they exist.
     for ext in &["-wal", "-shm"] {
@@ -113,6 +169,7 @@ fn migrate_legacy_db(new_path: &std::path::Path) {
             }
         }
     }
+    true
 }
 
 /// Creates the schema tables if they do not already exist.
@@ -260,6 +317,17 @@ pub fn delete_conversation(conn: &Connection, conversation_id: &str) -> SqlResul
     conn.execute(
         "DELETE FROM conversations WHERE id = ?1",
         params![conversation_id],
+    )?;
+    Ok(())
+}
+
+/// Deletes every persisted conversation and message while preserving app-level
+/// configuration stored in `app_config`.
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub fn purge_conversation_data(conn: &Connection) -> SqlResult<()> {
+    conn.execute_batch(
+        "DELETE FROM messages;
+         DELETE FROM conversations;",
     )?;
     Ok(())
 }
@@ -597,6 +665,23 @@ mod tests {
     }
 
     #[test]
+    fn purge_conversation_data_clears_messages_and_conversations_only() {
+        let conn = open_in_memory().unwrap();
+        set_config(&conn, "system_prompt", "keep me").unwrap();
+        let id = create_conversation(&conn, Some("Ephemeral"), "gemma4:e2b").unwrap();
+        insert_message(&conn, &id, "user", "hello", None, None, None).unwrap();
+
+        purge_conversation_data(&conn).unwrap();
+
+        assert!(list_conversations(&conn, None).unwrap().is_empty());
+        assert!(load_messages(&conn, &id).unwrap().is_empty());
+        assert_eq!(
+            get_config(&conn, "system_prompt").unwrap().as_deref(),
+            Some("keep me")
+        );
+    }
+
+    #[test]
     fn load_messages_empty_conversation() {
         let conn = open_in_memory().unwrap();
         let id = create_conversation(&conn, None, "gemma4:e2b").unwrap();
@@ -721,27 +806,23 @@ mod tests {
     }
 
     #[test]
-    fn migrate_legacy_db_moves_existing_file() {
-        let tmp = std::env::temp_dir().join(format!("thuki-migrate-{}", uuid::Uuid::new_v4()));
+    fn move_db_file_set_moves_existing_file() {
+        let tmp = std::env::temp_dir().join(format!("oling-migrate-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&tmp).unwrap();
 
         // Create a fake legacy DB file.
         let legacy_dir = tmp.join("legacy");
         fs::create_dir_all(&legacy_dir).unwrap();
-        let legacy_path = legacy_dir.join("thuki.db");
+        let legacy_path = legacy_dir.join("oling.db");
         fs::write(&legacy_path, b"legacy-data").unwrap();
 
         // Target path where the DB should be migrated to.
         let new_dir = tmp.join("new");
         fs::create_dir_all(&new_dir).unwrap();
-        let new_path = new_dir.join("thuki.db");
+        let new_path = new_dir.join("oling.db");
 
-        // Manually test the migration logic (we can't call migrate_legacy_db
-        // directly because it hardcodes ~/.thuki, so we test the core logic).
         assert!(!new_path.exists());
-        if legacy_path.exists() && !new_path.exists() {
-            fs::rename(&legacy_path, &new_path).unwrap();
-        }
+        assert!(move_db_file_set(&legacy_path, &new_path));
         assert!(new_path.exists());
         assert!(!legacy_path.exists());
         assert_eq!(fs::read(&new_path).unwrap(), b"legacy-data");
@@ -811,16 +892,38 @@ mod tests {
     }
 
     #[test]
-    fn migrate_legacy_db_skips_when_target_exists() {
-        let tmp = std::env::temp_dir().join(format!("thuki-migrate-{}", uuid::Uuid::new_v4()));
+    fn move_db_file_set_skips_when_target_exists() {
+        let tmp = std::env::temp_dir().join(format!("oling-migrate-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&tmp).unwrap();
 
-        let new_path = tmp.join("thuki.db");
+        let legacy_path = tmp.join("legacy.db");
+        fs::write(&legacy_path, b"legacy-data").unwrap();
+        let new_path = tmp.join("oling.db");
         fs::write(&new_path, b"existing-data").unwrap();
 
         // When the target already exists, migration should be skipped.
-        migrate_legacy_db(&new_path);
+        assert!(!move_db_file_set(&legacy_path, &new_path));
         assert_eq!(fs::read(&new_path).unwrap(), b"existing-data");
+        assert_eq!(fs::read(&legacy_path).unwrap(), b"legacy-data");
+
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn sibling_app_db_candidates_collects_vendor_siblings_only() {
+        let tmp = std::env::temp_dir().join(format!("oling-migrate-{}", uuid::Uuid::new_v4()));
+        let parent = tmp.join("app-support");
+        let current = parent.join("com.quietnode.oling");
+        let sibling = parent.join("com.quietnode.previous");
+        let unrelated = parent.join("com.other.app");
+        fs::create_dir_all(&current).unwrap();
+        fs::create_dir_all(&sibling).unwrap();
+        fs::create_dir_all(&unrelated).unwrap();
+        fs::write(sibling.join("previous.db"), b"previous").unwrap();
+        fs::write(unrelated.join("other.db"), b"other").unwrap();
+
+        let candidates = sibling_app_db_candidates(&current);
+        assert_eq!(candidates, vec![sibling.join("previous.db")]);
 
         fs::remove_dir_all(&tmp).unwrap();
     }

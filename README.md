@@ -1,15 +1,15 @@
 
 
 <h1 align="center">
-  Thuki - WIP
+  Oling - WIP
 </h1>
 
 <p align="center">
-  <img src="public/thuki-logo.png" alt="Thuki logo" width="300" />
+  <img src="public/oling-logo.png" alt="Oling logo" width="300" />
 </p>
 
 <p align="center">
-<a align="center" href="https://www.producthunt.com/products/thuki?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-thuki" target="_blank" rel="noopener noreferrer"><img alt="Thuki  - Floating AI for macOS. Free &amp; Local. No cloud, no API keys. | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1122707&amp;theme=light&amp;t=1776150241085"></a>  
+<a align="center" href="https://www.producthunt.com/products/oling?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-oling" target="_blank" rel="noopener noreferrer"><img alt="Oling  - Floating AI for macOS. Free &amp; Local. No cloud, no API keys. | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1122707&amp;theme=light&amp;t=1776150241085"></a>  
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/status-beta-yellow.svg" alt="Beta" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
-  <a href="https://github.com/quiet-node/thuki/actions/workflows/pr-pipeline.yml"><img src="https://github.com/quiet-node/thuki/actions/workflows/pr-pipeline.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/quiet-node/oling/actions/workflows/pr-pipeline.yml"><img src="https://github.com/quiet-node/oling/actions/workflows/pr-pipeline.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey.svg" alt="Platform: macOS" />
 </p>
 
@@ -38,44 +38,44 @@
 
 **No API keys. No subscriptions. No cloud. No telemetry. Free forever.**
 
-Thuki (thư kí - Vietnamese for secretary) is a lightweight macOS overlay powered by local AI models running entirely on your own machine, built for quick, uninterrupted asks without ever leaving what you're doing.
+Oling (thư kí - Vietnamese for secretary) is a lightweight macOS overlay powered by local AI models running entirely on your own machine, built for quick, uninterrupted asks without ever leaving what you're doing.
 
 ## See It in Action
 
 ### Basic Usage
 
-Double-tap Control <kbd>⌃</kbd> to summon Thuki from anywhere. Ask a question, get an answer, and dismiss. Use `/screen` or the screenshot button to capture your screen and attach it as context.
+Double-tap Control <kbd>⌃</kbd> to summon Oling from anywhere. Ask a question, get an answer, and dismiss. Press <kbd>⌘⇧X</kbd> to open the screenshot flow when you want visual context.
 
 https://github.com/user-attachments/assets/57df0efe-24eb-4875-a83d-e605e0c6f8b4
 
 
 ### Overlay Mode
 
-Thuki floats above every app, including fullscreen ones. Highlight text anywhere, double-tap Control <kbd>⌃</kbd>, and Thuki opens with your selection pre-filled as a quote, ready to ask about.
+Oling floats above every app, including fullscreen ones. Highlight text anywhere, double-tap Control <kbd>⌃</kbd>, and Oling opens with your selection pre-filled as a quote, ready to ask about.
 
 https://github.com/user-attachments/assets/f52b55f7-479d-4c2e-a361-1553fe132712
 
-## Why Thuki?
+## Why Oling?
 
-Most AI tools require accounts, API keys, or subscriptions that bill you per token. Thuki is different:
+Most AI tools require accounts, API keys, or subscriptions that bill you per token. Oling is different:
 
 - **100% free AI interactions:** you run the model locally, there is no per-query cost, ever
 - **Zero trust by design:** no remote server, no cloud backend, no analytics, no telemetry
-- **Works completely offline:** once your model is pulled, Thuki runs without an internet connection
+- **Works completely offline:** once your model is pulled, Oling runs without an internet connection
 - **Your data is yours:** conversations are stored in a local SQLite database on your machine and nowhere else
-- **Most importantly: it works everywhere.** Double-tap Control <kbd>⌃</kbd> and Thuki appears on your desktop, inside a browser, inside a terminal, and yes, even in fullscreen apps. Your favorite AI chat apps can't do that!
+- **Most importantly: it works everywhere.** Double-tap Control <kbd>⌃</kbd> and Oling appears on your desktop, inside a browser, inside a terminal, and yes, even in fullscreen apps. Your favorite AI chat apps can't do that!
 
 ## Features
 
 - **Always available:** double-tap Control <kbd>⌃</kbd> to summon the overlay from any app, including fullscreen apps
-- **Context-aware quotes:** highlight any text, then double-tap Control <kbd>⌃</kbd> to open Thuki with the selected text pre-filled as a quote
+- **Context-aware quotes:** highlight any text, then double-tap Control <kbd>⌃</kbd> to open Oling with the selected text pre-filled as a quote
 - **Throwaway conversations:** fast, lightweight interactions without the overhead of a full chat app
 - **Conversation history:** persist and revisit past conversations across sessions
 - **Fully local LLM:** powered by Ollama; no API keys, no accounts, no cost per query
 - **Isolated sandbox:** optionally run models in a hardened Docker container with capability dropping, read-only volumes, and localhost-only networking
 - **Image input:** paste or drag images and screenshots directly into the chat
-- **Screen capture:** type `/screen` to instantly capture your entire screen and attach it to your question as context
-- **Slash commands:** built-in prompt shortcuts for common tasks: `/translate`, `/rewrite`, `/tldr`, `/refine`, `/bullets`, `/todos`. Highlight text anywhere, summon Thuki, type a command, and hit Enter
+- **Screen capture:** press <kbd>⌘⇧X</kbd> to capture, annotate, and send screen context
+- **Slash commands:** built-in prompt shortcuts for common tasks: `/translate`, `/rewrite`, `/tldr`, `/refine`, `/bullets`, `/todos`. Highlight text anywhere, summon Oling, type a command, and hit Enter
 - **Extended reasoning:** type `/think` to have the model reason through a problem step by step before answering
 - **Privacy-first:** zero-trust architecture, all data stays on your device
 
@@ -83,9 +83,9 @@ Most AI tools require accounts, API keys, or subscriptions that bill you per tok
 
 ### Step 1: Set Up Your AI Engine
 
-> **Default model:** Thuki ships with [`gemma4:e2b`](https://ollama.com/library/gemma4) by default, an effective 2B parameter edge model from Google. It runs comfortably on most modern Macs with 8 GB of RAM and delivers strong performance on reasoning, coding, and vision tasks. The model can be changed at runtime via the `THUKI_SUPPORTED_AI_MODELS` environment variable; see [Configurations](docs/configurations.md).
+> **Default model:** Oling ships with [`gemma4:e2b`](https://ollama.com/library/gemma4) by default, an effective 2B parameter edge model from Google. It runs comfortably on most modern Macs with 8 GB of RAM and delivers strong performance on reasoning, coding, and vision tasks. The model can be changed at runtime via the `OLING_SUPPORTED_AI_MODELS` environment variable; see [Configurations](docs/configurations.md).
 
-Choose one of the two options below to set up your AI engine before installing Thuki.
+Choose one of the two options below to set up your AI engine before installing Oling.
 
 #### Option A: Local Ollama (Recommended for most users)
 
@@ -113,14 +113,14 @@ Choose one of the two options below to set up your AI engine before installing T
    ollama list
    ```
 
-   You should see your model listed. Thuki talks to an **OpenAI-compatible** server — for Ollama, enable its OpenAI-compat endpoint and point Thuki at it:
+   You should see your model listed. Oling talks to an **OpenAI-compatible** server — for Ollama, enable its OpenAI-compat endpoint and point Oling at it:
 
    ```bash
-   export THUKI_API_BASE_URL=http://127.0.0.1:11434/v1
-   export THUKI_SUPPORTED_AI_MODELS=<your-ollama-model-name>
+   export OLING_API_BASE_URL=http://127.0.0.1:11434/v1
+   export OLING_SUPPORTED_AI_MODELS=<your-ollama-model-name>
    ```
 
-   The default (`http://10.0.0.4:1234/v1` with API key `lm-studio`) is set up for an LM Studio server on the LAN; override it via `THUKI_API_BASE_URL` / `THUKI_API_KEY`.
+   The default (`http://10.0.0.4:1234/v1` with API key `lm-studio`) is set up for an LM Studio server on the LAN; override it via `OLING_API_BASE_URL` / `OLING_API_KEY`.
 
 #### Option B: Docker Sandbox (For security-conscious users)
 
@@ -144,25 +144,25 @@ bun run sandbox:stop
 
 For the full architecture and security philosophy behind the sandbox, see [`sandbox/README.md`](sandbox/README.md).
 
-### Step 2: Install Thuki
+### Step 2: Install Oling
 
 #### Download (Recommended)
 
-1. Download `Thuki.dmg` from the [latest release](https://github.com/quiet-node/thuki/releases/latest)
-2. Double-click `Thuki.dmg` to open it. A window appears showing the Thuki app icon next to an Applications folder shortcut.
-3. Drag `Thuki` onto the `Applications` folder shortcut.
+1. Download `Oling.dmg` from the [latest release](https://github.com/quiet-node/oling/releases/latest)
+2. Double-click `Oling.dmg` to open it. A window appears showing the Oling app icon next to an Applications folder shortcut.
+3. Drag `Oling` onto the `Applications` folder shortcut.
 4. Eject the disk image (drag it to Trash in the Finder sidebar, or right-click and choose Eject).
-5. **Before opening Thuki for the first time**, run this command in Terminal:
+5. **Before opening Oling for the first time**, run this command in Terminal:
 
    ```bash
-   xattr -rd com.apple.quarantine /Applications/Thuki.app
+   xattr -rd com.apple.quarantine /Applications/Oling.app
    ```
 
-   > **Why is this needed?** Thuki is a free, non-profit, open-source app distributed directly and not through the Mac App Store. Apple's Gatekeeper automatically blocks any app downloaded from the internet that has not gone through Apple's paid notarization process. This one-time command removes that block. It is safe and [officially documented by Apple](https://support.apple.com/en-us/102445).
+   > **Why is this needed?** Oling is a free, non-profit, open-source app distributed directly and not through the Mac App Store. Apple's Gatekeeper automatically blocks any app downloaded from the internet that has not gone through Apple's paid notarization process. This one-time command removes that block. It is safe and [officially documented by Apple](https://support.apple.com/en-us/102445).
 
-6. Open Thuki. It will appear in your menu bar.
+6. Open Oling. It will appear in your menu bar.
 
-> **First launch:** macOS will ask for Accessibility permission. This is required for the global keyboard shortcut that lets you summon Thuki from any app. Grant it once; it persists across restarts.
+> **First launch:** macOS will ask for Accessibility permission. This is required for the global keyboard shortcut that lets you summon Oling from any app. Grant it once; it persists across restarts.
 
 #### Build from Source
 
@@ -170,8 +170,8 @@ For the full architecture and security philosophy behind the sandbox, see [`sand
 
 ```bash
 # Clone and install dependencies
-git clone https://github.com/quiet-node/thuki.git
-cd thuki
+git clone https://github.com/quiet-node/oling.git
+cd oling
 bun install
 
 # Launch in development mode
@@ -185,7 +185,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development setup guide.
 <details>
 <summary>Click to expand</summary>
 
-Thuki is a **Tauri v2** app (Rust backend + React/TypeScript frontend) that talks to any OpenAI-compatible `/chat/completions` endpoint — LM Studio, vLLM, llama.cpp server, Ollama's OpenAI-compat endpoint, or a hosted provider — configured via `THUKI_API_BASE_URL` and `THUKI_API_KEY`.
+Oling is a **Tauri v2** app (Rust backend + React/TypeScript frontend) that talks to any OpenAI-compatible `/chat/completions` endpoint — LM Studio, vLLM, llama.cpp server, Ollama's OpenAI-compat endpoint, or a hosted provider — configured via `OLING_API_BASE_URL` and `OLING_API_KEY`.
 
 ### Dual-Layer Isolation
 
@@ -217,38 +217,38 @@ Contributions are welcome! Read [CONTRIBUTING.md](CONTRIBUTING.md) to get starte
 
 Reach out to [Logan](https://x.com/quiet_node) on X with questions or feedback.
 
-## What's next for Thuki
+## What's next for Oling
 
-Thuki is just getting started. Here's where it's headed:
+Oling is just getting started. Here's where it's headed:
 
 ### Secretary Superpowers
 
 The big leap: from answering questions to taking action.
 
-- **Internet search:** let Thuki look things up in real time, not just reason from its training data
-- **Tool integrations via [MCP](https://modelcontextprotocol.io/):** connect Thuki to Gmail, Slack, Discord, Google Calendar, and any other MCP-compatible service; ask it to draft a reply, summarize a thread, or schedule a meeting without ever leaving your current app
-- **More slash commands:** `/screen`, `/think`, `/translate`, `/rewrite`, `/tldr`, `/refine`, `/bullets`, and `/todos` are live. More domain-specific commands are on the way
+- **Internet search:** let Oling look things up in real time, not just reason from its training data
+- **Tool integrations via [MCP](https://modelcontextprotocol.io/):** connect Oling to Gmail, Slack, Discord, Google Calendar, and any other MCP-compatible service; ask it to draft a reply, summarize a thread, or schedule a meeting without ever leaving your current app
+- **More slash commands:** `/think`, `/translate`, `/rewrite`, `/tldr`, `/refine`, `/bullets`, and `/todos` are live. More domain-specific commands are on the way
 
 ### Better AI Control
 
-More flexibility over the model powering Thuki.
+More flexibility over the model powering Oling.
 
 - **Native settings panel (⌘,):** a proper macOS preferences window to configure your model, Ollama endpoint, activation shortcut, slash commands, and system prompt. No config files needed.
-- **In-app model switching:** swap between any Ollama model from the UI without rebuilding (the backend already supports multiple models via `THUKI_SUPPORTED_AI_MODELS`; the picker UI is next)
+- **In-app model switching:** swap between any Ollama model from the UI without rebuilding (the backend already supports multiple models via `OLING_SUPPORTED_AI_MODELS`; the picker UI is next)
 - **Multiple provider support:** opt in to OpenAI, Anthropic, or any OpenAI-compatible endpoint as an alternative to local Ollama
 - **Custom activation shortcut:** change the double-tap trigger to any key or combo you prefer
 
 ### Richer Context
 
-Give Thuki more to work with.
+Give Oling more to work with.
 
 - **Voice input:** dictate your question instead of typing
-- **Auto-capture screen context:** activate Thuki and have it automatically read the active window or selected region as context (partial: `/screen` captures the full screen today; targeted region capture is next)
-- **File and document drop:** drag a PDF, image, or text file directly into Thuki as context for your question
+- **Auto-capture screen context:** activate Oling and have it automatically read the active window or selected region as context (partial: smart reply already captures the active window today; targeted region capture is next)
+- **File and document drop:** drag a PDF, image, or text file directly into Oling as context for your question
 
 ---
 
-Have a feature idea? [Open an issue](https://github.com/quiet-node/thuki/issues) and let's talk about it.
+Have a feature idea? [Open an issue](https://github.com/quiet-node/oling/issues) and let's talk about it.
 
 ## License
 

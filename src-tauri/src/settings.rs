@@ -5,7 +5,7 @@
 //! the Mutex-wrapped in-memory states so every subsequent Tauri command picks
 //! up the new values immediately — no restart required.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -14,7 +14,7 @@ use crate::commands::{
     ApiConfig, ModelConfig, SystemPrompt, DEFAULT_API_BASE_URL, DEFAULT_API_KEY, DEFAULT_MODEL_NAME,
 };
 use crate::database;
-use crate::history::Database;
+use crate::database::Database;
 use crate::reply::ReplyPrompt;
 
 /// Complete snapshot of every user-configurable value. Serialized to/from
@@ -28,10 +28,57 @@ pub struct SettingsData {
     pub reply_prompt: String,
     #[serde(default = "default_ocr_prompt")]
     pub ocr_prompt: String,
+    #[serde(default = "default_shortcut_config")]
+    pub shortcut_config: ShortcutConfig,
     /// Slash command configuration stored as an opaque JSON value.
     /// The frontend owns the schema (overrides, custom, disabled).
     #[serde(default)]
     pub commands_config: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShortcutModifier {
+    Cmd,
+    Ctrl,
+    Shift,
+    Alt,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct KeyComboShortcut {
+    pub key_code: i64,
+    #[serde(default)]
+    pub modifiers: Vec<ShortcutModifier>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OverlayActivationShortcut {
+    DoubleTapModifier {
+        modifier: ShortcutModifier,
+    },
+    KeyCombo {
+        key_code: i64,
+        #[serde(default)]
+        modifiers: Vec<ShortcutModifier>,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ShortcutConfig {
+    #[serde(default = "default_overlay_activation_shortcut")]
+    pub overlay_activation: OverlayActivationShortcut,
+    #[serde(default = "default_screenshot_shortcut")]
+    pub screenshot_capture: KeyComboShortcut,
+}
+
+pub struct ShortcutConfigState(pub Arc<Mutex<ShortcutConfig>>);
+
+impl ShortcutConfigState {
+    pub fn new(config: ShortcutConfig) -> Self {
+        Self(Arc::new(Mutex::new(config.normalize())))
+    }
 }
 
 // ─── DB keys ────────────────────────────────────────────────────────────────
@@ -42,12 +89,79 @@ const K_MODEL_NAME: &str = "settings.model_name";
 const K_SYSTEM_PROMPT: &str = "settings.system_prompt";
 const K_REPLY_PROMPT: &str = "settings.reply_prompt";
 const K_OCR_PROMPT: &str = "settings.ocr_prompt";
+const K_SHORTCUT_CONFIG: &str = "settings.shortcut_config";
 const K_COMMANDS_CONFIG: &str = "settings.commands_config";
 
 pub const DEFAULT_OCR_PROMPT: &str = "请提取图中所有文字，原样输出。";
 
 fn default_ocr_prompt() -> String {
     DEFAULT_OCR_PROMPT.to_string()
+}
+
+fn default_overlay_activation_shortcut() -> OverlayActivationShortcut {
+    OverlayActivationShortcut::DoubleTapModifier {
+        modifier: ShortcutModifier::Ctrl,
+    }
+}
+
+fn default_screenshot_shortcut() -> KeyComboShortcut {
+    KeyComboShortcut {
+        key_code: 0x07,
+        modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+    }
+}
+
+pub fn default_shortcut_config() -> ShortcutConfig {
+    ShortcutConfig {
+        overlay_activation: default_overlay_activation_shortcut(),
+        screenshot_capture: default_screenshot_shortcut(),
+    }
+}
+
+impl KeyComboShortcut {
+    fn normalize(&self) -> Self {
+        let mut modifiers = self.modifiers.clone();
+        modifiers.sort_by_key(|modifier| match modifier {
+            ShortcutModifier::Cmd => 0,
+            ShortcutModifier::Ctrl => 1,
+            ShortcutModifier::Alt => 2,
+            ShortcutModifier::Shift => 3,
+        });
+        modifiers.dedup();
+        Self {
+            key_code: self.key_code,
+            modifiers,
+        }
+    }
+}
+
+impl ShortcutConfig {
+    pub fn normalize(&self) -> Self {
+        Self {
+            overlay_activation: match &self.overlay_activation {
+                OverlayActivationShortcut::DoubleTapModifier { modifier } => {
+                    OverlayActivationShortcut::DoubleTapModifier {
+                        modifier: *modifier,
+                    }
+                }
+                OverlayActivationShortcut::KeyCombo {
+                    key_code,
+                    modifiers,
+                } => {
+                    let combo = KeyComboShortcut {
+                        key_code: *key_code,
+                        modifiers: modifiers.clone(),
+                    }
+                    .normalize();
+                    OverlayActivationShortcut::KeyCombo {
+                        key_code: combo.key_code,
+                        modifiers: combo.modifiers,
+                    }
+                }
+            },
+            screenshot_capture: self.screenshot_capture.normalize(),
+        }
+    }
 }
 
 // ─── Load / Save ────────────────────────────────────────────────────────────
@@ -63,21 +177,22 @@ pub fn load_settings(conn: &rusqlite::Connection) -> SettingsData {
     let db = |key: &str| database::get_config(conn, key).ok().flatten();
 
     let api_base_url = db(K_API_BASE_URL)
-        .or_else(|| env_nonempty("THUKI_API_BASE_URL"))
+        .or_else(|| env_nonempty("OLING_API_BASE_URL"))
         .unwrap_or_else(|| DEFAULT_API_BASE_URL.to_string());
     let api_key = db(K_API_KEY)
-        .or_else(|| env_nonempty("THUKI_API_KEY"))
+        .or_else(|| env_nonempty("OLING_API_KEY"))
         .unwrap_or_else(|| DEFAULT_API_KEY.to_string());
     let model_name = db(K_MODEL_NAME)
         .or_else(model_name_from_env)
         .unwrap_or_else(|| DEFAULT_MODEL_NAME.to_string());
     let system_prompt = db(K_SYSTEM_PROMPT)
-        .or_else(|| env_nonempty("THUKI_SYSTEM_PROMPT"))
+        .or_else(|| env_nonempty("OLING_SYSTEM_PROMPT"))
         .unwrap_or_else(crate::commands::load_system_prompt);
     let reply_prompt = db(K_REPLY_PROMPT)
-        .or_else(|| env_nonempty("THUKI_REPLY_PROMPT"))
+        .or_else(|| env_nonempty("OLING_REPLY_PROMPT"))
         .unwrap_or_else(crate::reply::load_reply_prompt);
     let ocr_prompt = db(K_OCR_PROMPT).unwrap_or_else(default_ocr_prompt);
+    let shortcut_config = load_shortcut_config(conn);
     let commands_config = load_commands_config(conn);
 
     SettingsData {
@@ -87,6 +202,7 @@ pub fn load_settings(conn: &rusqlite::Connection) -> SettingsData {
         system_prompt,
         reply_prompt,
         ocr_prompt,
+        shortcut_config,
         commands_config,
     }
 }
@@ -103,6 +219,9 @@ pub fn save_settings(conn: &rusqlite::Connection, data: &SettingsData) -> Result
     set(K_SYSTEM_PROMPT, &data.system_prompt)?;
     set(K_REPLY_PROMPT, &data.reply_prompt)?;
     set(K_OCR_PROMPT, &data.ocr_prompt)?;
+    let shortcut_json = serde_json::to_string(&data.shortcut_config.normalize())
+        .map_err(|e| format!("Failed to serialize shortcut_config: {e}"))?;
+    set(K_SHORTCUT_CONFIG, &shortcut_json)?;
     let config_json = serde_json::to_string(&data.commands_config)
         .map_err(|e| format!("Failed to serialize commands_config: {e}"))?;
     set(K_COMMANDS_CONFIG, &config_json)?;
@@ -118,6 +237,7 @@ pub fn apply_to_live_states(
     model_config: &Mutex<ModelConfig>,
     system_prompt: &Mutex<SystemPrompt>,
     reply_prompt: &Mutex<ReplyPrompt>,
+    shortcut_config: &ShortcutConfigState,
 ) {
     *api_config.lock().unwrap() = ApiConfig {
         base_url: data.api_base_url.trim_end_matches('/').to_string(),
@@ -129,15 +249,16 @@ pub fn apply_to_live_states(
     };
     *system_prompt.lock().unwrap() = SystemPrompt(data.system_prompt.clone());
     *reply_prompt.lock().unwrap() = ReplyPrompt(data.reply_prompt.clone());
+    *shortcut_config.0.lock().unwrap() = data.shortcut_config.normalize();
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /// Extracts the first comma-separated model name from
-/// `THUKI_SUPPORTED_AI_MODELS`, trimmed. Returns `None` if the env is
+/// `OLING_SUPPORTED_AI_MODELS`, trimmed. Returns `None` if the env is
 /// unset, blank, or the first entry is empty after trimming.
 fn model_name_from_env() -> Option<String> {
-    let s = env_nonempty("THUKI_SUPPORTED_AI_MODELS")?;
+    let s = env_nonempty("OLING_SUPPORTED_AI_MODELS")?;
     let first = s.split(',').next()?.trim().to_string();
     if first.is_empty() {
         None
@@ -162,6 +283,15 @@ fn load_commands_config(conn: &rusqlite::Connection) -> serde_json::Value {
         }))
 }
 
+fn load_shortcut_config(conn: &rusqlite::Connection) -> ShortcutConfig {
+    database::get_config(conn, K_SHORTCUT_CONFIG)
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<ShortcutConfig>(&s).ok())
+        .map(|config| config.normalize())
+        .unwrap_or_else(default_shortcut_config)
+}
+
 // ─── Tauri commands ─────────────────────────────────────────────────────────
 
 /// Returns the full settings snapshot as JSON.
@@ -183,8 +313,11 @@ pub fn update_settings(
     model_config: State<'_, Mutex<ModelConfig>>,
     system_prompt: State<'_, Mutex<SystemPrompt>>,
     reply_prompt: State<'_, Mutex<ReplyPrompt>>,
+    shortcut_config: State<'_, ShortcutConfigState>,
 ) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut data = data;
+    data.shortcut_config = data.shortcut_config.normalize();
     save_settings(&conn, &data)?;
     apply_to_live_states(
         &data,
@@ -192,6 +325,7 @@ pub fn update_settings(
         &model_config,
         &system_prompt,
         &reply_prompt,
+        &shortcut_config,
     );
     Ok(())
 }
@@ -245,6 +379,7 @@ mod tests {
         assert!(!s.system_prompt.is_empty());
         assert!(!s.reply_prompt.is_empty());
         assert_eq!(s.ocr_prompt, DEFAULT_OCR_PROMPT);
+        assert_eq!(s.shortcut_config, default_shortcut_config());
         // Default commands_config has empty overrides/custom/disabled.
         assert!(s.commands_config["overrides"]
             .as_object()
@@ -264,6 +399,16 @@ mod tests {
             system_prompt: "Be brief.".to_string(),
             reply_prompt: "Reply concisely.".to_string(),
             ocr_prompt: "Extract every visible line.".to_string(),
+            shortcut_config: ShortcutConfig {
+                overlay_activation: OverlayActivationShortcut::KeyCombo {
+                    key_code: 0x06,
+                    modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+                },
+                screenshot_capture: KeyComboShortcut {
+                    key_code: 0x0f,
+                    modifiers: vec![ShortcutModifier::Ctrl, ShortcutModifier::Shift],
+                },
+            },
             commands_config: serde_json::json!({
                 "overrides": {
                     "/translate": { "prompt_template": "Custom translate" }
@@ -284,6 +429,20 @@ mod tests {
         assert_eq!(loaded.reply_prompt, "Reply concisely.");
         assert_eq!(loaded.ocr_prompt, "Extract every visible line.");
         assert_eq!(
+            loaded.shortcut_config.overlay_activation,
+            OverlayActivationShortcut::KeyCombo {
+                key_code: 0x06,
+                modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+            }
+        );
+        assert_eq!(
+            loaded.shortcut_config.screenshot_capture,
+            KeyComboShortcut {
+                key_code: 0x0f,
+                modifiers: vec![ShortcutModifier::Ctrl, ShortcutModifier::Shift],
+            }
+        );
+        assert_eq!(
             loaded.commands_config["overrides"]["/translate"]["prompt_template"],
             "Custom translate"
         );
@@ -297,31 +456,31 @@ mod tests {
     #[test]
     fn model_name_from_env_returns_first_entry() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("THUKI_SUPPORTED_AI_MODELS", "first-model,second-model");
+        std::env::set_var("OLING_SUPPORTED_AI_MODELS", "first-model,second-model");
         assert_eq!(model_name_from_env().as_deref(), Some("first-model"));
-        std::env::remove_var("THUKI_SUPPORTED_AI_MODELS");
+        std::env::remove_var("OLING_SUPPORTED_AI_MODELS");
     }
 
     #[test]
     fn model_name_from_env_returns_none_for_blank() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("THUKI_SUPPORTED_AI_MODELS", "  ");
+        std::env::set_var("OLING_SUPPORTED_AI_MODELS", "  ");
         assert!(model_name_from_env().is_none());
-        std::env::remove_var("THUKI_SUPPORTED_AI_MODELS");
+        std::env::remove_var("OLING_SUPPORTED_AI_MODELS");
     }
 
     #[test]
     fn model_name_from_env_returns_none_for_commas_only() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("THUKI_SUPPORTED_AI_MODELS", ",,,");
+        std::env::set_var("OLING_SUPPORTED_AI_MODELS", ",,,");
         assert!(model_name_from_env().is_none());
-        std::env::remove_var("THUKI_SUPPORTED_AI_MODELS");
+        std::env::remove_var("OLING_SUPPORTED_AI_MODELS");
     }
 
     #[test]
     fn model_name_from_env_returns_none_when_unset() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("THUKI_SUPPORTED_AI_MODELS");
+        std::env::remove_var("OLING_SUPPORTED_AI_MODELS");
         assert!(model_name_from_env().is_none());
     }
 
@@ -344,6 +503,15 @@ mod tests {
             system_prompt: "new sys".to_string(),
             reply_prompt: "new reply".to_string(),
             ocr_prompt: "new ocr".to_string(),
+            shortcut_config: ShortcutConfig {
+                overlay_activation: OverlayActivationShortcut::DoubleTapModifier {
+                    modifier: ShortcutModifier::Alt,
+                },
+                screenshot_capture: KeyComboShortcut {
+                    key_code: 0x08,
+                    modifiers: vec![ShortcutModifier::Cmd],
+                },
+            },
             commands_config: serde_json::json!({}),
         };
         let api = Mutex::new(ApiConfig {
@@ -356,8 +524,9 @@ mod tests {
         });
         let sys = Mutex::new(SystemPrompt("old".to_string()));
         let reply = Mutex::new(ReplyPrompt("old".to_string()));
+        let shortcuts = ShortcutConfigState::new(default_shortcut_config());
 
-        apply_to_live_states(&data, &api, &model, &sys, &reply);
+        apply_to_live_states(&data, &api, &model, &sys, &reply, &shortcuts);
 
         let a = api.lock().unwrap();
         assert_eq!(a.base_url, "http://new:1234/v1"); // trailing slash stripped
@@ -371,6 +540,18 @@ mod tests {
 
         assert_eq!(sys.lock().unwrap().0, "new sys");
         assert_eq!(reply.lock().unwrap().0, "new reply");
+        assert_eq!(
+            *shortcuts.0.lock().unwrap(),
+            ShortcutConfig {
+                overlay_activation: OverlayActivationShortcut::DoubleTapModifier {
+                    modifier: ShortcutModifier::Alt,
+                },
+                screenshot_capture: KeyComboShortcut {
+                    key_code: 0x08,
+                    modifiers: vec![ShortcutModifier::Cmd],
+                },
+            }
+        );
     }
 
     #[test]
@@ -382,12 +563,17 @@ mod tests {
             system_prompt: "s".to_string(),
             reply_prompt: "r".to_string(),
             ocr_prompt: "o".to_string(),
+            shortcut_config: default_shortcut_config(),
             commands_config: serde_json::json!({ "overrides": {}, "custom": [], "disabled": [] }),
         };
         let json = serde_json::to_value(&data).unwrap();
         assert_eq!(json["api_base_url"], "http://x");
         assert_eq!(json["model_name"], "m");
         assert_eq!(json["ocr_prompt"], "o");
+        assert_eq!(
+            json["shortcut_config"]["overlay_activation"]["kind"],
+            "double_tap_modifier"
+        );
         assert!(json["commands_config"]["overrides"].is_object());
     }
 
@@ -400,6 +586,17 @@ mod tests {
             "system_prompt": "sp",
             "reply_prompt": "rp",
             "ocr_prompt": "op",
+            "shortcut_config": {
+                "overlay_activation": {
+                    "kind": "key_combo",
+                    "key_code": 6,
+                    "modifiers": ["cmd", "shift"]
+                },
+                "screenshot_capture": {
+                    "key_code": 15,
+                    "modifiers": ["ctrl", "shift"]
+                }
+            },
             "commands_config": {
                 "overrides": { "/translate": { "prompt_template": "custom" } },
                 "custom": [],
@@ -409,6 +606,13 @@ mod tests {
         let data: SettingsData = serde_json::from_str(json).unwrap();
         assert_eq!(data.api_base_url, "http://y");
         assert_eq!(data.ocr_prompt, "op");
+        assert_eq!(
+            data.shortcut_config.screenshot_capture,
+            KeyComboShortcut {
+                key_code: 15,
+                modifiers: vec![ShortcutModifier::Ctrl, ShortcutModifier::Shift],
+            }
+        );
         assert_eq!(
             data.commands_config["overrides"]["/translate"]["prompt_template"],
             "custom"
@@ -428,31 +632,32 @@ mod tests {
         let data: SettingsData = serde_json::from_str(json).unwrap();
         assert_eq!(data.api_base_url, "http://z");
         assert_eq!(data.ocr_prompt, DEFAULT_OCR_PROMPT);
+        assert_eq!(data.shortcut_config, default_shortcut_config());
         assert!(data.commands_config.is_null());
     }
 
     #[test]
     fn env_nonempty_returns_none_for_missing() {
-        assert!(env_nonempty("THUKI_NONEXISTENT_VAR_12345").is_none());
+        assert!(env_nonempty("OLING_NONEXISTENT_VAR_12345").is_none());
     }
 
     #[test]
     fn env_nonempty_returns_none_for_whitespace_only() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("THUKI_TEST_ENVCHECK", "   ");
-        assert!(env_nonempty("THUKI_TEST_ENVCHECK").is_none());
-        std::env::remove_var("THUKI_TEST_ENVCHECK");
+        std::env::set_var("OLING_TEST_ENVCHECK", "   ");
+        assert!(env_nonempty("OLING_TEST_ENVCHECK").is_none());
+        std::env::remove_var("OLING_TEST_ENVCHECK");
     }
 
     #[test]
     fn env_nonempty_returns_value_when_set() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("THUKI_TEST_ENVCHECK", "hello");
+        std::env::set_var("OLING_TEST_ENVCHECK", "hello");
         assert_eq!(
-            env_nonempty("THUKI_TEST_ENVCHECK").as_deref(),
+            env_nonempty("OLING_TEST_ENVCHECK").as_deref(),
             Some("hello")
         );
-        std::env::remove_var("THUKI_TEST_ENVCHECK");
+        std::env::remove_var("OLING_TEST_ENVCHECK");
     }
 
     #[test]
@@ -495,6 +700,7 @@ mod tests {
             system_prompt: "s".to_string(),
             reply_prompt: "r".to_string(),
             ocr_prompt: "o".to_string(),
+            shortcut_config: default_shortcut_config(),
             commands_config: serde_json::json!({ "overrides": {}, "custom": [], "disabled": [] }),
         };
         save_settings(&conn, &data).unwrap();

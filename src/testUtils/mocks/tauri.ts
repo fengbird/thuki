@@ -51,6 +51,14 @@ const DEFAULT_MOCK_SETTINGS = {
   system_prompt: 'Be helpful.',
   reply_prompt: 'Reply concisely.',
   ocr_prompt: '请提取图中所有文字，原样输出。',
+  shortcut_config: {
+    overlay_activation: { kind: 'double_tap_modifier', modifier: 'ctrl' },
+    screenshot_capture: {
+      kind: 'key_combo',
+      key_code: 0x07,
+      modifiers: ['cmd', 'shift'],
+    },
+  },
   commands_config: { overrides: {}, custom: [], disabled: [] },
 };
 

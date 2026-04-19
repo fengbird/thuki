@@ -383,12 +383,14 @@ describe('OverlayView — toolbar actions', () => {
   });
 
   it('OCR uses the configured settings prompt when available', async () => {
-    invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'get_settings') {
-        return { ocr_prompt: '请读取图片里的全部文字，并按原顺序输出。' };
-      }
-      return args;
-    });
+    invoke.mockImplementation(
+      async (cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === 'get_settings') {
+          return { ocr_prompt: '请读取图片里的全部文字，并按原顺序输出。' };
+        }
+        return args;
+      },
+    );
     const restore = await setupWithSelection();
     try {
       fireEvent.click(screen.getByTestId('overlay-ocr'));
@@ -541,7 +543,7 @@ describe('OverlayView — toolbar actions', () => {
       fireEvent.click(screen.getByTestId('overlay-long'));
       await act(async () => {});
       await act(async () => {
-        emitTauriEvent('thuki://long-capture-done', '/tmp/long.png');
+        emitTauriEvent('oling://long-capture-done', '/tmp/long.png');
       });
       expect(screen.getByTestId('overlay-hint').textContent).toContain(
         'Long screenshot copied',
@@ -561,7 +563,7 @@ describe('OverlayView — toolbar actions', () => {
       fireEvent.click(screen.getByTestId('overlay-long'));
       await act(async () => {});
       await act(async () => {
-        emitTauriEvent('thuki://long-capture-done', '/tmp/long.png');
+        emitTauriEvent('oling://long-capture-done', '/tmp/long.png');
       });
       expect(invoke).not.toHaveBeenCalledWith(
         'copy_image_to_clipboard',
@@ -581,7 +583,7 @@ describe('OverlayView — toolbar actions', () => {
         (screen.getByTestId('overlay-long') as HTMLButtonElement).disabled,
       ).toBe(true);
       await act(async () => {
-        emitTauriEvent('thuki://long-capture-cancelled', null);
+        emitTauriEvent('oling://long-capture-cancelled', null);
       });
       expect(
         (screen.getByTestId('overlay-long') as HTMLButtonElement).disabled,
@@ -602,7 +604,7 @@ describe('OverlayView — toolbar actions', () => {
       ).toBe(true);
       await act(async () => {
         emitTauriEvent(
-          'thuki://long-capture-error',
+          'oling://long-capture-error',
           'no frames captured — click the target window and scroll first',
         );
       });
@@ -635,6 +637,9 @@ describe('OverlayView — toolbar actions', () => {
     try {
       fireEvent.click(screen.getByTestId('overlay-close'));
       await act(async () => {});
+      expect(invoke).toHaveBeenCalledWith('remove_image_command', {
+        path: '/tmp/shot.png',
+      });
       expect(invoke).toHaveBeenCalledWith('close_overlay_window');
     } finally {
       restore();

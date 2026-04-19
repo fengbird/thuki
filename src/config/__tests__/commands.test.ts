@@ -38,13 +38,6 @@ describe('COMMANDS registry', () => {
     expect(unique.size).toBe(triggers.length);
   });
 
-  it('includes the /screen command', () => {
-    const screen = COMMANDS.find((c: Command) => c.trigger === '/screen');
-    expect(screen).toBeDefined();
-    expect(screen?.label).toBe('/screen');
-    expect(screen?.description.length).toBeGreaterThan(0);
-  });
-
   it('includes the /think command', () => {
     const think = COMMANDS.find((c: Command) => c.trigger === '/think');
     expect(think).toBeDefined();
@@ -107,18 +100,16 @@ describe('COMMANDS registry', () => {
     expect(cmd?.promptTemplate).toContain('$LANG');
   });
 
-  it('/screen and /think have no promptTemplate', () => {
-    const screen = COMMANDS.find((c: Command) => c.trigger === '/screen');
+  it('/think has no promptTemplate', () => {
     const think = COMMANDS.find((c: Command) => c.trigger === '/think');
-    expect(screen?.promptTemplate).toBeUndefined();
     expect(think?.promptTemplate).toBeUndefined();
   });
 });
 
 describe('SYSTEM_TRIGGERS', () => {
-  it('contains /screen and /think', () => {
-    expect(SYSTEM_TRIGGERS.has('/screen')).toBe(true);
+  it('contains /think only', () => {
     expect(SYSTEM_TRIGGERS.has('/think')).toBe(true);
+    expect(SYSTEM_TRIGGERS.has('/screen')).toBe(false);
   });
 
   it('does not contain builtin commands', () => {
@@ -139,8 +130,8 @@ describe('mergeCommands', () => {
   it('returns all commands with categories when no config', () => {
     const result = mergeCommands();
     expect(result.length).toBe(COMMANDS.length);
-    const screen = result.find((c: ActiveCommand) => c.trigger === '/screen');
-    expect(screen?.category).toBe('system');
+    const think = result.find((c: ActiveCommand) => c.trigger === '/think');
+    expect(think?.category).toBe('system');
     const translate = result.find(
       (c: ActiveCommand) => c.trigger === '/translate',
     );
@@ -160,8 +151,7 @@ describe('mergeCommands', () => {
     };
     const result = mergeCommands(cfg);
     expect(result.find((c) => c.trigger === '/refine')).toBeUndefined();
-    // System commands are never filtered.
-    expect(result.find((c) => c.trigger === '/screen')).toBeDefined();
+    expect(result.find((c) => c.trigger === '/think')).toBeDefined();
   });
 
   it('applies trigger override to built-in command', () => {
@@ -228,15 +218,35 @@ describe('mergeCommands', () => {
     expect(result.find((c) => c.trigger === '/mycmd')).toBeUndefined();
   });
 
-  it('system commands cannot be disabled', () => {
+  it('system commands respect the disabled list', () => {
     const cfg: CommandsConfig = {
       overrides: {},
       custom: [],
-      disabled: ['/screen', '/think'],
+      disabled: ['/think'],
     };
     const result = mergeCommands(cfg);
-    expect(result.find((c) => c.trigger === '/screen')).toBeDefined();
-    expect(result.find((c) => c.trigger === '/think')).toBeDefined();
+    expect(result.find((c) => c.trigger === '/think')).toBeUndefined();
+  });
+
+  it('applies trigger and description overrides to system commands', () => {
+    const cfg: CommandsConfig = {
+      overrides: {
+        '/think': {
+          trigger: '/ponder',
+          description: 'Think more deliberately',
+          prompt_template: 'ignored template',
+        },
+      },
+      custom: [],
+      disabled: [],
+    };
+    const result = mergeCommands(cfg);
+    const command = result.find((c) => c.trigger === '/ponder');
+    expect(command).toBeDefined();
+    expect(command?.category).toBe('system');
+    expect(command?.description).toBe('Think more deliberately');
+    expect(command?.originalTrigger).toBe('/think');
+    expect(command?.promptTemplate).toBeUndefined();
   });
 
   it('custom commands without prompt_template have undefined promptTemplate', () => {
@@ -253,12 +263,12 @@ describe('mergeCommands', () => {
 
 describe('buildPrompt', () => {
   it('returns null for commands without a promptTemplate', () => {
-    expect(buildPrompt('/screen', 'hello')).toBeNull();
     expect(buildPrompt('/think', 'hello')).toBeNull();
   });
 
   it('returns null for unknown triggers', () => {
     expect(buildPrompt('/nonexistent', 'hello')).toBeNull();
+    expect(buildPrompt('/screen', 'hello')).toBeNull();
   });
 
   it('uses typed text as $INPUT when no selected text', () => {

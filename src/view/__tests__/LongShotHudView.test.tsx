@@ -15,7 +15,7 @@ function emitProgress(payload: {
   width: number;
   height: number;
 }) {
-  emitTauriEvent('thuki://long-capture-progress', payload);
+  emitTauriEvent('oling://long-capture-progress', payload);
 }
 
 describe('LongShotHudView', () => {

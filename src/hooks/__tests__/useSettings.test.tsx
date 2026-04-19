@@ -1,15 +1,24 @@
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useSettings } from '../useSettings';
+import type { SettingsData } from '../useSettings';
 import { invoke } from '../../testUtils/mocks/tauri';
 
-const MOCK_SETTINGS = {
+const MOCK_SETTINGS: SettingsData = {
   api_base_url: 'http://10.0.0.4:1234/v1',
   api_key: 'lm-studio',
   model_name: 'qwen3-vl-8b-thinking',
   system_prompt: 'Be helpful.',
   reply_prompt: 'Reply concisely.',
   ocr_prompt: '请提取图中所有文字，原样输出。',
+  shortcut_config: {
+    overlay_activation: { kind: 'double_tap_modifier', modifier: 'ctrl' },
+    screenshot_capture: {
+      kind: 'key_combo',
+      key_code: 0x07,
+      modifiers: ['cmd', 'shift'],
+    },
+  },
   commands_config: { overrides: {}, custom: [], disabled: [] },
 };
 

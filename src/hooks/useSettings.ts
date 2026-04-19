@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 import type { CommandsConfig } from '../config/commands';
+import type { ShortcutConfig } from '../config/shortcuts';
 
 /**
  * Mirrors the Rust `SettingsData` struct. All fields arrive as-is from
@@ -14,6 +15,7 @@ export interface SettingsData {
   system_prompt: string;
   reply_prompt: string;
   ocr_prompt: string;
+  shortcut_config: ShortcutConfig;
   /** Slash command configuration: overrides, custom commands, disabled list. */
   commands_config: CommandsConfig;
 }

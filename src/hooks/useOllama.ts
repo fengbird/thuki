@@ -34,12 +34,11 @@ export type StreamChunk =
 
 /**
  * A custom hook that simplifies interactions with the local Ollama LLM.
- * It manages message history, streaming state, and sets up Rust IPC channels.
+ * It manages in-memory message history, streaming state, and Rust IPC setup.
  *
  * @param onTurnComplete Optional callback invoked after a complete user/assistant
  *   turn (i.e., when the `Done` chunk is received). Receives the user message
  *   and the finalized assistant message. Not called on `Cancelled` or `Error`.
- *   Used by the caller to persist completed turns to SQLite.
  * @returns An object containing the message history, a submit callback function, and operational states.
  */
 export function useOllama(
@@ -187,26 +186,11 @@ export function useOllama(
     void invoke('reset_conversation');
   }, []);
 
-  /**
-   * Replaces the current message list with a previously loaded set of messages.
-   *
-   * Called after `load_conversation` returns from the backend (which already
-   * synced the Rust `ConversationHistory`). Does NOT call `reset_conversation`
-   * to avoid conflicting with the epoch bump performed by `load_conversation`.
-   *
-   * @param msgs The complete message array to load into React state.
-   */
-  const loadMessages = useCallback((msgs: Message[]) => {
-    setMessages(msgs);
-    setIsGenerating(false);
-  }, []);
-
   return {
     messages,
     ask,
     cancel,
     isGenerating,
     reset,
-    loadMessages,
   };
 }

@@ -1,7 +1,7 @@
 /*!
- * Thuki Core Library
+ * Oling Core Library
  *
- * Application bootstrap for the Thuki desktop agent. Configures the macOS
+ * Application bootstrap for the Oling desktop agent. Configures the macOS
  * status bar presence, system tray menu, double-tap Option hotkey, and
  * window lifecycle (hide-on-close instead of quit).
  *
@@ -17,7 +17,6 @@
 
 pub mod commands;
 pub mod database;
-pub mod history;
 pub mod images;
 pub mod long_shot;
 pub mod onboarding;
@@ -52,12 +51,12 @@ use tauri_nspanel::{
 
 // ─── NSPanel definition (macOS only) ────────────────────────────────────────
 
-// ThukiPanel — custom NSPanel subclass for the overlay.
+// OlingPanel — custom NSPanel subclass for the overlay.
 // `can_become_key_window: true` allows keyboard input for the chat.
 // `is_floating_panel: true` keeps the panel above normal windows.
 #[cfg(target_os = "macos")]
 tauri_panel! {
-    panel!(ThukiPanel {
+    panel!(OlingPanel {
         config: {
             can_become_key_window: true,
             is_floating_panel: true
@@ -74,13 +73,13 @@ const OVERLAY_LOGICAL_WIDTH: f64 = 600.0;
 const OVERLAY_LOGICAL_HEIGHT_COLLAPSED: f64 = 80.0;
 
 /// Frontend event used to synchronize show/hide animations with native window visibility.
-const OVERLAY_VISIBILITY_EVENT: &str = "thuki://visibility";
+const OVERLAY_VISIBILITY_EVENT: &str = "oling://visibility";
 const OVERLAY_VISIBILITY_SHOW: &str = "show";
 const OVERLAY_VISIBILITY_HIDE_REQUEST: &str = "hide-request";
 
 /// Frontend event that triggers the onboarding screen when one or more
 /// required permissions have not yet been granted.
-const ONBOARDING_EVENT: &str = "thuki://onboarding";
+const ONBOARDING_EVENT: &str = "oling://onboarding";
 
 /// Logical dimensions of the onboarding window (centered, fixed size).
 /// Content fits tightly; native macOS shadow is re-enabled for onboarding
@@ -289,7 +288,7 @@ pub fn show_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::Activati
             );
         }
         Err(e) => {
-            eprintln!("thuki: [show_overlay] get_webview_panel FAILED: {e:?}");
+            eprintln!("oling: [show_overlay] get_webview_panel FAILED: {e:?}");
             // Reset the flag so future activation attempts are not permanently blocked.
             OVERLAY_INTENDED_VISIBLE.store(false, Ordering::SeqCst);
         }
@@ -367,17 +366,17 @@ fn capture_and_open_overlay(app_handle: &tauri::AppHandle) {
             tx.send(crate::screenshot::capture_full_screen_pixels())
                 .ok();
         }) {
-            eprintln!("thuki: [overlay] failed to dispatch capture: {e}");
+            eprintln!("oling: [overlay] failed to dispatch capture: {e}");
             return;
         }
         let (width, height, rgba) = match rx.await {
             Ok(Ok(v)) => v,
             Ok(Err(e)) => {
-                eprintln!("thuki: [overlay] capture failed: {e}");
+                eprintln!("oling: [overlay] capture failed: {e}");
                 return;
             }
             Err(e) => {
-                eprintln!("thuki: [overlay] capture channel closed: {e}");
+                eprintln!("oling: [overlay] capture channel closed: {e}");
                 return;
             }
         };
@@ -392,11 +391,11 @@ fn capture_and_open_overlay(app_handle: &tauri::AppHandle) {
         {
             Ok(Ok(p)) => p,
             Ok(Err(e)) => {
-                eprintln!("thuki: [overlay] png encode failed: {e}");
+                eprintln!("oling: [overlay] png encode failed: {e}");
                 return;
             }
             Err(e) => {
-                eprintln!("thuki: [overlay] encode task failed: {e}");
+                eprintln!("oling: [overlay] encode task failed: {e}");
                 return;
             }
         };
@@ -477,7 +476,7 @@ fn notify_overlay_hidden() {
 /// the frontend listener registration.
 #[tauri::command]
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn notify_frontend_ready(app_handle: tauri::AppHandle, db: tauri::State<history::Database>) {
+fn notify_frontend_ready(app_handle: tauri::AppHandle, db: tauri::State<database::Database>) {
     if LAUNCH_SHOW_PENDING.swap(false, Ordering::SeqCst) {
         #[cfg(target_os = "macos")]
         {
@@ -535,7 +534,7 @@ fn notify_frontend_ready(app_handle: tauri::AppHandle, db: tauri::State<history:
 #[tauri::command]
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn finish_onboarding(
-    db: tauri::State<history::Database>,
+    db: tauri::State<database::Database>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| format!("db lock poisoned: {e}"))?;
@@ -586,7 +585,7 @@ fn init_panel(app_handle: &tauri::AppHandle) {
         .expect("main window must exist at setup time");
 
     let panel = window
-        .to_panel::<ThukiPanel>()
+        .to_panel::<OlingPanel>()
         .expect("NSPanel conversion must succeed on macOS");
 
     panel.set_level(PanelLevel::Floating.value());
@@ -613,7 +612,7 @@ fn init_panel(app_handle: &tauri::AppHandle) {
 // ─── Onboarding window ───────────────────────────────────────────────────────
 
 /// Sizes the main window for the onboarding screen, centers it, makes it
-/// visible, and emits `thuki://onboarding` so the frontend switches to
+/// visible, and emits `oling://onboarding` so the frontend switches to
 /// `OnboardingView`.
 ///
 /// All window mutations run on the macOS main thread via `run_on_main_thread`;
@@ -661,15 +660,12 @@ struct OnboardingPayload {
 
 // ─── Image cleanup ──────────────────────────────────────────────────────────
 
-/// Interval between periodic orphaned-image cleanup sweeps.
-const IMAGE_CLEANUP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
-
 /// Runs a single orphaned-image cleanup sweep. Thin orchestration wrapper
 /// that delegates to `database::get_all_image_paths` and
 /// `images::cleanup_orphaned_images`, both independently tested.
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn run_image_cleanup(app_handle: &tauri::AppHandle) {
-    let db = app_handle.state::<history::Database>();
+    let db = app_handle.state::<database::Database>();
     let conn = match db.0.lock() {
         Ok(c) => c,
         Err(_) => return,
@@ -682,21 +678,7 @@ fn run_image_cleanup(app_handle: &tauri::AppHandle) {
         Err(_) => return,
     };
     let _ = images::cleanup_orphaned_images(&base_dir, &referenced);
-}
-
-/// Spawns a background Tokio task that runs the cleanup sweep on a fixed
-/// interval. Thin async wrapper — delegates to `run_image_cleanup`.
-#[cfg_attr(coverage_nightly, coverage(off))]
-fn spawn_periodic_image_cleanup(app_handle: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(IMAGE_CLEANUP_INTERVAL);
-        // Skip the first tick (startup cleanup already ran synchronously).
-        interval.tick().await;
-        loop {
-            interval.tick().await;
-            run_image_cleanup(&app_handle);
-        }
-    });
+    let _ = images::cleanup_transient_tmp_images();
 }
 
 // ─── Reply hotkey orchestration ────────────────────────────────────────────
@@ -705,21 +687,21 @@ fn spawn_periodic_image_cleanup(app_handle: tauri::AppHandle) {
 /// overlay can appear with a "capturing…" state before the screenshot
 /// actually completes. Carries only app identity; the image arrives in a
 /// separate event below.
-const REPLY_DRAFT_OPEN_EVENT: &str = "thuki://reply-draft-open";
+const REPLY_DRAFT_OPEN_EVENT: &str = "oling://reply-draft-open";
 /// Frontend event fired once the window screenshot is ready (or failed).
 /// Payload is `ReplyDraftImagePayload` — `image_path` populated on
 /// success, `error` populated on failure.
-const REPLY_DRAFT_IMAGE_EVENT: &str = "thuki://reply-draft-image";
+const REPLY_DRAFT_IMAGE_EVENT: &str = "oling://reply-draft-image";
 
 /// Handles a ⌃⇧R press in two phases:
 ///
 /// 1. **Synchronous**: capture the frontmost app info, emit
-///    `thuki://reply-draft-open`, and show the overlay. The user sees the
+///    `oling://reply-draft-open`, and show the overlay. The user sees the
 ///    draft panel pop up within a few frames of pressing the hotkey, with
 ///    a "Capturing screenshot of <App>…" placeholder.
 /// 2. **Asynchronous**: screenshot only that app's topmost window
 ///    (through `screenshot::capture_window_command`), then emit
-///    `thuki://reply-draft-image` with either the file path on success or
+///    `oling://reply-draft-image` with either the file path on success or
 ///    a human-readable error on failure. The frontend kicks off reply
 ///    generation once the image path arrives.
 ///
@@ -731,7 +713,7 @@ const REPLY_DRAFT_IMAGE_EVENT: &str = "thuki://reply-draft-image";
 fn handle_reply_hotkey(app_handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let Some(info) = reply::frontmost_app_info() else {
-            eprintln!("thuki: [reply] no frontmost app — ignoring hotkey");
+            eprintln!("oling: [reply] no frontmost app — ignoring hotkey");
             return;
         };
 
@@ -744,7 +726,7 @@ fn handle_reply_hotkey(app_handle: tauri::AppHandle) {
                 app_name: info.app_name.clone(),
             },
         ) {
-            eprintln!("thuki: [reply] failed to emit draft-open event: {e}");
+            eprintln!("oling: [reply] failed to emit draft-open event: {e}");
             return;
         }
 
@@ -762,7 +744,7 @@ fn handle_reply_hotkey(app_handle: tauri::AppHandle) {
                     error: None,
                 },
                 Err(e) => {
-                    eprintln!("thuki: [reply] window capture failed: {e}");
+                    eprintln!("oling: [reply] window capture failed: {e}");
                     reply::ReplyDraftImagePayload {
                         image_path: None,
                         error: Some(e),
@@ -771,7 +753,7 @@ fn handle_reply_hotkey(app_handle: tauri::AppHandle) {
             };
 
         if let Err(e) = app_handle.emit(REPLY_DRAFT_IMAGE_EVENT, image_payload) {
-            eprintln!("thuki: [reply] failed to emit draft-image event: {e}");
+            eprintln!("oling: [reply] failed to emit draft-image event: {e}");
         }
     });
 }
@@ -791,7 +773,7 @@ fn handle_reply_hotkey(app_handle: tauri::AppHandle) {
 /// Panics if the Tauri runtime fails to initialise.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Load .env file so THUKI_SYSTEM_PROMPT and future backend env vars
+    // Load .env file so OLING_SYSTEM_PROMPT and future backend env vars
     // work the same way as Vite's VITE_* vars for the frontend.
     dotenvy::dotenv().ok();
 
@@ -812,21 +794,11 @@ pub fn run() {
             init_panel(app.app_handle());
 
             // ── System tray icon + menu ───────────────────────────────────
-            let show_item = MenuItem::with_id(app, "show", "Open Thuki", true, None::<&str>)?;
-            let screenshot_item = MenuItem::with_id(
-                app,
-                "screenshot",
-                "New Screenshot…",
-                true,
-                Some("Cmd+Shift+X"),
-            )?;
+            let show_item = MenuItem::with_id(app, "show", "Open Oling", true, None::<&str>)?;
             let settings_item =
                 MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(
-                app,
-                &[&show_item, &screenshot_item, &settings_item, &quit_item],
-            )?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
 
             let tray_icon =
                 tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
@@ -835,19 +807,15 @@ pub fn run() {
             let _tray = TrayIconBuilder::new()
                 .icon(tray_icon)
                 .icon_as_template(true)
-                .tooltip("Thuki")
+                .tooltip("Oling")
                 .menu(&tray_menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         show_overlay(app, crate::context::ActivationContext::empty());
                     }
-                    "screenshot" => {
-                        #[cfg(target_os = "macos")]
-                        capture_and_open_overlay(app);
-                    }
                     "settings" => {
-                        let _ = app.emit("thuki://settings-open", ());
+                        let _ = app.emit("oling://settings-open", ());
                         show_overlay(app, crate::context::ActivationContext::empty());
                     }
                     "quit" => {
@@ -871,6 +839,40 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // ── SQLite database for app settings + ephemeral session cleanup ──
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .expect("failed to resolve app data directory");
+            let db_conn = database::open_database(&app_data_dir)
+                .expect("failed to initialise SQLite database");
+            database::purge_conversation_data(&db_conn)
+                .expect("failed to purge persisted conversation data");
+            app.manage(database::Database(std::sync::Mutex::new(db_conn)));
+
+            // ── Settings (must come AFTER the DB is registered) ──────
+            // Load persisted settings with fallback to env vars / defaults,
+            // then wrap each configuration slice in a Mutex so the settings
+            // UI can update them at runtime without a restart.
+            {
+                let db = app.state::<database::Database>();
+                let conn = db.0.lock().expect("db lock failed during settings init");
+                let s = settings::load_settings(&conn);
+                app.manage(std::sync::Mutex::new(commands::ApiConfig {
+                    base_url: s.api_base_url.trim_end_matches('/').to_string(),
+                    api_key: s.api_key,
+                }));
+                app.manage(std::sync::Mutex::new(commands::ModelConfig {
+                    active: s.model_name.clone(),
+                    all: vec![s.model_name],
+                }));
+                app.manage(std::sync::Mutex::new(commands::SystemPrompt(
+                    s.system_prompt,
+                )));
+                app.manage(std::sync::Mutex::new(reply::ReplyPrompt(s.reply_prompt)));
+                app.manage(settings::ShortcutConfigState::new(s.shortcut_config));
+            }
+
             // ── Activation listener (macOS only) ─────────────────────────
             // Only start the event tap when Accessibility is already granted.
             // Creating a CGEventTap without permission triggers a native macOS
@@ -882,12 +884,15 @@ pub fn run() {
                 let reply_app_handle = app.handle().clone();
                 let screenshot_app_handle = app.handle().clone();
                 let clipboard_hint_handle = app.handle().clone();
+                let shortcuts = app.state::<settings::ShortcutConfigState>().0.clone();
                 let activator = activator::OverlayActivator::new();
+                app.manage(crate::context::ActivationContextResolver::new());
                 if permissions::is_accessibility_granted() {
                     activator.start(
+                        shortcuts,
                         move || {
                             // Skip AX + clipboard when hiding — no context needed and
-                            // simulating Cmd+C against Thuki's own WebView would produce
+                            // simulating Cmd+C against Oling's own WebView would produce
                             // a macOS alert sound.
                             let is_visible = OVERLAY_INTENDED_VISIBLE.load(Ordering::SeqCst);
                             let handle = activator_app_handle.clone();
@@ -928,7 +933,6 @@ pub fn run() {
                         },
                     );
                 }
-                app.manage(crate::context::ActivationContextResolver::new());
                 app.manage(activator);
             }
 
@@ -949,40 +953,8 @@ pub fn run() {
             app.manage(commands::GenerationState::new());
             app.manage(commands::ConversationHistory::new());
 
-            // ── SQLite database for conversation history ──────────
-            let app_data_dir = app
-                .path()
-                .app_data_dir()
-                .expect("failed to resolve app data directory");
-            let db_conn = database::open_database(&app_data_dir)
-                .expect("failed to initialise SQLite database");
-            app.manage(history::Database(std::sync::Mutex::new(db_conn)));
-
-            // ── Settings (must come AFTER the DB is registered) ──────
-            // Load persisted settings with fallback to env vars / defaults,
-            // then wrap each configuration slice in a Mutex so the settings
-            // UI can update them at runtime without a restart.
-            {
-                let db = app.state::<history::Database>();
-                let conn = db.0.lock().expect("db lock failed during settings init");
-                let s = settings::load_settings(&conn);
-                app.manage(std::sync::Mutex::new(commands::ApiConfig {
-                    base_url: s.api_base_url.trim_end_matches('/').to_string(),
-                    api_key: s.api_key,
-                }));
-                app.manage(std::sync::Mutex::new(commands::ModelConfig {
-                    active: s.model_name.clone(),
-                    all: vec![s.model_name],
-                }));
-                app.manage(std::sync::Mutex::new(commands::SystemPrompt(
-                    s.system_prompt,
-                )));
-                app.manage(std::sync::Mutex::new(reply::ReplyPrompt(s.reply_prompt)));
-            }
-
-            // ── Orphaned image cleanup (startup + periodic) ─────────
+            // ── Orphaned image cleanup (startup only) ────────────────
             run_image_cleanup(app.handle());
-            spawn_periodic_image_cleanup(app.handle().clone());
 
             Ok(())
         })
@@ -996,18 +968,6 @@ pub fn run() {
             #[cfg(not(coverage))]
             commands::get_model_config,
             #[cfg(not(coverage))]
-            history::save_conversation,
-            #[cfg(not(coverage))]
-            history::persist_message,
-            #[cfg(not(coverage))]
-            history::list_conversations,
-            #[cfg(not(coverage))]
-            history::load_conversation,
-            #[cfg(not(coverage))]
-            history::delete_conversation,
-            #[cfg(not(coverage))]
-            history::generate_title,
-            #[cfg(not(coverage))]
             images::save_image_command,
             #[cfg(not(coverage))]
             images::remove_image_command,
@@ -1015,8 +975,6 @@ pub fn run() {
             images::cleanup_orphaned_images_command,
             #[cfg(not(coverage))]
             screenshot::capture_screenshot_command,
-            #[cfg(not(coverage))]
-            screenshot::capture_full_screen_command,
             #[cfg(not(coverage))]
             screenshot::capture_window_command,
             #[cfg(not(coverage))]
@@ -1129,14 +1087,14 @@ mod tests {
 
     #[test]
     fn overlay_visibility_event_constant_matches() {
-        assert_eq!(OVERLAY_VISIBILITY_EVENT, "thuki://visibility");
+        assert_eq!(OVERLAY_VISIBILITY_EVENT, "oling://visibility");
         assert_eq!(OVERLAY_VISIBILITY_SHOW, "show");
         assert_eq!(OVERLAY_VISIBILITY_HIDE_REQUEST, "hide-request");
     }
 
     #[test]
     fn onboarding_event_constant_matches() {
-        assert_eq!(ONBOARDING_EVENT, "thuki://onboarding");
+        assert_eq!(ONBOARDING_EVENT, "oling://onboarding");
     }
 
     #[test]

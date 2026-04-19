@@ -3,12 +3,6 @@ import { describe, it, expect, vi } from 'vitest';
 import { CommandSuggestion } from '../CommandSuggestion';
 import type { Command } from '../../config/commands';
 
-const SCREEN_CMD: Command = {
-  trigger: '/screen',
-  label: '/screen',
-  description: 'Capture your screen and include it as context',
-};
-
 const FOO_CMD: Command = {
   trigger: '/foo',
   label: '/foo',
@@ -73,14 +67,14 @@ describe('CommandSuggestion', () => {
   it('renders each command trigger and description', () => {
     render(
       <CommandSuggestion
-        commands={[SCREEN_CMD, FOO_CMD]}
+        commands={[THINK_CMD, FOO_CMD]}
         highlightedIndex={0}
         onSelect={vi.fn()}
       />,
     );
-    expect(screen.getByText('/screen')).toBeInTheDocument();
+    expect(screen.getByText('/think')).toBeInTheDocument();
     expect(
-      screen.getByText('Capture your screen and include it as context'),
+      screen.getByText('Think deeply before answering'),
     ).toBeInTheDocument();
     expect(screen.getByText('/foo')).toBeInTheDocument();
     expect(screen.getByText('A test command')).toBeInTheDocument();
@@ -89,7 +83,7 @@ describe('CommandSuggestion', () => {
   it('shows the COMMANDS header', () => {
     render(
       <CommandSuggestion
-        commands={[SCREEN_CMD]}
+        commands={[THINK_CMD]}
         highlightedIndex={0}
         onSelect={vi.fn()}
       />,
@@ -100,7 +94,7 @@ describe('CommandSuggestion', () => {
   it('marks the highlighted row as aria-selected', () => {
     render(
       <CommandSuggestion
-        commands={[SCREEN_CMD, FOO_CMD]}
+        commands={[THINK_CMD, FOO_CMD]}
         highlightedIndex={1}
         onSelect={vi.fn()}
       />,
@@ -113,7 +107,7 @@ describe('CommandSuggestion', () => {
   it('shows Tab badge only on highlighted row', () => {
     render(
       <CommandSuggestion
-        commands={[SCREEN_CMD, FOO_CMD]}
+        commands={[THINK_CMD, FOO_CMD]}
         highlightedIndex={0}
         onSelect={vi.fn()}
       />,
@@ -126,7 +120,7 @@ describe('CommandSuggestion', () => {
   it('shows no Tab badge when nothing is highlighted (index -1)', () => {
     render(
       <CommandSuggestion
-        commands={[SCREEN_CMD]}
+        commands={[THINK_CMD]}
         highlightedIndex={-1}
         onSelect={vi.fn()}
       />,
@@ -138,14 +132,14 @@ describe('CommandSuggestion', () => {
     const onSelect = vi.fn();
     render(
       <CommandSuggestion
-        commands={[SCREEN_CMD]}
+        commands={[THINK_CMD]}
         highlightedIndex={0}
         onSelect={onSelect}
       />,
     );
     const option = screen.getByRole('option');
     fireEvent.mouseDown(option);
-    expect(onSelect).toHaveBeenCalledWith('/screen');
+    expect(onSelect).toHaveBeenCalledWith('/think');
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
@@ -153,7 +147,7 @@ describe('CommandSuggestion', () => {
     const onSelect = vi.fn();
     render(
       <CommandSuggestion
-        commands={[SCREEN_CMD, FOO_CMD]}
+        commands={[THINK_CMD, FOO_CMD]}
         highlightedIndex={0}
         onSelect={onSelect}
       />,
@@ -166,7 +160,7 @@ describe('CommandSuggestion', () => {
   it('renders the listbox with accessible label', () => {
     render(
       <CommandSuggestion
-        commands={[SCREEN_CMD]}
+        commands={[THINK_CMD]}
         highlightedIndex={0}
         onSelect={vi.fn()}
       />,
@@ -180,7 +174,7 @@ describe('CommandSuggestion', () => {
     expect(() => {
       render(
         <CommandSuggestion
-          commands={[SCREEN_CMD]}
+          commands={[THINK_CMD]}
           highlightedIndex={99}
           onSelect={vi.fn()}
         />,
@@ -190,7 +184,6 @@ describe('CommandSuggestion', () => {
 
   it('renders an SVG icon for each command row', () => {
     const allCmds = [
-      SCREEN_CMD,
       THINK_CMD,
       TRANSLATE_CMD,
       REWRITE_CMD,

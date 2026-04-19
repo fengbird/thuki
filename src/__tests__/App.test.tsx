@@ -15,7 +15,7 @@ async function showOverlay(
   selectedSource: 'selection' | 'clipboard' | null = null,
 ) {
   await act(async () => {
-    emitTauriEvent('thuki://visibility', {
+    emitTauriEvent('oling://visibility', {
       state: 'show',
       selected_text: selectedText,
       selected_source: selectedSource,
@@ -32,11 +32,11 @@ describe('App', () => {
     enableChannelCapture();
   });
 
-  it('calls get_model_config on mount', async () => {
+  it('loads settings on mount', async () => {
     render(<App />);
     await act(async () => {});
 
-    expect(invoke).toHaveBeenCalledWith('get_model_config');
+    expect(invoke).toHaveBeenCalledWith('get_settings');
   });
 
   it('grows upward when near bottom screen edge', async () => {
@@ -44,7 +44,7 @@ describe('App', () => {
     await act(async () => {});
 
     await act(async () => {
-      emitTauriEvent('thuki://visibility', {
+      emitTauriEvent('oling://visibility', {
         state: 'show',
         selected_text: null,
         window_x: 50,
@@ -53,7 +53,7 @@ describe('App', () => {
       });
     });
 
-    const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+    const textarea = screen.getByPlaceholderText('Ask Oling anything...');
     await act(async () => {
       fireEvent.change(textarea, { target: { value: 'hi' } });
     });
@@ -75,7 +75,7 @@ describe('App', () => {
     await act(async () => {});
 
     await act(async () => {
-      emitTauriEvent('thuki://visibility', {
+      emitTauriEvent('oling://visibility', {
         state: 'show',
         selected_text: null,
         window_x: 50,
@@ -84,7 +84,7 @@ describe('App', () => {
       });
     });
 
-    const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+    const textarea = screen.getByPlaceholderText('Ask Oling anything...');
     await act(async () => {
       fireEvent.change(textarea, { target: { value: 'hi' } });
       fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
@@ -122,7 +122,7 @@ describe('App', () => {
     await showOverlay();
 
     expect(
-      screen.getByPlaceholderText('Ask Thuki anything...'),
+      screen.getByPlaceholderText('Ask Oling anything...'),
     ).toBeInTheDocument();
   });
 
@@ -134,7 +134,7 @@ describe('App', () => {
 
     // Confirm overlay is visible
     expect(
-      screen.getByPlaceholderText('Ask Thuki anything...'),
+      screen.getByPlaceholderText('Ask Oling anything...'),
     ).toBeInTheDocument();
 
     act(() => {
@@ -150,7 +150,7 @@ describe('App', () => {
 
     await showOverlay();
 
-    const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+    const textarea = screen.getByPlaceholderText('Ask Oling anything...');
 
     // Type a message
     act(() => {
@@ -202,17 +202,17 @@ describe('App', () => {
     // First show overlay
     await showOverlay();
     expect(
-      screen.getByPlaceholderText('Ask Thuki anything...'),
+      screen.getByPlaceholderText('Ask Oling anything...'),
     ).toBeInTheDocument();
 
     // Then send hide-request — calls requestHideOverlay() (not handleCloseOverlay)
     await act(async () => {
-      emitTauriEvent('thuki://visibility', { state: 'hide-request' });
+      emitTauriEvent('oling://visibility', { state: 'hide-request' });
     });
 
     // The hide-request path transitions overlay to hiding state (overlayState !== 'visible'),
     // so shouldRenderOverlay becomes false and the overlay is removed from the DOM.
-    expect(screen.queryByPlaceholderText('Ask Thuki anything...')).toBeNull();
+    expect(screen.queryByPlaceholderText('Ask Oling anything...')).toBeNull();
   });
 
   it('hides overlay on Cmd+W key', async () => {
@@ -221,7 +221,7 @@ describe('App', () => {
 
     await showOverlay();
     expect(
-      screen.getByPlaceholderText('Ask Thuki anything...'),
+      screen.getByPlaceholderText('Ask Oling anything...'),
     ).toBeInTheDocument();
 
     act(() => {
@@ -270,7 +270,7 @@ describe('App', () => {
 
     await showOverlay();
 
-    const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+    const textarea = screen.getByPlaceholderText('Ask Oling anything...');
 
     // Press Enter with empty textarea
     act(() => {
@@ -330,7 +330,7 @@ describe('App', () => {
     await showOverlay();
 
     // Send a message to enter chat mode so ChatBubble (with .select-text) renders
-    const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+    const textarea = screen.getByPlaceholderText('Ask Oling anything...');
     act(() => {
       fireEvent.change(textarea, { target: { value: 'test message' } });
     });
@@ -361,7 +361,7 @@ describe('App', () => {
 
     await showOverlay();
 
-    const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+    const textarea = screen.getByPlaceholderText('Ask Oling anything...');
     __mockWindow.startDragging.mockClear();
 
     act(() => {
@@ -378,7 +378,7 @@ describe('App', () => {
     // Show with selected context
     await showOverlay('selected snippet');
 
-    const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+    const textarea = screen.getByPlaceholderText('Ask Oling anything...');
     act(() => {
       fireEvent.change(textarea, { target: { value: 'my question' } });
     });
@@ -406,7 +406,7 @@ describe('App', () => {
     // Show overlay near screen bottom: window_y=750, screen_bottom=900.
     // 750 + MAX_CHAT_WINDOW_HEIGHT(648) = 1398 > 900 → grows upward.
     await act(async () => {
-      emitTauriEvent('thuki://visibility', {
+      emitTauriEvent('oling://visibility', {
         state: 'show',
         selected_text: null,
         window_x: 100,
@@ -426,7 +426,7 @@ describe('App', () => {
     // Show overlay near top: window_y=100, screen_bottom=900.
     // 100 + 648 = 748 < 900 → grows downward.
     await act(async () => {
-      emitTauriEvent('thuki://visibility', {
+      emitTauriEvent('oling://visibility', {
         state: 'show',
         selected_text: null,
         window_x: 100,
@@ -481,7 +481,7 @@ describe('App', () => {
 
       // window_y=804, screen_bottom=900. bottomY = 804+80 = 884.
       await act(async () => {
-        emitTauriEvent('thuki://visibility', {
+        emitTauriEvent('oling://visibility', {
           state: 'show',
           selected_text: null,
           window_x: 100,
@@ -516,7 +516,7 @@ describe('App', () => {
       await act(async () => {});
 
       await act(async () => {
-        emitTauriEvent('thuki://visibility', {
+        emitTauriEvent('oling://visibility', {
           state: 'show',
           selected_text: null,
           window_x: 100,
@@ -557,7 +557,7 @@ describe('App', () => {
 
       // Session 1: near bottom, grows upward
       await act(async () => {
-        emitTauriEvent('thuki://visibility', {
+        emitTauriEvent('oling://visibility', {
           state: 'show',
           selected_text: null,
           window_x: 100,
@@ -573,12 +573,12 @@ describe('App', () => {
 
       // Close
       await act(async () => {
-        emitTauriEvent('thuki://visibility', { state: 'hide-request' });
+        emitTauriEvent('oling://visibility', { state: 'hide-request' });
       });
 
       // Session 2: reopen near bottom again
       await act(async () => {
-        emitTauriEvent('thuki://visibility', {
+        emitTauriEvent('oling://visibility', {
           state: 'show',
           selected_text: null,
           window_x: 100,
@@ -611,124 +611,22 @@ describe('App', () => {
     // Overlay is hidden initially — fire hide-request on hidden overlay
     // This exercises the 'hidden' branch in requestHideOverlay's state setter
     await act(async () => {
-      emitTauriEvent('thuki://visibility', { state: 'hide-request' });
+      emitTauriEvent('oling://visibility', { state: 'hide-request' });
     });
 
     // No crash, no change — overlay is already hidden
     expect(document.querySelector('.morphing-container')).toBeNull();
   });
 
-  // ─── History integration ─────────────────────────────────────────────────────
+  // ─── Ephemeral conversation lifecycle ────────────────────────────────────
 
-  describe('history integration', () => {
-    it('shows history icon button in ask-bar mode', async () => {
+  describe('ephemeral conversation lifecycle', () => {
+    it('starts a fresh conversation immediately when New conversation is clicked', async () => {
       render(<App />);
       await act(async () => {});
       await showOverlay();
 
-      expect(
-        screen.getByRole('button', { name: /open history/i }),
-      ).toBeInTheDocument();
-    });
-
-    it('shows history panel when history icon is clicked in ask-bar mode', async () => {
-      invoke.mockResolvedValue([]); // list_conversations returns empty
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
-
-      expect(
-        screen.getByPlaceholderText(/search past chats/i),
-      ).toBeInTheDocument();
-    });
-
-    it('closes history panel when a conversation is loaded', async () => {
-      invoke.mockResolvedValueOnce({
-        active: 'gemma4:e2b',
-        all: ['gemma4:e2b'],
-      }); // get_model_config
-      invoke.mockResolvedValueOnce({
-        commands_config: { overrides: {}, custom: [], disabled: [] },
-      }); // get_settings (for loadCommandsConfig)
-      invoke.mockResolvedValueOnce(undefined); // notify_frontend_ready
-      invoke.mockResolvedValueOnce([]); // reset_conversation (from replayEntranceAnimation)
-      invoke.mockResolvedValueOnce([
-        // load_conversation
-        {
-          id: 'm1',
-          role: 'user',
-          content: 'Hello',
-          quoted_text: null,
-          created_at: 1,
-        },
-        {
-          id: 'm2',
-          role: 'assistant',
-          content: 'Hi',
-          quoted_text: null,
-          created_at: 2,
-        },
-      ]);
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Open history
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
-
-      // Wait for empty list to render
-      await act(async () => {});
-
-      // Panel should be visible but no conversations to click
-      // (list is empty, so just verify panel closes on a second click)
-      // Close via second click on history icon
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
-
-      expect(screen.queryByPlaceholderText(/search past chats/i)).toBeNull();
-    });
-
-    it('shows save button in conversation view when there are messages', async () => {
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'test' } });
-      });
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'Reply' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
-    });
-
-    it('save button calls save_conversation when clicked', async () => {
-      enableChannelCaptureWithResponses({
-        save_conversation: { conversation_id: 'conv-test' },
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: 'question' } });
       });
@@ -736,7 +634,6 @@ describe('App', () => {
         fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
       });
       await act(async () => {});
-
       act(() => {
         getLastChannel()?.simulateMessage({ type: 'Token', data: 'answer' });
         getLastChannel()?.simulateMessage({ type: 'Done' });
@@ -744,322 +641,52 @@ describe('App', () => {
 
       await act(async () => {
         fireEvent.click(
-          screen.getByRole('button', { name: /save conversation/i }),
+          screen.getByRole('button', { name: /new conversation/i }),
         );
       });
 
-      expect(invoke).toHaveBeenCalledWith(
-        'save_conversation',
-        expect.objectContaining({
-          model: expect.any(String),
-          messages: expect.any(Array),
-        }),
+      expect(screen.getByPlaceholderText('Ask Oling anything...')).toHaveValue(
+        '',
       );
+      expect(screen.queryByText('question')).toBeNull();
+      expect(screen.queryByText('answer')).toBeNull();
     });
 
-    it('clicking save button when already saved calls delete_conversation (unsave toggle)', async () => {
+    it('new conversation cleans up staged image files from the ephemeral session', async () => {
       enableChannelCaptureWithResponses({
-        save_conversation: { conversation_id: 'conv-save-toggle' },
+        save_image_command: '/tmp/staged-image.jpg',
       });
 
       render(<App />);
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'question' } });
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
+      const file = new File(['fake-img-data'], 'photo.png', {
+        type: 'image/png',
       });
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'answer' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Save the conversation first
       await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: /save conversation/i }),
-        );
-      });
-
-      // Button should now read "Remove from history"
-      expect(
-        screen.getByRole('button', { name: /remove from history/i }),
-      ).toBeInTheDocument();
-
-      invoke.mockClear();
-
-      // Click again to unsave
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: /remove from history/i }),
-        );
-      });
-
-      expect(invoke).toHaveBeenCalledWith('delete_conversation', {
-        conversationId: 'conv-save-toggle',
-      });
-
-      // Button reverts to "Save conversation"
-      expect(
-        screen.getByRole('button', { name: /save conversation/i }),
-      ).toBeInTheDocument();
-    });
-
-    it('resets history state on overlay reopen', async () => {
-      enableChannelCaptureWithResponses({
-        save_conversation: { conversation_id: 'conv-123' },
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Send message + Done
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'hello' } });
-      });
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'Hi' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Save
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: /save conversation/i }),
-        );
-      });
-
-      // Reopen — bookmark should reset (save button enabled again)
-      enableChannelCapture();
-      await showOverlay();
-
-      // In ask-bar mode now — no save button visible, but history icon is
-      expect(
-        screen.getByRole('button', { name: /open history/i }),
-      ).toBeInTheDocument();
-    });
-
-    it('handleNewConversation shows SwitchConfirmation when unsaved, resets on Start New', async () => {
-      enableChannelCaptureWithResponses({
-        list_conversations: [],
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Get into chat mode with an unsaved turn
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'question' } });
-      });
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'answer' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Click + (unsaved conversation → history panel opens with SwitchConfirmation)
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: 'New conversation' }),
-        );
-      });
-
-      // SwitchConfirmation should be visible with "new" variant
-      expect(
-        screen.getByRole('button', { name: 'Start New' }),
-      ).toBeInTheDocument();
-
-      // Click "Start New" → should reset to ask-bar mode
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Start New' }));
-      });
-
-      expect(
-        screen.getByPlaceholderText('Ask Thuki anything...'),
-      ).toBeInTheDocument();
-    });
-
-    it('handleNewConversation Cancel closes the history dropdown', async () => {
-      enableChannelCaptureWithResponses({
-        list_conversations: [],
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Get into chat mode with an unsaved turn
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'question' } });
-      });
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'answer' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Click + → SwitchConfirmation appears
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: 'New conversation' }),
-        );
-      });
-
-      expect(
-        screen.getByRole('button', { name: 'Cancel' }),
-      ).toBeInTheDocument();
-
-      // Click Cancel → dropdown closes, still in chat mode
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-      });
-
-      // SwitchConfirmation should be gone
-      expect(
-        screen.queryByRole('button', { name: 'Cancel' }),
-      ).not.toBeInTheDocument();
-      // Still showing the conversation
-      expect(screen.getByText('question')).toBeInTheDocument();
-    });
-
-    it('handleNewConversation resets directly when conversation is already saved', async () => {
-      enableChannelCaptureWithResponses({
-        list_conversations: [],
-        save_conversation: 'saved-id',
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Get into chat mode
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'question' } });
-      });
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'answer' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Save the conversation
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: /save conversation/i }),
-        );
-      });
-
-      // Click + (already saved → no confirmation, direct reset)
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: 'New conversation' }),
-        );
-      });
-
-      // Should be directly back in ask-bar mode (no confirmation prompt)
-      expect(
-        screen.getByPlaceholderText('Ask Thuki anything...'),
-      ).toBeInTheDocument();
-    });
-
-    it('handleNewConversation revokes blob URLs when images are attached', async () => {
-      enableChannelCaptureWithResponses({
-        list_conversations: [],
-        save_image_command: '/tmp/img.jpg',
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Get into chat mode with an unsaved turn
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'question' } });
-      });
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'answer' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Paste an image while in chat mode (unsaved conversation)
-      const replyInput = screen.getByPlaceholderText('Reply...');
-      const file = new File(['data'], 'img.png', { type: 'image/png' });
-      await act(async () => {
-        fireEvent.paste(replyInput, {
+        fireEvent.paste(textarea, {
           clipboardData: {
             items: [{ type: 'image/png', getAsFile: () => file }],
           },
         });
       });
-
       await vi.waitFor(() => {
         expect(
           screen.getByRole('list', { name: /attached images/i }),
         ).toBeInTheDocument();
       });
-
-      const revokeSpy = vi.mocked(URL.revokeObjectURL);
-      revokeSpy.mockClear();
-
-      // Click + → SwitchConfirmation (unsaved conversation)
       await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: 'New conversation' }),
-        );
+        await vi.waitFor(() => {
+          expect(invoke).toHaveBeenCalledWith(
+            'save_image_command',
+            expect.anything(),
+          );
+        });
       });
-
-      // Click "Start New" → resetForNewConversation revokes blob URLs
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Start New' }));
-      });
-
-      expect(revokeSpy).toHaveBeenCalled();
-      expect(
-        screen.queryByRole('list', { name: /attached images/i }),
-      ).toBeNull();
-    });
-
-    it('handleNewConversation saves then resets on Save & Start New', async () => {
-      enableChannelCaptureWithResponses({
-        list_conversations: [],
-        save_conversation: 'saved-id',
-      });
-
-      render(<App />);
       await act(async () => {});
-      await showOverlay();
 
-      // Get into chat mode with an unsaved turn
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: 'question' } });
       });
@@ -1072,566 +699,20 @@ describe('App', () => {
         getLastChannel()?.simulateMessage({ type: 'Done' });
       });
 
-      // Click + → SwitchConfirmation appears
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: 'New conversation' }),
-        );
-      });
-
-      expect(
-        screen.getByRole('button', { name: 'Save & Start New' }),
-      ).toBeInTheDocument();
-
-      // Click "Save & Start New" → saves then resets to ask-bar mode
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: 'Save & Start New' }),
-        );
-      });
-
-      expect(
-        screen.getByPlaceholderText('Ask Thuki anything...'),
-      ).toBeInTheDocument();
-    });
-
-    it('handleSaveAndNew aborts reset when save fails', async () => {
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_conversations') return [];
-        if (cmd === 'save_conversation') throw new Error('disk full');
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Complete a turn so isSaved = false
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'q' } });
-      });
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'a' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Click + → SwitchConfirmation
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: 'New conversation' }),
-        );
-      });
-
-      // Click "Save & Start New" — save fails → should stay in chat mode
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: 'Save & Start New' }),
-        );
-      });
-
-      // Still in chat mode (save_conversation threw, reset was aborted)
-      expect(screen.getByText('q')).toBeInTheDocument();
-    });
-
-    it('handleSaveAndLoad saves unsaved conversation then switches', async () => {
-      const OTHER_MSGS = [
-        {
-          id: 'm3',
-          role: 'user',
-          content: 'Old q',
-          quoted_text: null,
-          created_at: 1,
-        },
-        {
-          id: 'm4',
-          role: 'assistant',
-          content: 'Old a',
-          quoted_text: null,
-          created_at: 2,
-        },
-      ];
-      enableChannelCaptureWithResponses({
-        save_conversation: { conversation_id: 'conv-new' },
-        load_conversation: OTHER_MSGS,
-        list_conversations: [
-          {
-            id: 'conv-other2',
-            title: 'Other chat',
-            model: 'gemma4:e2b',
-            updated_at: 1,
-            message_count: 2,
-          },
-        ],
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Complete a turn (unsaved)
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'q' } });
-      });
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'a' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Open chat history WITHOUT saving
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /history/i }));
-      });
-
-      // Click a different conversation → SwitchConfirmation
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /other chat/i }));
-      });
-
-      // Save & Switch — isSaved is FALSE so save_conversation should be called
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /save & switch/i }));
-      });
-
-      expect(invoke).toHaveBeenCalledWith(
-        'save_conversation',
-        expect.objectContaining({
-          model: expect.any(String),
-        }),
-      );
-    });
-
-    it('handleSaveAndLoad aborts load when save_conversation fails', async () => {
-      // Bug: without the early return on save failure, the load would still run
-      // and could overwrite the current session with an unrelated conversation.
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_conversations')
-          return [
-            {
-              id: 'c2',
-              title: 'Other chat',
-              model: 'gemma4:e2b',
-              updated_at: 1,
-              message_count: 1,
-            },
-          ];
-        if (cmd === 'save_conversation') throw new Error('disk full');
-        // load_conversation must NOT be called
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Complete a turn so isSaved = false
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'q' } });
-      });
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'a' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Open history → click another conversation → SwitchConfirmation
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /other chat/i }));
-      });
-
-      // Confirm "Save & Switch" — save_conversation will throw
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /save & switch/i }));
-      });
-
-      // load_conversation must NOT have been called (early return after save failure)
-      expect(invoke).not.toHaveBeenCalledWith(
-        'load_conversation',
-        expect.anything(),
-      );
-    });
-
-    it('clicking a conversation loads it directly when already saved (no dialog)', async () => {
-      const OTHER_MSGS = [
-        {
-          id: 'm3',
-          role: 'user',
-          content: 'Old q',
-          quoted_text: null,
-          created_at: 1,
-        },
-        {
-          id: 'm4',
-          role: 'assistant',
-          content: 'Old a',
-          quoted_text: null,
-          created_at: 2,
-        },
-      ];
-      enableChannelCaptureWithResponses({
-        save_conversation: { conversation_id: 'conv-current' },
-        load_conversation: OTHER_MSGS,
-        list_conversations: [
-          {
-            id: 'conv-other',
-            title: 'Switch target',
-            model: 'gemma4:e2b',
-            updated_at: 1,
-            message_count: 2,
-          },
-        ],
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Complete a turn
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'q' } });
-      });
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'a' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Save the conversation → isSaved = true
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: /save conversation/i }),
-        );
-      });
-
-      // Open chat history
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
-
-      // Click a different conversation — isSaved=true means no dialog, loads directly
       invoke.mockClear();
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /switch target/i }));
-      });
 
-      // No SwitchConfirmation dialog — save_conversation NOT called again
-      expect(invoke).not.toHaveBeenCalledWith(
-        'save_conversation',
-        expect.anything(),
-      );
-      // load_conversation IS called directly
-      expect(invoke).toHaveBeenCalledWith('load_conversation', {
-        conversationId: 'conv-other',
-      });
-    });
-
-    it('handleDeleteConversation marks active conversation unsaved but keeps messages', async () => {
-      const LOADED_MSGS = [
-        {
-          id: 'm1',
-          role: 'user',
-          content: 'Hi',
-          quoted_text: null,
-          created_at: 1,
-        },
-        {
-          id: 'm2',
-          role: 'assistant',
-          content: 'Hello',
-          quoted_text: null,
-          created_at: 2,
-        },
-      ];
-      enableChannelCaptureWithResponses({
-        load_conversation: LOADED_MSGS,
-        list_conversations: [
-          {
-            id: 'conv-target',
-            title: 'My chat',
-            model: 'gemma4:e2b',
-            updated_at: 1,
-            message_count: 2,
-          },
-        ],
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Load a conversation from ask-bar history → conversationId = 'conv-target'
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /my chat/i }));
-      });
-
-      // Messages are visible in chat mode
-      expect(screen.getByText('Hi')).toBeInTheDocument();
-
-      // Open chat history and delete the currently-active conversation
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
       await act(async () => {
         fireEvent.click(
-          screen.getByRole('button', { name: /delete conversation/i }),
+          screen.getByRole('button', { name: /new conversation/i }),
         );
       });
 
-      // delete_conversation was called
-      expect(invoke).toHaveBeenCalledWith('delete_conversation', {
-        conversationId: 'conv-target',
-      });
-
-      // Messages remain — still in chat mode
-      expect(screen.getByText('Hi')).toBeInTheDocument();
-
-      // Save button reverts to unsaved state ("Save conversation")
-      expect(
-        screen.getByRole('button', { name: /save conversation/i }),
-      ).toBeInTheDocument();
-    });
-
-    it('clicking outside the chat history dropdown closes it', async () => {
-      enableChannelCaptureWithResponses({
-        list_conversations: [],
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Complete a turn to enter chat mode
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'q' } });
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'a' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Open history dropdown
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
+      expect(invoke).toHaveBeenCalledWith('remove_image_command', {
+        path: '/tmp/staged-image.jpg',
       });
       expect(
-        screen.getByPlaceholderText('Search past chats…'),
-      ).toBeInTheDocument();
-
-      // Click outside — should close the dropdown
-      await act(async () => {
-        fireEvent.mouseDown(document.body);
-      });
-      expect(screen.queryByPlaceholderText('Search past chats…')).toBeNull();
-    });
-
-    it('clicking inside the chat history dropdown does not close it', async () => {
-      enableChannelCaptureWithResponses({
-        list_conversations: [],
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Complete a turn to enter chat mode
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'q' } });
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      act(() => {
-        getLastChannel()?.simulateMessage({ type: 'Token', data: 'a' });
-        getLastChannel()?.simulateMessage({ type: 'Done' });
-      });
-
-      // Open history dropdown
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
-
-      const searchInput = screen.getByPlaceholderText('Search past chats…');
-      expect(searchInput).toBeInTheDocument();
-
-      // Click inside the dropdown — should NOT close it
-      await act(async () => {
-        fireEvent.mouseDown(searchInput);
-      });
-      expect(
-        screen.getByPlaceholderText('Search past chats…'),
-      ).toBeInTheDocument();
-    });
-
-    it('handleDeleteConversation allows saving the conversation again after deletion', async () => {
-      // After deleting the active conversation from history, isSaved resets to
-      // false so the user can re-save the same messages under a new record.
-      enableChannelCaptureWithResponses({
-        load_conversation: [
-          {
-            id: 'm1',
-            role: 'user',
-            content: 'Hi',
-            quoted_text: null,
-            created_at: 1,
-          },
-          {
-            id: 'm2',
-            role: 'assistant',
-            content: 'Hello',
-            quoted_text: null,
-            created_at: 2,
-          },
-        ],
-        list_conversations: [
-          {
-            id: 'conv-active',
-            title: 'Active chat',
-            model: 'gemma4:e2b',
-            updated_at: 1,
-            message_count: 2,
-          },
-        ],
-        save_conversation: { conversation_id: 'conv-new' },
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Load the conversation → isSaved = true
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /active chat/i }));
-      });
-
-      // Verify save button shows unsave state
-      expect(
-        screen.getByRole('button', { name: /remove from history/i }),
-      ).toBeInTheDocument();
-
-      // Open history and delete the active conversation
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: /delete conversation/i }),
-        );
-      });
-
-      // Messages remain, isSaved is now false — save button is re-enabled
-      expect(screen.getByText('Hi')).toBeInTheDocument();
-      expect(
-        screen.getByRole('button', { name: /save conversation/i }),
-      ).toBeInTheDocument();
-
-      // User can re-save the conversation
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: /save conversation/i }),
-        );
-      });
-      expect(invoke).toHaveBeenCalledWith(
-        'save_conversation',
-        expect.objectContaining({ messages: expect.any(Array) }),
-      );
-    });
-
-    it('handleLoadConversation closes history panel when load_conversation fails', async () => {
-      // Bug: without try/catch, setIsHistoryOpen(false) is never reached when
-      // loadConversation() throws, leaving the panel open on failure.
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_conversations')
-          return [
-            {
-              id: 'c1',
-              title: 'Chat',
-              model: 'gemma4:e2b',
-              updated_at: 1,
-              message_count: 1,
-            },
-          ];
-        if (cmd === 'load_conversation') throw new Error('load failed');
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
-
-      // Click the conversation — load_conversation will throw
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /^chat$/i }));
-      });
-
-      // Panel must close even on failure; app must still be running
-      expect(screen.queryByPlaceholderText(/search past chats/i)).toBeNull();
-      expect(
-        screen.getByPlaceholderText('Ask Thuki anything...'),
-      ).toBeInTheDocument();
-    });
-
-    it('handleDeleteConversation does not reset history when a different conversation is deleted', async () => {
-      enableChannelCaptureWithResponses({
-        list_conversations: [
-          {
-            id: 'conv-unrelated',
-            title: 'Unrelated',
-            model: 'gemma4:e2b',
-            updated_at: 1,
-            message_count: 2,
-          },
-        ],
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Open ask-bar history (no conversation loaded — conversationId is null)
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /open history/i }));
-      });
-
-      // Delete a conversation while conversationId is null (id !== conversationId → false branch)
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: /delete conversation/i }),
-        );
-      });
-
-      expect(invoke).toHaveBeenCalledWith('delete_conversation', {
-        conversationId: 'conv-unrelated',
-      });
+        screen.queryByRole('list', { name: /attached images/i }),
+      ).toBeNull();
     });
   });
 
@@ -1640,7 +721,7 @@ describe('App', () => {
   describe('image integration', () => {
     /** Helper: paste an image file into the textarea and wait for thumbnails. */
     async function pasteImage() {
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       const file = new File(['fake-img-data'], 'photo.png', {
         type: 'image/png',
       });
@@ -1707,6 +788,7 @@ describe('App', () => {
           );
         });
       });
+      await act(async () => {});
 
       invoke.mockClear();
 
@@ -1745,7 +827,7 @@ describe('App', () => {
       });
 
       // Type a message and submit
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: 'describe this' } });
       });
@@ -1793,7 +875,7 @@ describe('App', () => {
       enableChannelCapture();
 
       // Submit with Enter (no text, just images)
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
       });
@@ -1963,7 +1045,7 @@ describe('App', () => {
       await showOverlay();
 
       // Send a plain text message and complete the generation to enter chat mode
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: 'hello' } });
       });
@@ -2026,7 +1108,7 @@ describe('App', () => {
       await showOverlay();
 
       // Paste 3 images to reach max
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       for (let i = 0; i < 3; i++) {
         const file = new File([`data${i}`], `img${i}.png`, {
           type: 'image/png',
@@ -2079,7 +1161,7 @@ describe('App', () => {
       await showOverlay();
 
       // Submit to trigger isGenerating
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: 'hi' } });
       });
@@ -2103,7 +1185,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: 'hi' } });
       });
@@ -2145,7 +1227,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       for (let i = 0; i < 3; i++) {
         const img = new File([`d${i}`], `i${i}.png`, { type: 'image/png' });
         await act(async () => {
@@ -2210,7 +1292,7 @@ describe('App', () => {
       });
 
       // Type and submit to create a user message with image
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: 'what is this?' } });
       });
@@ -2271,7 +1353,7 @@ describe('App', () => {
       await showOverlay();
 
       // Paste and submit while still processing → pendingUserMessage with blob URL
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       const file = new File(['data'], 'img.png', { type: 'image/png' });
       await act(async () => {
         fireEvent.paste(textarea, {
@@ -2375,7 +1457,7 @@ describe('App', () => {
       await showOverlay();
 
       // Paste an image — thumbnail appears immediately with null filePath
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       const file = new File(['data'], 'img.png', { type: 'image/png' });
       await act(async () => {
         fireEvent.paste(textarea, {
@@ -2408,6 +1490,68 @@ describe('App', () => {
       ).toBeNull();
     });
 
+    it('removes late-arriving staged files when an image is deleted before processing completes', async () => {
+      let resolveSave!: (path: string) => void;
+      invoke.mockImplementation(
+        async (cmd: string, args?: Record<string, unknown>) => {
+          if (args && 'onEvent' in args) {
+            return;
+          }
+          if (cmd === 'get_settings') {
+            return {
+              api_base_url: 'http://10.0.0.4:1234/v1',
+              api_key: 'lm-studio',
+              model_name: 'qwen3-vl-8b-thinking',
+              system_prompt: 'Be helpful.',
+              reply_prompt: 'Reply concisely.',
+              ocr_prompt: '请提取图中所有文字，原样输出。',
+              commands_config: { overrides: {}, custom: [], disabled: [] },
+            };
+          }
+          if (cmd === 'save_image_command') {
+            return new Promise<string>((resolve) => {
+              resolveSave = resolve;
+            });
+          }
+        },
+      );
+
+      render(<App />);
+      await act(async () => {});
+      await showOverlay();
+
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
+      const file = new File(['data'], 'img.png', { type: 'image/png' });
+      await act(async () => {
+        fireEvent.paste(textarea, {
+          clipboardData: {
+            items: [{ type: 'image/png', getAsFile: () => file }],
+          },
+        });
+      });
+
+      await vi.waitFor(() => {
+        expect(
+          screen.getByRole('list', { name: /attached images/i }),
+        ).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /remove image/i }));
+      });
+
+      invoke.mockClear();
+
+      await act(async () => {
+        resolveSave('/tmp/late-image.jpg');
+      });
+      await act(async () => {});
+
+      expect(invoke).toHaveBeenCalledWith('remove_image_command', {
+        path: '/tmp/late-image.jpg',
+      });
+    });
+
     it('defers submit when images are still processing and fires when ready', async () => {
       // Flush any stale macrotasks (e.g. FileReader.onload from prior tests)
       await act(async () => {
@@ -2437,7 +1581,7 @@ describe('App', () => {
       await showOverlay();
 
       // Paste an image; thumbnail appears immediately (filePath null)
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       const file = new File(['data'], 'img.png', { type: 'image/png' });
       await act(async () => {
         fireEvent.paste(textarea, {
@@ -2485,7 +1629,7 @@ describe('App', () => {
       await showOverlay();
 
       // Start a normal text conversation (no images)
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: 'hello' } });
       });
@@ -2531,7 +1675,7 @@ describe('App', () => {
       await showOverlay();
 
       // Paste an image
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       const file = new File(['data'], 'img.png', { type: 'image/png' });
       await act(async () => {
         fireEvent.paste(textarea, {
@@ -2565,7 +1709,7 @@ describe('App', () => {
 
       // Should revert to ask-bar mode with the query restored
       const restoredTextarea = screen.getByPlaceholderText(
-        'Ask Thuki anything...',
+        'Ask Oling anything...',
       );
       expect(restoredTextarea).toBeInTheDocument();
       expect((restoredTextarea as HTMLTextAreaElement).value).toBe(
@@ -2623,7 +1767,7 @@ describe('App', () => {
       });
 
       // Submit while both images are still processing
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: 'two images' } });
       });
@@ -2675,7 +1819,7 @@ describe('App', () => {
       await showOverlay();
 
       // Paste and submit while processing
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       const file = new File(['data'], 'img.png', { type: 'image/png' });
       await act(async () => {
         fireEvent.paste(textarea, {
@@ -2735,123 +1879,62 @@ describe('App', () => {
       ).toBeInTheDocument();
 
       // User's query should be restored so their text isn't lost
-      expect(screen.getByPlaceholderText('Ask Thuki anything...')).toHaveValue(
+      expect(screen.getByPlaceholderText('Ask Oling anything...')).toHaveValue(
         'describe',
       );
     });
   });
 
-  // ─── Screenshot integration ────────────────────────────────────────────────
+  // ─── Ask-bar screenshot entry removal ─────────────────────────────────────
 
-  describe('screenshot integration', () => {
-    it('clicking screenshot button invokes capture_screenshot', async () => {
-      enableChannelCaptureWithResponses({ capture_screenshot_command: null });
-
+  describe('ask-bar screenshot entry removal', () => {
+    it('does not render a screenshot button after opening the overlay', async () => {
       render(<App />);
       await act(async () => {});
       await showOverlay();
 
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: 'Take screenshot' }),
-        );
-      });
-
-      await act(async () => {
-        await vi.waitFor(() => {
-          expect(invoke).toHaveBeenCalledWith('capture_screenshot_command');
-        });
-      });
+      expect(
+        screen.queryByRole('button', { name: 'Take screenshot' }),
+      ).toBeNull();
     });
+  });
 
-    it('does nothing when capture_screenshot returns null (cancelled)', async () => {
-      enableChannelCaptureWithResponses({ capture_screenshot_command: null });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: 'Take screenshot' }),
-        );
-      });
-
-      await act(async () => {
-        await vi.waitFor(() => {
-          expect(invoke).toHaveBeenCalledWith('capture_screenshot_command');
-        });
-      });
-
-      // save_image_command must NOT have been called
-      const saveCalls = invoke.mock.calls.filter(
-        ([cmd]) => cmd === 'save_image_command',
+  describe('command settings sync', () => {
+    it('command palette respects disabled system commands from settings', async () => {
+      invoke.mockImplementation(
+        async (cmd: string, args?: Record<string, unknown>) => {
+          if (args && 'onEvent' in args) {
+            return;
+          }
+          if (cmd === 'get_settings') {
+            return {
+              api_base_url: 'http://10.0.0.4:1234/v1',
+              api_key: 'lm-studio',
+              model_name: 'qwen3-vl-8b-thinking',
+              system_prompt: 'Be helpful.',
+              reply_prompt: 'Reply concisely.',
+              ocr_prompt: '请提取图中所有文字，原样输出。',
+              commands_config: {
+                overrides: {},
+                custom: [],
+                disabled: ['/refine', '/bullets', '/todos'],
+              },
+            };
+          }
+        },
       );
-      expect(saveCalls).toHaveLength(0);
-    });
-
-    it('does not invoke capture_screenshot_command when at max images', async () => {
-      enableChannelCaptureWithResponses({
-        save_image_command: '/tmp/staged/img.jpg',
-        capture_screenshot_command: null,
-      });
 
       render(<App />);
       await act(async () => {});
       await showOverlay();
 
-      // Attach 3 images via paste to reach the limit.
-      const pasteOneImage = async () => {
-        const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-        const file = new File(['data'], 'photo.png', { type: 'image/png' });
-        await act(async () => {
-          fireEvent.paste(textarea, {
-            clipboardData: {
-              items: [{ type: 'image/png', getAsFile: () => file }],
-            },
-          });
-        });
-      };
-      await pasteOneImage();
-      await pasteOneImage();
-      await pasteOneImage();
-
-      const btn = screen.getByRole('button', { name: 'Take screenshot' });
-      expect(btn).toBeDisabled();
-
-      invoke.mockClear();
-      fireEvent.click(btn);
-      await act(async () => {});
-
-      expect(invoke).not.toHaveBeenCalledWith('capture_screenshot_command');
-    });
-
-    it('attaches screenshot image when capture_screenshot returns base64', async () => {
-      const fakeBase64 = btoa('fake screenshot bytes');
-      enableChannelCaptureWithResponses({
-        capture_screenshot_command: fakeBase64,
-        save_image_command: '/tmp/screenshot.jpg',
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: 'Take screenshot' }),
-        );
-      });
-
-      // Wait for invoke(capture_screenshot) → FileReader → invoke(save_image_command)
-      await act(async () => {
-        await vi.waitFor(() => {
-          expect(invoke).toHaveBeenCalledWith(
-            'save_image_command',
-            expect.objectContaining({ imageDataBase64: expect.any(String) }),
-          );
-        });
-      });
+      const items = screen.getAllByRole('option');
+      expect(items).toHaveLength(4);
+      expect(screen.queryByText('/screen')).toBeNull();
+      expect(screen.getByText('/think')).toBeInTheDocument();
+      expect(screen.getByText('/translate')).toBeInTheDocument();
+      expect(screen.getByText('/rewrite')).toBeInTheDocument();
+      expect(screen.getByText('/tldr')).toBeInTheDocument();
     });
   });
 
@@ -2865,7 +1948,7 @@ describe('App', () => {
     await showOverlay();
 
     // Paste an image so attachedImages is non-empty
-    const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+    const textarea = screen.getByPlaceholderText('Ask Oling anything...');
     const file = new File(['data'], 'img.png', { type: 'image/png' });
     await act(async () => {
       fireEvent.paste(textarea, {
@@ -2897,7 +1980,7 @@ describe('App', () => {
     await act(async () => {});
     await showOverlay();
 
-    const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+    const textarea = screen.getByPlaceholderText('Ask Oling anything...');
     const file = new File(['data'], 'img.png', { type: 'image/png' });
     await act(async () => {
       fireEvent.paste(textarea, {
@@ -2930,7 +2013,7 @@ describe('App', () => {
 
     await showOverlay();
 
-    const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+    const textarea = screen.getByPlaceholderText('Ask Oling anything...');
 
     // Complete a conversation turn
     act(() => {
@@ -2959,460 +2042,10 @@ describe('App', () => {
 
     // Should be back to input bar mode with placeholder
     expect(
-      screen.getByPlaceholderText('Ask Thuki anything...'),
+      screen.getByPlaceholderText('Ask Oling anything...'),
     ).toBeInTheDocument();
     // Old messages should be gone
     expect(screen.queryByText('First response')).toBeNull();
-  });
-
-  // ─── /screen command ─────────────────────────────────────────────────────────
-
-  describe('/screen command', () => {
-    it('invokes capture_full_screen_command and calls ask with screenshot path', async () => {
-      enableChannelCaptureWithResponses({
-        capture_full_screen_command: '/tmp/screen.jpg',
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Use "/screen " (with trailing space) so the suggestion popover is dismissed
-      // and Enter goes to the submit handler directly.
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: '/screen ' } });
-      });
-
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-
-      await act(async () => {});
-
-      expect(invoke).toHaveBeenCalledWith('capture_full_screen_command');
-      expect(invoke).toHaveBeenCalledWith(
-        'ask_ollama',
-        expect.objectContaining({
-          imagePaths: ['/tmp/screen.jpg'],
-          message: '/screen',
-        }),
-      );
-    });
-
-    it('keeps the /screen trigger in the message sent to the backend', async () => {
-      enableChannelCaptureWithResponses({
-        capture_full_screen_command: '/tmp/screen.jpg',
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, {
-          target: { value: '/screen what is this error?' },
-        });
-      });
-
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-
-      await act(async () => {});
-
-      expect(invoke).toHaveBeenCalledWith(
-        'ask_ollama',
-        expect.objectContaining({
-          message: '/screen what is this error?',
-          imagePaths: ['/tmp/screen.jpg'],
-        }),
-      );
-    });
-
-    it('detects /screen anywhere in the message, not just at start', async () => {
-      enableChannelCaptureWithResponses({
-        capture_full_screen_command: '/tmp/screen.jpg',
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, {
-          target: { value: 'hello /screen there' },
-        });
-      });
-
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-
-      await act(async () => {});
-
-      expect(invoke).toHaveBeenCalledWith('capture_full_screen_command');
-      expect(invoke).toHaveBeenCalledWith(
-        'ask_ollama',
-        expect.objectContaining({
-          message: 'hello /screen there',
-          imagePaths: ['/tmp/screen.jpg'],
-        }),
-      );
-    });
-
-    it('does not call ask when capture_full_screen_command throws', async () => {
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'capture_full_screen_command') {
-          throw new Error('Permission denied');
-        }
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Use "/screen " (with trailing space) so the suggestion popover is dismissed
-      // and Enter goes directly to the submit handler.
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: '/screen ' } });
-      });
-
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-
-      await act(async () => {});
-
-      expect(invoke).toHaveBeenCalledWith('capture_full_screen_command');
-      expect(invoke).not.toHaveBeenCalledWith('ask_ollama', expect.anything());
-      // The actual Rust error message is surfaced directly.
-      expect(screen.getByText('Permission denied')).toBeInTheDocument();
-    });
-
-    it('surfaces string errors from Tauri invoke directly', async () => {
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'capture_full_screen_command') {
-          // Tauri v2 rejects with the Err(String) value as a plain string.
-          return Promise.reject(
-            'Screen Recording permission is required to use /screen.',
-          );
-        }
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: '/screen ' } });
-      });
-
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-
-      await act(async () => {});
-
-      expect(
-        screen.getByText(
-          'Screen Recording permission is required to use /screen.',
-        ),
-      ).toBeInTheDocument();
-    });
-
-    it('handles non-Error non-string rejection values', async () => {
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'capture_full_screen_command') {
-          return Promise.reject(42);
-        }
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: '/screen ' } });
-      });
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-
-      expect(screen.getByText('42')).toBeInTheDocument();
-    });
-
-    it('clears capture error when a new submit is attempted', async () => {
-      enableChannelCapture();
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'capture_full_screen_command') {
-          throw new Error('capture failed');
-        }
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      // First attempt fails; error banner appears.
-      act(() => {
-        fireEvent.change(textarea, { target: { value: '/screen ' } });
-      });
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      expect(screen.getByText('capture failed')).toBeInTheDocument();
-
-      // Typing a new query and submitting normal text clears the error banner.
-      act(() => {
-        fireEvent.change(textarea, { target: { value: 'hello' } });
-      });
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-      expect(screen.queryByText('capture failed')).toBeNull();
-    });
-
-    it('merges screenshot path with existing attached images', async () => {
-      // Set up mocks: save_image_command for image attachment, then screen capture.
-      enableChannelCaptureWithResponses({
-        save_image_command: '/tmp/attached.jpg',
-        capture_full_screen_command: '/tmp/screen.jpg',
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Paste an image first. This exercises the filter/map on attachedImages inside
-      // handleScreenSubmit, covering the lines for non-null filePath images.
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      const file = new File(['img'], 'photo.png', { type: 'image/png' });
-      await act(async () => {
-        fireEvent.paste(textarea, {
-          clipboardData: {
-            items: [{ type: 'image/png', getAsFile: () => file }],
-          },
-        });
-      });
-
-      // Wait for the image to be processed (filePath resolved).
-      await vi.waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith(
-          'save_image_command',
-          expect.anything(),
-        );
-      });
-
-      // Now type /screen and submit.
-      act(() => {
-        fireEvent.change(textarea, { target: { value: '/screen describe' } });
-      });
-
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-
-      await act(async () => {});
-
-      expect(invoke).toHaveBeenCalledWith('capture_full_screen_command');
-      expect(invoke).toHaveBeenCalledWith(
-        'ask_ollama',
-        expect.objectContaining({
-          message: '/screen describe',
-          imagePaths: ['/tmp/attached.jpg', '/tmp/screen.jpg'],
-        }),
-      );
-    });
-
-    it('handles /screen with selected context', async () => {
-      enableChannelCaptureWithResponses({
-        capture_full_screen_command: '/tmp/screen.jpg',
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay('some context');
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: '/screen explain' } });
-      });
-
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-
-      await act(async () => {});
-
-      expect(invoke).toHaveBeenCalledWith(
-        'ask_ollama',
-        expect.objectContaining({
-          message: '/screen explain',
-          quotedText: 'some context',
-          imagePaths: ['/tmp/screen.jpg'],
-        }),
-      );
-    });
-
-    it('shows pending chat bubble immediately on submit before capture resolves', async () => {
-      let resolveCapture!: (path: string) => void;
-      enableChannelCaptureWithResponses({
-        capture_full_screen_command: new Promise<string>((res) => {
-          resolveCapture = res;
-        }),
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: '/screen check this' } });
-      });
-
-      // Submit; capture is now in-flight (pending)
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-
-      // Before capture resolves: query should be cleared and app in pending mode
-      expect((textarea as HTMLTextAreaElement).value).toBe('');
-
-      // Resolve the capture and let async work settle
-      await act(async () => {
-        resolveCapture('/tmp/screen.jpg');
-      });
-      await act(async () => {});
-
-      // After capture resolves: ask_ollama should be called
-      expect(invoke).toHaveBeenCalledWith(
-        'ask_ollama',
-        expect.objectContaining({ message: '/screen check this' }),
-      );
-    });
-
-    it('restores query with cleanQuery text when capture fails mid-message', async () => {
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'capture_full_screen_command') {
-          throw new Error('Screen capture timed out');
-        }
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, {
-          target: { value: '/screen what is this?' },
-        });
-      });
-
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-
-      // Query should be restored with the full original message
-      expect((textarea as HTMLTextAreaElement).value).toBe(
-        '/screen what is this?',
-      );
-      expect(screen.getByText('Screen capture timed out')).toBeInTheDocument();
-    });
-
-    it('uses blobUrl for still-processing attached images in the pending bubble', async () => {
-      // save_image_command never resolves: image stays in null-filePath state.
-      // Use enableChannelCaptureWithResponses so channel capture (for ask_ollama)
-      // still works alongside the custom per-command responses.
-      enableChannelCaptureWithResponses({
-        save_image_command: new Promise<string>(() => {}),
-        capture_full_screen_command: '/tmp/screen.jpg',
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      // Paste an image; save_image_command hangs, so filePath stays null
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      const file = new File(['img'], 'photo.png', { type: 'image/png' });
-      await act(async () => {
-        fireEvent.paste(textarea, {
-          clipboardData: {
-            items: [{ type: 'image/png', getAsFile: () => file }],
-          },
-        });
-      });
-
-      // Submit /screen immediately; image still processing (filePath === null)
-      act(() => {
-        fireEvent.change(textarea, { target: { value: '/screen ' } });
-      });
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-      await act(async () => {});
-
-      // Capture succeeded; ask_ollama called with only the screenshot
-      // (the attached image never resolved its filePath)
-      expect(invoke).toHaveBeenCalledWith('capture_full_screen_command');
-      expect(invoke).toHaveBeenCalledWith(
-        'ask_ollama',
-        expect.objectContaining({
-          imagePaths: ['/tmp/screen.jpg'],
-        }),
-      );
-    });
-
-    it('cancelling during in-flight capture prevents ask from being called', async () => {
-      let resolveCapture!: (path: string) => void;
-      enableChannelCaptureWithResponses({
-        capture_full_screen_command: new Promise<string>((res) => {
-          resolveCapture = res;
-        }),
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, { target: { value: '/screen ' } });
-      });
-
-      // Submit; capture is now in-flight
-      act(() => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-
-      // Cancel while capture is pending (Stop button)
-      const stopButton = screen.getByRole('button', { name: /stop|cancel/i });
-      act(() => {
-        fireEvent.click(stopButton);
-      });
-
-      // Resolve the capture after cancel
-      await act(async () => {
-        resolveCapture('/tmp/screen.jpg');
-      });
-      await act(async () => {});
-
-      // ask_ollama must NOT be called since the user cancelled
-      expect(invoke).not.toHaveBeenCalledWith('ask_ollama', expect.anything());
-    });
   });
 
   // ─── /think command ─────────────────────────────────────────────────────────
@@ -3425,7 +2058,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, {
           target: { value: '/think why is the sky blue?' },
@@ -3454,7 +2087,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: '/think' } });
       });
@@ -3475,7 +2108,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, {
           target: { value: 'hello /think world' },
@@ -3504,7 +2137,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay('some selected text');
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, {
           target: { value: '/think explain this code' },
@@ -3534,7 +2167,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: '/think ' } });
       });
@@ -3550,76 +2183,6 @@ describe('App', () => {
     });
   });
 
-  // ─── Multi-command ──────────────────────────────────────────────────────────
-
-  describe('Multi-command support', () => {
-    it('sends /screen /think with both screen capture and think:true', async () => {
-      enableChannelCaptureWithResponses({
-        capture_full_screen_command: '/tmp/screen.jpg',
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, {
-          target: { value: '/screen /think explain this' },
-        });
-      });
-
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-
-      await act(async () => {});
-
-      expect(invoke).toHaveBeenCalledWith('capture_full_screen_command');
-      expect(invoke).toHaveBeenCalledWith(
-        'ask_ollama',
-        expect.objectContaining({
-          message: '/screen /think explain this',
-          imagePaths: ['/tmp/screen.jpg'],
-          think: true,
-        }),
-      );
-    });
-
-    it('sends /think /screen with both screen capture and think:true', async () => {
-      enableChannelCaptureWithResponses({
-        capture_full_screen_command: '/tmp/screen.jpg',
-      });
-
-      render(<App />);
-      await act(async () => {});
-      await showOverlay();
-
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
-      act(() => {
-        fireEvent.change(textarea, {
-          target: { value: '/think /screen explain this' },
-        });
-      });
-
-      await act(async () => {
-        fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-      });
-
-      await act(async () => {});
-
-      expect(invoke).toHaveBeenCalledWith('capture_full_screen_command');
-      expect(invoke).toHaveBeenCalledWith(
-        'ask_ollama',
-        expect.objectContaining({
-          message: '/think /screen explain this',
-          imagePaths: ['/tmp/screen.jpg'],
-          think: true,
-        }),
-      );
-    });
-  });
-
   // ─── Utility commands ───────────────────────────────────────────────────────
 
   describe('Utility commands (buildPrompt routing)', () => {
@@ -3630,7 +2193,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, {
           target: { value: '/rewrite fix this text' },
@@ -3661,7 +2224,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, {
           target: { value: '/translate jpn hello world' },
@@ -3694,7 +2257,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       const file = new File(['fake-img-data'], 'photo.png', {
         type: 'image/png',
       });
@@ -3748,7 +2311,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, {
           target: { value: '/think /tldr some long text' },
@@ -3780,7 +2343,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: '/rewrite' } });
       });
@@ -3802,7 +2365,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, { target: { value: '/rewrite' } });
       });
@@ -3824,7 +2387,7 @@ describe('App', () => {
       // Activate overlay with selected text as context
       await showOverlay('original selected text');
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       // Type a command with extra instruction so strippedMessage is non-empty
       // (bypasses the "no content" early guard) and selectedContext is also set.
       act(() => {
@@ -3863,7 +2426,7 @@ describe('App', () => {
       await showOverlay('my selected text');
 
       // Paste an image and wait for backend resolution so hasPendingImages is false
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       const file = new File(['data'], 'img.png', { type: 'image/png' });
       await act(async () => {
         fireEvent.paste(textarea, {
@@ -3911,7 +2474,7 @@ describe('App', () => {
       await act(async () => {});
       await showOverlay();
 
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       act(() => {
         fireEvent.change(textarea, {
           target: { value: '/rewrite fix this text' },
@@ -3941,7 +2504,7 @@ describe('App', () => {
       await showOverlay();
 
       // Paste an image and wait for backend resolution
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       const file = new File(['fake-img-data'], 'photo.png', {
         type: 'image/png',
       });
@@ -4014,7 +2577,7 @@ describe('App', () => {
       await showOverlay();
 
       // Paste an image — thumbnail appears immediately (filePath null)
-      const textarea = screen.getByPlaceholderText('Ask Thuki anything...');
+      const textarea = screen.getByPlaceholderText('Ask Oling anything...');
       const file = new File(['data'], 'img.png', { type: 'image/png' });
       await act(async () => {
         fireEvent.paste(textarea, {
@@ -4057,7 +2620,7 @@ describe('App', () => {
   });
 
   describe('Onboarding', () => {
-    it('shows onboarding screen when thuki://onboarding event fires', async () => {
+    it('shows onboarding screen when oling://onboarding event fires', async () => {
       enableChannelCaptureWithResponses({
         check_accessibility_permission: false,
         check_screen_recording_permission: false,
@@ -4067,10 +2630,10 @@ describe('App', () => {
       await act(async () => {});
 
       await act(async () => {
-        emitTauriEvent('thuki://onboarding', { stage: 'permissions' });
+        emitTauriEvent('oling://onboarding', { stage: 'permissions' });
       });
 
-      expect(screen.getByText("Let's get Thuki set up")).toBeInTheDocument();
+      expect(screen.getByText("Let's get Oling set up")).toBeInTheDocument();
     });
 
     it('does not show onboarding on normal visibility event', async () => {
@@ -4079,7 +2642,7 @@ describe('App', () => {
 
       await showOverlay();
 
-      expect(screen.queryByText("Let's get Thuki set up")).toBeNull();
+      expect(screen.queryByText("Let's get Oling set up")).toBeNull();
     });
 
     it('renders normal ask bar when overlay is shown without onboarding', async () => {
@@ -4089,7 +2652,7 @@ describe('App', () => {
       await showOverlay();
 
       expect(
-        screen.getByPlaceholderText('Ask Thuki anything...'),
+        screen.getByPlaceholderText('Ask Oling anything...'),
       ).toBeInTheDocument();
     });
 
@@ -4100,7 +2663,7 @@ describe('App', () => {
       await act(async () => {});
 
       await act(async () => {
-        emitTauriEvent('thuki://onboarding', { stage: 'intro' });
+        emitTauriEvent('oling://onboarding', { stage: 'intro' });
       });
 
       expect(screen.getByText('Before you dive in')).toBeInTheDocument();
@@ -4114,19 +2677,19 @@ describe('App', () => {
   });
 
   describe('reply-draft flow', () => {
-    it('opens ReplyDraftView in Capturing state on thuki://reply-draft-open', async () => {
+    it('opens ReplyDraftView in Capturing state on oling://reply-draft-open', async () => {
       render(<App />);
       await act(async () => {});
 
       await act(async () => {
-        emitTauriEvent('thuki://reply-draft-open', {
+        emitTauriEvent('oling://reply-draft-open', {
           bundle_id: 'com.tencent.xinWeChat',
           app_name: 'WeChat',
         });
       });
 
       // Ask bar swapped out, reply-draft shown in capturing state.
-      expect(screen.queryByPlaceholderText('Ask Thuki anything...')).toBeNull();
+      expect(screen.queryByPlaceholderText('Ask Oling anything...')).toBeNull();
       expect(screen.getByTestId('reply-draft-root')).toBeInTheDocument();
       expect(screen.getByTestId('reply-target-app').textContent).toBe('WeChat');
       // Spinner is present instead of a real thumbnail while pending.
@@ -4138,12 +2701,12 @@ describe('App', () => {
       expect(generateCalls).toHaveLength(0);
     });
 
-    it('dispatches generate_reply once thuki://reply-draft-image arrives with a path', async () => {
+    it('dispatches generate_reply once oling://reply-draft-image arrives with a path', async () => {
       render(<App />);
       await act(async () => {});
 
       await act(async () => {
-        emitTauriEvent('thuki://reply-draft-open', {
+        emitTauriEvent('oling://reply-draft-open', {
           bundle_id: 'com.apple.MobileSMS',
           app_name: 'Messages',
         });
@@ -4151,7 +2714,7 @@ describe('App', () => {
       invoke.mockClear();
 
       await act(async () => {
-        emitTauriEvent('thuki://reply-draft-image', {
+        emitTauriEvent('oling://reply-draft-image', {
           image_path: '/tmp/imessages.png',
           error: null,
         });
@@ -4172,14 +2735,14 @@ describe('App', () => {
       await act(async () => {});
 
       await act(async () => {
-        emitTauriEvent('thuki://reply-draft-open', {
+        emitTauriEvent('oling://reply-draft-open', {
           bundle_id: 'com.apple.MobileSMS',
           app_name: 'Messages',
         });
       });
 
       await act(async () => {
-        emitTauriEvent('thuki://reply-draft-image', {
+        emitTauriEvent('oling://reply-draft-image', {
           image_path: null,
           error: 'No on-screen window found for the focused app (pid 42).',
         });
@@ -4194,7 +2757,7 @@ describe('App', () => {
       await act(async () => {});
 
       await act(async () => {
-        emitTauriEvent('thuki://reply-draft-image', {
+        emitTauriEvent('oling://reply-draft-image', {
           image_path: '/tmp/orphan.png',
           error: null,
         });
@@ -4210,7 +2773,7 @@ describe('App', () => {
       await act(async () => {});
 
       await act(async () => {
-        emitTauriEvent('thuki://reply-draft-open', {
+        emitTauriEvent('oling://reply-draft-open', {
           bundle_id: 'com.apple.MobileSMS',
           app_name: 'Messages',
         });
@@ -4225,6 +2788,33 @@ describe('App', () => {
       expect(screen.queryByTestId('reply-draft-root')).toBeNull();
     });
 
+    it('dismissing ReplyDraftView cleans up the captured reply screenshot', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('oling://reply-draft-open', {
+          bundle_id: 'com.apple.MobileSMS',
+          app_name: 'Messages',
+        });
+      });
+      await act(async () => {
+        emitTauriEvent('oling://reply-draft-image', {
+          image_path: '/tmp/reply-draft.png',
+          error: null,
+        });
+      });
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: 'Escape' });
+      });
+      await act(async () => {});
+
+      expect(invoke).toHaveBeenCalledWith('remove_image_command', {
+        path: '/tmp/reply-draft.png',
+      });
+    });
+
     it('clears the reply context after the hide animation so the next show renders the Ask Bar', async () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       try {
@@ -4236,7 +2826,7 @@ describe('App', () => {
         await showOverlay();
 
         await act(async () => {
-          emitTauriEvent('thuki://reply-draft-open', {
+          emitTauriEvent('oling://reply-draft-open', {
             bundle_id: 'com.tencent.xinWeChat',
             app_name: 'WeChat',
           });
@@ -4260,7 +2850,7 @@ describe('App', () => {
         // reply-draft-open event. The Ask Bar should come back, NOT the
         // reply panel.
         await act(async () => {
-          emitTauriEvent('thuki://visibility', {
+          emitTauriEvent('oling://visibility', {
             state: 'show',
             selected_text: null,
             window_x: null,
@@ -4271,7 +2861,7 @@ describe('App', () => {
 
         expect(screen.queryByTestId('reply-draft-root')).toBeNull();
         expect(
-          screen.getByPlaceholderText('Ask Thuki anything...'),
+          screen.getByPlaceholderText('Ask Oling anything...'),
         ).toBeInTheDocument();
       } finally {
         vi.useRealTimers();
@@ -4283,7 +2873,7 @@ describe('App', () => {
       await act(async () => {});
 
       await act(async () => {
-        emitTauriEvent('thuki://reply-draft-open', {
+        emitTauriEvent('oling://reply-draft-open', {
           bundle_id: 'com.tencent.xinWeChat',
           app_name: 'WeChat',
         });
@@ -4291,7 +2881,7 @@ describe('App', () => {
       expect(screen.getByTestId('reply-target-app').textContent).toBe('WeChat');
 
       await act(async () => {
-        emitTauriEvent('thuki://reply-draft-open', {
+        emitTauriEvent('oling://reply-draft-open', {
           bundle_id: 'com.apple.MobileSMS',
           app_name: 'Messages',
         });
@@ -4322,16 +2912,16 @@ describe('App', () => {
       );
     });
 
-    it('opens SettingsView on thuki://settings-open event', async () => {
+    it('opens SettingsView on oling://settings-open event', async () => {
       render(<App />);
       await act(async () => {});
 
       await act(async () => {
-        emitTauriEvent('thuki://settings-open', null);
+        emitTauriEvent('oling://settings-open', null);
       });
 
       expect(screen.getByTestId('settings-root')).toBeInTheDocument();
-      expect(screen.queryByPlaceholderText('Ask Thuki anything...')).toBeNull();
+      expect(screen.queryByPlaceholderText('Ask Oling anything...')).toBeNull();
     });
 
     it('opens SettingsView on Cmd+, shortcut', async () => {
@@ -4352,7 +2942,7 @@ describe('App', () => {
       await act(async () => {});
 
       await act(async () => {
-        emitTauriEvent('thuki://settings-open', null);
+        emitTauriEvent('oling://settings-open', null);
       });
       expect(screen.getByTestId('settings-root')).toBeInTheDocument();
 
@@ -4370,7 +2960,7 @@ describe('App', () => {
       await showOverlay();
 
       await act(async () => {
-        emitTauriEvent('thuki://settings-open', null);
+        emitTauriEvent('oling://settings-open', null);
       });
 
       // Esc is handled by SettingsView's own handler, not App's global one.
@@ -4392,7 +2982,7 @@ describe('App', () => {
       await showOverlay();
 
       await act(async () => {
-        emitTauriEvent('thuki://overlay-submit', {
+        emitTauriEvent('oling://overlay-submit', {
           imagePath: '/tmp/editor-shot.png',
           prompt: 'What is in this image?',
           autoSubmit: false,
@@ -4400,7 +2990,7 @@ describe('App', () => {
       });
 
       const textarea = screen.getByPlaceholderText(
-        'Ask Thuki anything...',
+        'Ask Oling anything...',
       ) as HTMLTextAreaElement;
       expect(textarea.value).toBe('What is in this image?');
     });
@@ -4411,7 +3001,7 @@ describe('App', () => {
       await showOverlay();
 
       await act(async () => {
-        emitTauriEvent('thuki://overlay-submit', {
+        emitTauriEvent('oling://overlay-submit', {
           imagePath: '',
           prompt: 'hi',
           autoSubmit: false,
@@ -4419,7 +3009,7 @@ describe('App', () => {
       });
 
       const textarea = screen.getByPlaceholderText(
-        'Ask Thuki anything...',
+        'Ask Oling anything...',
       ) as HTMLTextAreaElement;
       // Prompt not filled because the event was a no-op.
       expect(textarea.value).toBe('');
@@ -4431,14 +3021,14 @@ describe('App', () => {
       await showOverlay();
 
       await act(async () => {
-        emitTauriEvent('thuki://overlay-submit', {
+        emitTauriEvent('oling://overlay-submit', {
           imagePath: '/tmp/editor-shot.png',
           autoSubmit: false,
         });
       });
 
       const textarea = screen.getByPlaceholderText(
-        'Ask Thuki anything...',
+        'Ask Oling anything...',
       ) as HTMLTextAreaElement;
       expect(textarea.value).toBe('');
     });
@@ -4450,7 +3040,7 @@ describe('App', () => {
       await showOverlay();
 
       await act(async () => {
-        emitTauriEvent('thuki://overlay-submit', {
+        emitTauriEvent('oling://overlay-submit', {
           imagePath: '/tmp/editor-shot.png',
           prompt: '提取图中文字',
           autoSubmit: true,

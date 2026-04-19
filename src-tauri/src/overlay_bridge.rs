@@ -3,7 +3,7 @@
  *
  * Tauri command: `send_image_to_chat(base64_data, prompt, auto_submit)` —
  * decodes the composite PNG from the overlay, writes it to a temp file, emits
- * a `thuki://overlay-submit` event to the main window with `{ imagePath,
+ * a `oling://overlay-submit` event to the main window with `{ imagePath,
  * prompt, autoSubmit }`, and shows the main overlay.
  *
  * Pure helpers (`overlay_temp_path`, `OverlaySubmitPayload`) are exposed for
@@ -15,11 +15,11 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 /// Event name used by the overlay bridge → chat UI.
-pub const OVERLAY_SUBMIT_EVENT: &str = "thuki://overlay-submit";
+pub const OVERLAY_SUBMIT_EVENT: &str = "oling://overlay-submit";
 
 /// Payload emitted to the main window when the overlay hands an image to the
 /// chat. Serialized with camelCase keys to match the frontend's preferred
-/// shape (consistent with other Thuki events).
+/// shape (consistent with other Oling events).
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct OverlaySubmitPayload {
@@ -31,7 +31,7 @@ pub struct OverlaySubmitPayload {
 /// Builds the temp-file path for an overlay-to-chat image. Extracted so the
 /// naming scheme can be verified without invoking AppKit.
 pub fn overlay_temp_path() -> PathBuf {
-    PathBuf::from(format!("/tmp/{}-thuki-overlay.png", uuid::Uuid::new_v4()))
+    PathBuf::from(format!("/tmp/{}-oling-overlay.png", uuid::Uuid::new_v4()))
 }
 
 // ─── Tauri command ─────────────────────────────────────────────────────────
@@ -89,14 +89,14 @@ mod tests {
 
     #[test]
     fn overlay_submit_event_constant_is_stable() {
-        assert_eq!(OVERLAY_SUBMIT_EVENT, "thuki://overlay-submit");
+        assert_eq!(OVERLAY_SUBMIT_EVENT, "oling://overlay-submit");
     }
 
     #[test]
     fn overlay_temp_path_ends_with_overlay_png() {
         let p = overlay_temp_path();
         let s = p.to_str().unwrap();
-        assert!(s.ends_with("-thuki-overlay.png"));
+        assert!(s.ends_with("-oling-overlay.png"));
         assert!(s.starts_with("/tmp/"));
     }
 

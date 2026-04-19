@@ -46,7 +46,7 @@ pub fn is_pin_label(label: &str) -> bool {
 /// Builds the temp-file path for a pin-source image. Split from the write
 /// command so the naming scheme is unit-testable.
 pub fn pin_temp_path() -> PathBuf {
-    PathBuf::from(format!("/tmp/{}-thuki-pin.png", uuid::Uuid::new_v4()))
+    PathBuf::from(format!("/tmp/{}-oling-pin.png", uuid::Uuid::new_v4()))
 }
 
 /// Clamps optional geometry from the frontend into a sane (w, h) pair, or
@@ -101,7 +101,7 @@ pub fn open_pin_window(
         sanitize_pin_size(width, height).unwrap_or((PIN_DEFAULT_WIDTH, PIN_DEFAULT_HEIGHT));
     let mut builder =
         tauri::WebviewWindowBuilder::new(&app_handle, &label, tauri::WebviewUrl::App(url.into()))
-            .title("Thuki Pin")
+            .title("Oling Pin")
             .inner_size(w, h)
             .resizable(true)
             .decorations(false)
@@ -283,7 +283,7 @@ mod tests {
     fn pin_temp_path_uses_pin_suffix_and_png_extension() {
         let p = pin_temp_path();
         let s = p.to_str().unwrap();
-        assert!(s.ends_with("-thuki-pin.png"));
+        assert!(s.ends_with("-oling-pin.png"));
         assert!(s.starts_with("/tmp/"));
     }
 

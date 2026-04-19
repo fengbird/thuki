@@ -1,4 +1,4 @@
-//! Unified activation and visibility management for the Thuki overlay.
+//! Unified activation and visibility management for the Oling overlay.
 //!
 //! This module coordinates the interaction between system-level input events
 //! and the application's visibility state. It provides a non-intrusive monitoring
@@ -28,15 +28,25 @@ use core_graphics::event::{
     CGEventType, CallbackResult, EventField,
 };
 
+use crate::settings::{
+    KeyComboShortcut, OverlayActivationShortcut, ShortcutConfig, ShortcutModifier,
+};
+
 /// Maximum temporal proximity between trigger events to qualify as an activation signal.
 const ACTIVATION_WINDOW: Duration = Duration::from_millis(400);
 
 /// Minimum interval between successive activations to prevent accidental double-toggles.
 const ACTIVATION_COOLDOWN: Duration = Duration::from_millis(600);
 
-/// Primary keycodes used for the activation sequence (macOS Control keys).
-const KC_PRIMARY_L: i64 = 0x3b;
-const KC_PRIMARY_R: i64 = 0x3e;
+/// Primary modifier keycodes used for activation gestures.
+const KC_CTRL_L: i64 = 0x3b;
+const KC_CTRL_R: i64 = 0x3e;
+const KC_SHIFT_L: i64 = 0x38;
+const KC_SHIFT_R: i64 = 0x3c;
+const KC_ALT_L: i64 = 0x3a;
+const KC_ALT_R: i64 = 0x3d;
+const KC_CMD_L: i64 = 0x37;
+const KC_CMD_R: i64 = 0x36;
 
 /// Keycode for the letter R. Used to detect the reply hotkey (⌃⇧R).
 const KC_R: i64 = 0x0f;
@@ -59,17 +69,94 @@ fn is_reply_hotkey(keycode: i64, flags: CGEventFlags) -> bool {
     has_ctrl && has_shift && !has_cmd && !has_alt
 }
 
-/// Returns true when `keycode` + `flags` match the screenshot hotkey
-/// (⌘⇧X with **no** Ctrl or ⌥). Kept pure for unit tests.
-fn is_screenshot_hotkey(keycode: i64, flags: CGEventFlags) -> bool {
-    if keycode != KC_X {
+fn flag_for_modifier(modifier: ShortcutModifier) -> CGEventFlags {
+    match modifier {
+        ShortcutModifier::Cmd => CGEventFlags::CGEventFlagCommand,
+        ShortcutModifier::Ctrl => CGEventFlags::CGEventFlagControl,
+        ShortcutModifier::Shift => CGEventFlags::CGEventFlagShift,
+        ShortcutModifier::Alt => CGEventFlags::CGEventFlagAlternate,
+    }
+}
+
+fn modifier_for_keycode(keycode: i64) -> Option<ShortcutModifier> {
+    match keycode {
+        KC_CMD_L | KC_CMD_R => Some(ShortcutModifier::Cmd),
+        KC_CTRL_L | KC_CTRL_R => Some(ShortcutModifier::Ctrl),
+        KC_SHIFT_L | KC_SHIFT_R => Some(ShortcutModifier::Shift),
+        KC_ALT_L | KC_ALT_R => Some(ShortcutModifier::Alt),
+        _ => None,
+    }
+}
+
+fn matches_key_combo(keycode: i64, flags: CGEventFlags, shortcut: &KeyComboShortcut) -> bool {
+    if keycode != shortcut.key_code {
         return false;
     }
+
     let has_cmd = flags.contains(CGEventFlags::CGEventFlagCommand);
-    let has_shift = flags.contains(CGEventFlags::CGEventFlagShift);
     let has_ctrl = flags.contains(CGEventFlags::CGEventFlagControl);
     let has_alt = flags.contains(CGEventFlags::CGEventFlagAlternate);
-    has_cmd && has_shift && !has_ctrl && !has_alt
+    let has_shift = flags.contains(CGEventFlags::CGEventFlagShift);
+
+    let wants_cmd = shortcut.modifiers.contains(&ShortcutModifier::Cmd);
+    let wants_ctrl = shortcut.modifiers.contains(&ShortcutModifier::Ctrl);
+    let wants_alt = shortcut.modifiers.contains(&ShortcutModifier::Alt);
+    let wants_shift = shortcut.modifiers.contains(&ShortcutModifier::Shift);
+
+    has_cmd == wants_cmd
+        && has_ctrl == wants_ctrl
+        && has_alt == wants_alt
+        && has_shift == wants_shift
+}
+
+fn activation_ready(state: &mut ActivationState) -> bool {
+    let now = Instant::now();
+    if let Some(last_act) = state.last_activation {
+        if now.duration_since(last_act) < ACTIVATION_COOLDOWN {
+            return false;
+        }
+    }
+    state.last_trigger = None;
+    state.last_activation = Some(now);
+    state.is_pressed = false;
+    true
+}
+
+fn matches_overlay_activation(
+    state: &mut ActivationState,
+    event_type: CGEventType,
+    keycode: i64,
+    flags: CGEventFlags,
+    shortcut: &OverlayActivationShortcut,
+) -> bool {
+    match shortcut {
+        OverlayActivationShortcut::DoubleTapModifier { modifier } => {
+            if !matches!(event_type, CGEventType::FlagsChanged) {
+                return false;
+            }
+            if modifier_for_keycode(keycode) != Some(*modifier) {
+                return false;
+            }
+            let is_press = flags.contains(flag_for_modifier(*modifier));
+            evaluate_activation(state, is_press)
+        }
+        OverlayActivationShortcut::KeyCombo {
+            key_code,
+            modifiers,
+        } => {
+            if !matches!(event_type, CGEventType::KeyDown) {
+                return false;
+            }
+            let combo = KeyComboShortcut {
+                key_code: *key_code,
+                modifiers: modifiers.clone(),
+            };
+            if !matches_key_combo(keycode, flags, &combo) {
+                return false;
+            }
+            activation_ready(state)
+        }
+    }
 }
 
 /// Returns true when `keycode` + `flags` indicate a standard clipboard copy or
@@ -197,13 +284,14 @@ impl OverlayActivator {
     ///
     /// # Arguments
     ///
-    /// * `on_activation` — invoked on double-tap Control (toggles the overlay).
+    /// * `on_activation` — invoked on the configured overlay activation shortcut.
     /// * `on_reply_hotkey` — invoked on ⌃⇧R (triggers smart-reply capture).
-    /// * `on_screenshot_hotkey` — invoked on ⌘⇧X (triggers free-form screenshot).
+    /// * `on_screenshot_hotkey` — invoked on the configured screenshot shortcut.
     /// * `on_clipboard_hotkey` — invoked on ⌘C / ⌘X (clipboard monitor hint).
     #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn start<F, G, H, I>(
         &self,
+        shortcuts: Arc<Mutex<ShortcutConfig>>,
         on_activation: F,
         on_reply_hotkey: G,
         on_screenshot_hotkey: H,
@@ -225,6 +313,7 @@ impl OverlayActivator {
         request_authorization(false);
 
         let is_active = self.is_active.clone();
+        let shortcuts = shortcuts.clone();
         let on_activation = Arc::new(on_activation);
         let on_reply_hotkey = Arc::new(on_reply_hotkey);
         let on_screenshot_hotkey = Arc::new(on_screenshot_hotkey);
@@ -233,6 +322,7 @@ impl OverlayActivator {
         std::thread::spawn(move || {
             run_loop_with_retry(
                 is_active,
+                shortcuts,
                 on_activation,
                 on_reply_hotkey,
                 on_screenshot_hotkey,
@@ -268,6 +358,7 @@ enum TapExitReason {
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn run_loop_with_retry<F, G, H, I>(
     is_active: Arc<AtomicBool>,
+    shortcuts: Arc<Mutex<ShortcutConfig>>,
     on_activation: Arc<F>,
     on_reply_hotkey: Arc<G>,
     on_screenshot_hotkey: Arc<H>,
@@ -287,6 +378,7 @@ fn run_loop_with_retry<F, G, H, I>(
 
         match try_initialize_tap(
             &is_active,
+            &shortcuts,
             &on_activation,
             &on_reply_hotkey,
             &on_screenshot_hotkey,
@@ -296,7 +388,7 @@ fn run_loop_with_retry<F, G, H, I>(
 
             TapExitReason::TapDied => {
                 // Tap was running then killed by macOS. Reinstall immediately.
-                eprintln!("thuki: [activator] tap died — reinstalling");
+                eprintln!("oling: [activator] tap died — reinstalling");
                 permission_failures = 0;
             }
 
@@ -304,13 +396,13 @@ fn run_loop_with_retry<F, G, H, I>(
                 permission_failures += 1;
                 if permission_failures >= MAX_PERMISSION_ATTEMPTS {
                     eprintln!(
-                        "thuki: [error] activation listener failed after \
+                        "oling: [error] activation listener failed after \
                          maximum retries; check system permissions."
                     );
                     return;
                 }
                 eprintln!(
-                    "thuki: [activator] tap creation failed \
+                    "oling: [activator] tap creation failed \
                      (attempt {permission_failures}/{MAX_PERMISSION_ATTEMPTS}); \
                      retrying in {}s",
                     PERMISSION_POLL_INTERVAL.as_secs()
@@ -328,6 +420,7 @@ fn run_loop_with_retry<F, G, H, I>(
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn try_initialize_tap<F, G, H, I>(
     is_active: &Arc<AtomicBool>,
+    shortcuts: &Arc<Mutex<ShortcutConfig>>,
     on_activation: &Arc<F>,
     on_reply_hotkey: &Arc<G>,
     on_screenshot_hotkey: &Arc<H>,
@@ -346,6 +439,7 @@ where
     }));
 
     let cb_active = is_active.clone();
+    let cb_shortcuts = shortcuts.clone();
     let cb_on_activation = on_activation.clone();
     let cb_on_reply_hotkey = on_reply_hotkey.clone();
     let cb_on_screenshot_hotkey = on_screenshot_hotkey.clone();
@@ -360,7 +454,7 @@ where
     // routing layer and are subject to focus-based filtering introduced in
     // macOS 15 Sequoia: they silently receive zero events from other apps.
     // HID-level taps bypass this entirely and require only Accessibility
-    // permission, which Thuki already holds.
+    // permission, which Oling already holds.
     let tap_result = CGEventTap::new(
         CGEventTapLocation::HID,
         CGEventTapPlacement::HeadInsertEventTap,
@@ -368,10 +462,10 @@ where
         // are not disabled by secure input mode (iTerm Secure Keyboard Entry,
         // password fields, etc.). We still return CallbackResult::Keep so no
         // events are blocked or modified. Requires Accessibility permission,
-        // which Thuki already holds.
+        // which Oling already holds.
         CGEventTapOptions::Default,
-        // Register for FlagsChanged (Control-key press/release for the
-        // double-tap sequence) and KeyDown (for the ⌃⇧R reply hotkey).
+        // Register for FlagsChanged (modifier double-tap activation gestures)
+        // and KeyDown (for ⌃⇧R plus configurable key-combo shortcuts).
         // TapDisabledByTimeout and TapDisabledByUserInput have sentinel
         // values (0xFFFFFFFE/0xFFFFFFFF) that overflow the bitmask and
         // cannot be included here — macOS delivers them to the callback
@@ -385,7 +479,7 @@ where
                 CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
             ) {
                 eprintln!(
-                    "thuki: [activator] event tap disabled by macOS \
+                    "oling: [activator] event tap disabled by macOS \
                      ({event_type:?}) — stopping run loop for reinstall"
                 );
                 CFRunLoop::get_current().stop();
@@ -402,25 +496,37 @@ where
 
             match event_type {
                 CGEventType::KeyDown => {
+                    let shortcut_config = cb_shortcuts.lock().unwrap().clone();
                     if is_reply_hotkey(keycode, flags) {
                         cb_on_reply_hotkey();
-                    } else if is_screenshot_hotkey(keycode, flags) {
+                    } else if matches_key_combo(keycode, flags, &shortcut_config.screenshot_capture)
+                    {
                         cb_on_screenshot_hotkey();
                     } else if is_clipboard_hotkey(keycode, flags) {
                         cb_on_clipboard_hotkey();
+                    } else {
+                        let mut s = cb_state.lock().unwrap();
+                        if matches_overlay_activation(
+                            &mut s,
+                            event_type,
+                            keycode,
+                            flags,
+                            &shortcut_config.overlay_activation,
+                        ) {
+                            cb_on_activation();
+                        }
                     }
                 }
                 CGEventType::FlagsChanged => {
-                    // Filter for primary triggers (Control modifier keys).
-                    if keycode != KC_PRIMARY_L && keycode != KC_PRIMARY_R {
-                        return CallbackResult::Keep;
-                    }
-
-                    // Check specific bitmask for the Control key state.
-                    let is_press = flags.contains(CGEventFlags::CGEventFlagControl);
-
+                    let shortcut_config = cb_shortcuts.lock().unwrap().clone();
                     let mut s = cb_state.lock().unwrap();
-                    if evaluate_activation(&mut s, is_press) {
+                    if matches_overlay_activation(
+                        &mut s,
+                        event_type,
+                        keycode,
+                        flags,
+                        &shortcut_config.overlay_activation,
+                    ) {
                         cb_on_activation();
                     }
                 }
@@ -434,7 +540,7 @@ where
     match tap_result {
         Ok(tap) => {
             eprintln!(
-                "thuki: [activator] event tap created (HID level) — listening for double-tap Control, ⌃⇧R, ⌘⇧X, and clipboard intents"
+                "oling: [activator] event tap created (HID level) — listening for configurable activation/screenshot shortcuts, ⌃⇧R, and clipboard intents"
             );
             unsafe {
                 let loop_source = tap
@@ -448,7 +554,7 @@ where
 
                 CFRunLoop::run_current();
             }
-            eprintln!("thuki: [activator] event tap run loop exited");
+            eprintln!("oling: [activator] event tap run loop exited");
             // If still supposed to be active the run loop exited unexpectedly.
             if is_active.load(Ordering::SeqCst) {
                 TapExitReason::TapDied
@@ -458,7 +564,7 @@ where
         }
         Err(()) => {
             eprintln!(
-                "thuki: [activator] event tap creation FAILED; check Accessibility permission"
+                "oling: [activator] event tap creation FAILED; check Accessibility permission"
             );
             TapExitReason::CreationFailed
         }
@@ -692,54 +798,124 @@ mod tests {
         assert!(is_reply_hotkey(KC_R, flags));
     }
 
-    // ─── is_screenshot_hotkey ───────────────────────────────────────────────
+    // ─── matches_key_combo ──────────────────────────────────────────────────
 
     #[test]
-    fn screenshot_hotkey_matches_cmd_shift_x() {
+    fn key_combo_matches_cmd_shift_x() {
         let flags = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagShift;
-        assert!(is_screenshot_hotkey(KC_X, flags));
+        let shortcut = KeyComboShortcut {
+            key_code: KC_X,
+            modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+        };
+        assert!(matches_key_combo(KC_X, flags, &shortcut));
     }
 
     #[test]
-    fn screenshot_hotkey_rejects_wrong_keycode() {
+    fn key_combo_rejects_wrong_keycode() {
         let flags = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagShift;
-        assert!(!is_screenshot_hotkey(KC_R, flags));
+        let shortcut = KeyComboShortcut {
+            key_code: KC_X,
+            modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+        };
+        assert!(!matches_key_combo(KC_R, flags, &shortcut));
     }
 
     #[test]
-    fn screenshot_hotkey_rejects_missing_command() {
+    fn key_combo_rejects_missing_required_modifier() {
         let flags = CGEventFlags::CGEventFlagShift;
-        assert!(!is_screenshot_hotkey(KC_X, flags));
+        let shortcut = KeyComboShortcut {
+            key_code: KC_X,
+            modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+        };
+        assert!(!matches_key_combo(KC_X, flags, &shortcut));
     }
 
     #[test]
-    fn screenshot_hotkey_rejects_missing_shift() {
-        let flags = CGEventFlags::CGEventFlagCommand;
-        assert!(!is_screenshot_hotkey(KC_X, flags));
-    }
-
-    #[test]
-    fn screenshot_hotkey_rejects_extra_ctrl() {
+    fn key_combo_rejects_extra_modifier() {
         let flags = CGEventFlags::CGEventFlagCommand
             | CGEventFlags::CGEventFlagShift
             | CGEventFlags::CGEventFlagControl;
-        assert!(!is_screenshot_hotkey(KC_X, flags));
+        let shortcut = KeyComboShortcut {
+            key_code: KC_X,
+            modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+        };
+        assert!(!matches_key_combo(KC_X, flags, &shortcut));
     }
 
     #[test]
-    fn screenshot_hotkey_rejects_extra_option() {
-        let flags = CGEventFlags::CGEventFlagCommand
-            | CGEventFlags::CGEventFlagShift
-            | CGEventFlags::CGEventFlagAlternate;
-        assert!(!is_screenshot_hotkey(KC_X, flags));
-    }
-
-    #[test]
-    fn screenshot_hotkey_ignores_unrelated_modifier_bits() {
+    fn key_combo_ignores_unrelated_modifier_bits() {
         let flags = CGEventFlags::CGEventFlagCommand
             | CGEventFlags::CGEventFlagShift
             | CGEventFlags::CGEventFlagAlphaShift;
-        assert!(is_screenshot_hotkey(KC_X, flags));
+        let shortcut = KeyComboShortcut {
+            key_code: KC_X,
+            modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+        };
+        assert!(matches_key_combo(KC_X, flags, &shortcut));
+    }
+
+    // ─── matches_overlay_activation ────────────────────────────────────────
+
+    #[test]
+    fn overlay_activation_supports_double_shift() {
+        let mut state = ActivationState {
+            last_trigger: None,
+            is_pressed: false,
+            last_activation: None,
+        };
+        let shortcut = OverlayActivationShortcut::DoubleTapModifier {
+            modifier: ShortcutModifier::Shift,
+        };
+
+        assert!(!matches_overlay_activation(
+            &mut state,
+            CGEventType::FlagsChanged,
+            KC_SHIFT_L,
+            CGEventFlags::CGEventFlagShift,
+            &shortcut,
+        ));
+        assert!(!matches_overlay_activation(
+            &mut state,
+            CGEventType::FlagsChanged,
+            KC_SHIFT_L,
+            CGEventFlags::empty(),
+            &shortcut,
+        ));
+        assert!(!matches_overlay_activation(
+            &mut state,
+            CGEventType::FlagsChanged,
+            KC_SHIFT_R,
+            CGEventFlags::CGEventFlagShift,
+            &shortcut,
+        ));
+        assert!(matches_overlay_activation(
+            &mut state,
+            CGEventType::FlagsChanged,
+            KC_SHIFT_R,
+            CGEventFlags::empty(),
+            &shortcut,
+        ));
+    }
+
+    #[test]
+    fn overlay_activation_supports_key_combo() {
+        let mut state = ActivationState {
+            last_trigger: None,
+            is_pressed: false,
+            last_activation: None,
+        };
+        let shortcut = OverlayActivationShortcut::KeyCombo {
+            key_code: KC_X,
+            modifiers: vec![ShortcutModifier::Cmd, ShortcutModifier::Shift],
+        };
+        let flags = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagShift;
+        assert!(matches_overlay_activation(
+            &mut state,
+            CGEventType::KeyDown,
+            KC_X,
+            flags,
+            &shortcut,
+        ));
     }
 
     // ─── is_clipboard_hotkey ────────────────────────────────────────────────

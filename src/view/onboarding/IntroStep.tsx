@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
-import thukiLogo from '../../../src-tauri/icons/128x128.png';
+import olingLogo from '../../../src-tauri/icons/128x128.png';
 
 interface Props {
   onComplete: () => void;
@@ -40,10 +40,10 @@ export function IntroStep({ onComplete }: Props) {
       >
         {/* Logo */}
         <img
-          src={thukiLogo}
+          src={olingLogo}
           width={44}
           height={44}
-          alt="Thuki"
+          alt="Oling"
           style={{
             objectFit: 'contain',
             display: 'block',
@@ -108,11 +108,11 @@ export function IntroStep({ onComplete }: Props) {
             icon={<ScreenIcon />}
             title={
               <>
-                <span>Type</span> <MonoChip>/screen</MonoChip>{' '}
-                <span>for context</span>
+                <span>Press</span> <MonoChip>⌘⇧X</MonoChip>{' '}
+                <span>to capture</span>
               </>
             }
-            desc="Captures your display so Thuki can see what you see"
+            desc="Opens the screenshot flow so you can capture, annotate, and ask about what is on screen"
           />
           <Fact
             icon={<FloatIcon />}
