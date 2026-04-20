@@ -36,6 +36,43 @@ const CLIPBOARD_PASTE_RESTORE_DELAY: Duration = Duration::from_millis(700);
 const FALLBACK_CLIPBOARD_MAX_ENTRIES: usize =
     crate::settings::DEFAULT_CLIPBOARD_MAX_ENTRIES as usize;
 
+/// Rounds the NSWindow's content layer so the OS-level window rectangle
+/// stops drawing corners outside the 24px rounded glass panel. Without
+/// this, the resize hit-area (at the square window frame) visibly
+/// overshoots the rounded inner UI and leaves faint rectangular artifacts
+/// at each corner.
+///
+/// Excluded from coverage — pure AppKit FFI with no observable return
+/// value. The corner-radius effect is validated manually.
+#[cfg(target_os = "macos")]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn apply_rounded_window_corners(window: &tauri::WebviewWindow, radius: f64) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::NSWindow;
+
+    let Ok(raw_ptr) = window.ns_window() else {
+        return;
+    };
+    if raw_ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let ns_window = &*(raw_ptr as *const NSWindow);
+        let Some(content_view) = ns_window.contentView() else {
+            return;
+        };
+        content_view.setWantsLayer(true);
+        let layer: *mut AnyObject = msg_send![&*content_view, layer];
+        if layer.is_null() {
+            return;
+        }
+        let layer_ref: &AnyObject = &*layer;
+        let _: () = msg_send![layer_ref, setCornerRadius: radius];
+        let _: () = msg_send![layer_ref, setMasksToBounds: true];
+    }
+}
+
 #[derive(Clone)]
 pub struct ClipboardHistoryState {
     suppressed_until: Arc<Mutex<Option<Instant>>>,
@@ -763,6 +800,9 @@ fn open_window(app_handle: &tauri::AppHandle, state: &ClipboardHistoryState) -> 
     .visible(false)
     .build()
     .map_err(|e| format!("Failed to open clipboard window: {e}"))?;
+
+    #[cfg(target_os = "macos")]
+    apply_rounded_window_corners(&window, 24.0);
 
     state.set_window_visible(true);
     let _ = window.show();
