@@ -794,21 +794,15 @@ pub fn run() {
             init_panel(app.app_handle());
 
             // ── System tray icon + menu ───────────────────────────────────
+            // Clipboard History is intentionally omitted from the tray menu —
+            // it's opened via its global shortcut (⌘⇧V by default). Leaving
+            // it here created two entry points that felt redundant.
             let show_item = MenuItem::with_id(app, "show", "Open Oling", true, None::<&str>)?;
-            let clipboard_item = MenuItem::with_id(
-                app,
-                "clipboard_history",
-                "Clipboard History…",
-                true,
-                None::<&str>,
-            )?;
             let settings_item =
                 MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(
-                app,
-                &[&show_item, &clipboard_item, &settings_item, &quit_item],
-            )?;
+            let tray_menu =
+                Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
 
             let tray_icon =
                 tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
@@ -823,9 +817,6 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         show_overlay(app, crate::context::ActivationContext::empty());
-                    }
-                    "clipboard_history" => {
-                        clipboard_history::toggle_window(app);
                     }
                     "settings" => {
                         let _ = app.emit("oling://settings-open", ());
