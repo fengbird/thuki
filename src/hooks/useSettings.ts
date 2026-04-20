@@ -18,7 +18,14 @@ export interface SettingsData {
   shortcut_config: ShortcutConfig;
   /** Slash command configuration: overrides, custom commands, disabled list. */
   commands_config: CommandsConfig;
+  /** Cap on non-pinned clipboard history entries (pinned items are always kept). */
+  clipboard_max_entries: number;
 }
+
+/** Keep these in sync with `settings.rs` `*_CLIPBOARD_MAX_ENTRIES` constants. */
+export const CLIPBOARD_MAX_ENTRIES_DEFAULT = 200;
+export const CLIPBOARD_MAX_ENTRIES_MIN = 10;
+export const CLIPBOARD_MAX_ENTRIES_MAX = 10000;
 
 export interface ConnectionTestResult {
   ok: boolean;

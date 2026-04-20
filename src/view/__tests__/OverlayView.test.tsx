@@ -449,7 +449,7 @@ describe('OverlayView — toolbar actions', () => {
         }),
       );
       const call = invoke.mock.calls.find(([c]) => c === 'send_image_to_chat');
-      expect(String(call?.[1]?.prompt)).toContain('提取图中所有文字');
+      expect(String(call?.[1]?.prompt)).toContain('visible text');
     } finally {
       restore();
     }

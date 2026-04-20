@@ -59,9 +59,9 @@ pub fn load_reply_prompt() -> String {
 pub fn build_reply_user_content(app_name: &str) -> String {
     let trimmed = app_name.trim();
     if trimmed.is_empty() {
-        "这是我当前的聊天窗口截图。".to_string()
+        "Here is a screenshot of my current chat window.".to_string()
     } else {
-        format!("这是我当前的「{trimmed}」聊天窗口截图。")
+        format!("Here is a screenshot of my current {trimmed} chat window.")
     }
 }
 
@@ -402,27 +402,31 @@ mod tests {
 
     #[test]
     fn build_reply_user_content_embeds_app_name() {
-        let got = build_reply_user_content("微信");
-        assert!(got.contains("微信"));
-        assert!(got.contains("聊天窗口截图"));
+        let got = build_reply_user_content("Slack");
+        assert!(got.contains("Slack"));
+        assert!(got.contains("chat window"));
     }
 
     #[test]
     fn build_reply_user_content_trims_app_name() {
         let got = build_reply_user_content("   Slack   ");
-        assert!(got.contains("「Slack」"));
+        assert!(got.contains("Slack"));
+        assert!(!got.contains("   "));
     }
 
     #[test]
     fn build_reply_user_content_falls_back_when_name_empty() {
-        assert_eq!(build_reply_user_content(""), "这是我当前的聊天窗口截图。");
+        assert_eq!(
+            build_reply_user_content(""),
+            "Here is a screenshot of my current chat window.",
+        );
     }
 
     #[test]
     fn build_reply_user_content_falls_back_when_name_whitespace_only() {
         assert_eq!(
             build_reply_user_content("   \t  "),
-            "这是我当前的聊天窗口截图。"
+            "Here is a screenshot of my current chat window.",
         );
     }
 

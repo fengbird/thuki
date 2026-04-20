@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSettings } from '../hooks/useSettings';
+import {
+  CLIPBOARD_MAX_ENTRIES_DEFAULT,
+  CLIPBOARD_MAX_ENTRIES_MAX,
+  CLIPBOARD_MAX_ENTRIES_MIN,
+  useSettings,
+} from '../hooks/useSettings';
 import type { SettingsData } from '../hooks/useSettings';
 import { COMMANDS, EMPTY_COMMANDS_CONFIG } from '../config/commands';
 import {
@@ -61,7 +66,7 @@ export interface SettingsViewProps {
   onDismiss: (saved: boolean) => void;
 }
 
-type SettingsTab = 'model' | 'prompts' | 'shortcuts' | 'commands';
+type SettingsTab = 'model' | 'prompts' | 'shortcuts' | 'commands' | 'storage';
 type RecordingShortcutField =
   | 'overlay_activation'
   | 'screenshot_capture'
@@ -72,6 +77,7 @@ const TAB_ITEMS: { key: SettingsTab; label: string }[] = [
   { key: 'prompts', label: 'Prompts' },
   { key: 'shortcuts', label: 'Shortcuts' },
   { key: 'commands', label: 'Commands' },
+  { key: 'storage', label: 'Storage' },
 ];
 
 // ─── Main component ────────────────────────────────────────────────────────
@@ -870,6 +876,92 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
                 })}
               </div>
             </div>
+          )}
+
+          {/* ── Storage Tab ───────────────────────────── */}
+          {activeTab === 'storage' && (
+            <Section title="Clipboard History Limit">
+              <p
+                style={{
+                  margin: '0 0 10px',
+                  fontSize: 11.5,
+                  color: 'rgba(255,255,255,0.5)',
+                  lineHeight: 1.5,
+                }}
+              >
+                Maximum number of non-pinned clipboard entries kept in history.
+                Pinned items are always preserved. Older entries beyond this cap
+                are pruned (including their image files) as new clips arrive.
+                Default: {CLIPBOARD_MAX_ENTRIES_DEFAULT}.
+              </p>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                }}
+              >
+                <input
+                  data-testid="settings-clipboard-max-entries"
+                  type="number"
+                  min={CLIPBOARD_MAX_ENTRIES_MIN}
+                  max={CLIPBOARD_MAX_ENTRIES_MAX}
+                  step={10}
+                  value={draft.clipboard_max_entries}
+                  onChange={(e) => {
+                    const text = e.target.value.trim();
+                    if (text === '') {
+                      update(
+                        'clipboard_max_entries',
+                        CLIPBOARD_MAX_ENTRIES_DEFAULT,
+                      );
+                      return;
+                    }
+                    const raw = Number(text);
+                    const safe = Number.isFinite(raw)
+                      ? Math.min(
+                          CLIPBOARD_MAX_ENTRIES_MAX,
+                          Math.max(CLIPBOARD_MAX_ENTRIES_MIN, Math.round(raw)),
+                        )
+                      : CLIPBOARD_MAX_ENTRIES_DEFAULT;
+                    update('clipboard_max_entries', safe);
+                  }}
+                  style={{ ...inputStyle, width: 160 }}
+                />
+                <button
+                  type="button"
+                  data-testid="settings-clipboard-max-entries-reset"
+                  onClick={() =>
+                    update(
+                      'clipboard_max_entries',
+                      CLIPBOARD_MAX_ENTRIES_DEFAULT,
+                    )
+                  }
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: 8,
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    background: 'transparent',
+                    color: 'rgba(255,255,255,0.68)',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: THEME.fontFamily,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Reset to {CLIPBOARD_MAX_ENTRIES_DEFAULT}
+                </button>
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: 'rgba(255,255,255,0.4)',
+                  }}
+                >
+                  Range: {CLIPBOARD_MAX_ENTRIES_MIN}–{CLIPBOARD_MAX_ENTRIES_MAX}
+                </span>
+              </div>
+            </Section>
           )}
         </div>
       </div>

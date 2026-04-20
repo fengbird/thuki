@@ -29,7 +29,7 @@ import type { ClipboardEntry } from '../types/clipboard';
 
 const UPDATED_EVENT = 'oling://clipboard-history-updated';
 const OCR_AND_CLEAN_PROMPT =
-  '请读取图片中所有清晰可见的文字，并在不改变原意的前提下整理排版，让结果更清晰、易读、便于复制。不要添加任何说明、标题、解释、编号或项目符号，只输出整理后的正文内容。';
+  'Read all clearly visible text in the image, then tidy the formatting without changing the meaning so the result is cleaner, easier to read, and easy to copy. Do not add any commentary, title, explanation, numbering, or bullet markers — output only the cleaned-up body text.';
 const STATUS_AUTO_DISMISS_MS = 2200;
 
 type FilterKey = 'all' | 'text' | 'image' | 'favorites';

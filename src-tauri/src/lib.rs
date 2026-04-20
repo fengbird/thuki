@@ -884,6 +884,9 @@ pub fn run() {
                 )));
                 app.manage(std::sync::Mutex::new(reply::ReplyPrompt(s.reply_prompt)));
                 app.manage(settings::ShortcutConfigState::new(s.shortcut_config));
+                app.manage(settings::ClipboardMaxEntriesState::new(
+                    s.clipboard_max_entries,
+                ));
             }
             app.manage(clipboard_history::ClipboardHistoryState::new());
             clipboard_history::start_monitor(

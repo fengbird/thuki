@@ -50,7 +50,8 @@ const DEFAULT_MOCK_SETTINGS = {
   model_name: 'qwen3-vl-8b-thinking',
   system_prompt: 'Be helpful.',
   reply_prompt: 'Reply concisely.',
-  ocr_prompt: '请提取图中所有文字，原样输出。',
+  ocr_prompt:
+    'Extract every piece of visible text from the image and output it exactly as shown.',
   shortcut_config: {
     overlay_activation: { kind: 'double_tap_modifier', modifier: 'ctrl' },
     screenshot_capture: {
@@ -65,6 +66,7 @@ const DEFAULT_MOCK_SETTINGS = {
     },
   },
   commands_config: { overrides: {}, custom: [], disabled: [] },
+  clipboard_max_entries: 200,
 };
 
 export function enableChannelCapture() {

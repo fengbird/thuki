@@ -29,7 +29,12 @@ const CLIPBOARD_WINDOW_HEIGHT: f64 = 640.0;
 const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(350);
 const CLIPBOARD_WRITE_SUPPRESSION: Duration = Duration::from_millis(1200);
 const CLIPBOARD_PASTE_RESTORE_DELAY: Duration = Duration::from_millis(700);
-const MAX_CLIPBOARD_ENTRIES: usize = 200;
+/// Fallback cap used when the live user setting can't be read (first-boot
+/// DB race, poisoned Mutex). The authoritative value is owned by
+/// `settings::ClipboardMaxEntriesState` and read on every capture so the
+/// user's choice takes effect without a restart.
+const FALLBACK_CLIPBOARD_MAX_ENTRIES: usize =
+    crate::settings::DEFAULT_CLIPBOARD_MAX_ENTRIES as usize;
 
 #[derive(Clone)]
 pub struct ClipboardHistoryState {
@@ -213,7 +218,11 @@ fn persist_capture(app_handle: &tauri::AppHandle, capture: ClipboardCapture) -> 
         db.0.lock()
             .map_err(|_| "clipboard database lock poisoned".to_string())?;
     upsert_entry(&conn, &capture)?;
-    let stale_paths = prune_old_entries(&conn, MAX_CLIPBOARD_ENTRIES)?;
+    let max_entries = app_handle
+        .try_state::<crate::settings::ClipboardMaxEntriesState>()
+        .and_then(|state| state.0.lock().ok().map(|guard| *guard as usize))
+        .unwrap_or(FALLBACK_CLIPBOARD_MAX_ENTRIES);
+    let stale_paths = prune_old_entries(&conn, max_entries)?;
     drop(conn);
 
     for path in stale_paths {

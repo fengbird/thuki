@@ -10,7 +10,8 @@ const MOCK_SETTINGS: SettingsData = {
   model_name: 'qwen3-vl-8b-thinking',
   system_prompt: 'Default system prompt',
   reply_prompt: 'Default reply prompt',
-  ocr_prompt: '请提取图中所有文字，原样输出。',
+  ocr_prompt:
+    'Extract every piece of visible text from the image and output it exactly as shown.',
   shortcut_config: {
     overlay_activation: { kind: 'double_tap_modifier', modifier: 'ctrl' },
     screenshot_capture: {
@@ -25,10 +26,13 @@ const MOCK_SETTINGS: SettingsData = {
     },
   },
   commands_config: { overrides: {}, custom: [], disabled: [] },
+  clipboard_max_entries: 200,
 };
 
 /** Navigate to a sidebar tab after settings has loaded. */
-async function switchTab(tab: 'model' | 'prompts' | 'shortcuts' | 'commands') {
+async function switchTab(
+  tab: 'model' | 'prompts' | 'shortcuts' | 'commands' | 'storage',
+) {
   await act(async () => {
     fireEvent.click(screen.getByTestId(`settings-tab-${tab}`));
   });
@@ -237,16 +241,20 @@ describe('SettingsView', () => {
 
     expect(sysTa.value).toBe('Default system prompt');
     expect(replyTa.value).toBe('Default reply prompt');
-    expect(ocrTa.value).toBe('请提取图中所有文字，原样输出。');
+    expect(ocrTa.value).toBe(
+      'Extract every piece of visible text from the image and output it exactly as shown.',
+    );
 
     await act(async () => {
       fireEvent.change(sysTa, { target: { value: 'New sys' } });
       fireEvent.change(replyTa, { target: { value: 'New reply' } });
-      fireEvent.change(ocrTa, { target: { value: '只输出图片里的文本' } });
+      fireEvent.change(ocrTa, {
+        target: { value: 'Output only the text visible in the image.' },
+      });
     });
     expect(sysTa.value).toBe('New sys');
     expect(replyTa.value).toBe('New reply');
-    expect(ocrTa.value).toBe('只输出图片里的文本');
+    expect(ocrTa.value).toBe('Output only the text visible in the image.');
   });
 
   it('saving persists the OCR prompt field', async () => {
@@ -256,7 +264,10 @@ describe('SettingsView', () => {
 
     await act(async () => {
       fireEvent.change(screen.getByTestId('settings-ocr-prompt'), {
-        target: { value: '请按段落提取图片中的文字，不要解释。' },
+        target: {
+          value:
+            'Extract the text paragraph by paragraph without explanations.',
+        },
       });
     });
 
@@ -269,7 +280,7 @@ describe('SettingsView', () => {
       ([cmd]) => cmd === 'update_settings',
     );
     expect(saveCall?.[1]?.data?.ocr_prompt).toBe(
-      '请按段落提取图片中的文字，不要解释。',
+      'Extract the text paragraph by paragraph without explanations.',
     );
   });
 
@@ -392,6 +403,88 @@ describe('SettingsView', () => {
     expect(screen.getByTestId('settings-tab-model')).toBeInTheDocument();
     expect(screen.getByTestId('settings-tab-prompts')).toBeInTheDocument();
     expect(screen.getByTestId('settings-tab-commands')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-tab-storage')).toBeInTheDocument();
+  });
+
+  it('persists a changed clipboard history cap through save', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+
+    const input = screen.getByTestId(
+      'settings-clipboard-max-entries',
+    ) as HTMLInputElement;
+    expect(Number(input.value)).toBe(200);
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '450' } });
+    });
+    expect(Number(input.value)).toBe(450);
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-save-btn'));
+    });
+    const saveCall = invoke.mock.calls.find(
+      ([cmd]) => cmd === 'update_settings',
+    );
+    expect(saveCall?.[1]?.data?.clipboard_max_entries).toBe(450);
+  });
+
+  it('clamps clipboard history cap to the allowed bounds on input', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+
+    const input = screen.getByTestId(
+      'settings-clipboard-max-entries',
+    ) as HTMLInputElement;
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '0' } });
+    });
+    expect(Number(input.value)).toBe(10);
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '999999' } });
+    });
+    expect(Number(input.value)).toBe(10000);
+  });
+
+  it('reset button restores the default clipboard cap', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+
+    const input = screen.getByTestId(
+      'settings-clipboard-max-entries',
+    ) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '777' } });
+    });
+    expect(Number(input.value)).toBe(777);
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId('settings-clipboard-max-entries-reset'),
+      );
+    });
+    expect(Number(input.value)).toBe(200);
+  });
+
+  it('falls back to the default when the cap input is not a number', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+
+    const input = screen.getByTestId(
+      'settings-clipboard-max-entries',
+    ) as HTMLInputElement;
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '' } });
+    });
+    expect(Number(input.value)).toBe(200);
   });
 
   it('renders all commands in a unified list with edit and delete', async () => {
