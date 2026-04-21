@@ -124,9 +124,9 @@ const BADGE_STYLES: Record<ClipType, { bg: string; fg: string }> = {
 const KEY_LEGEND: { combo: string; label: string }[] = [
   { combo: '↑↓', label: 'Navigate' },
   { combo: '⏎', label: 'Paste' },
+  { combo: '⇧⏎', label: 'Paste as text' },
   { combo: '⌘C', label: 'Copy' },
   { combo: '⌘⌫', label: 'Delete' },
-  { combo: '⌘F', label: 'Search' },
 ];
 
 function formatTimeAgo(timestamp: number): string {
@@ -477,10 +477,10 @@ export function ClipboardHistoryView() {
     [flashStatus, loadEntries],
   );
 
-  const copyEntryPlainText = useCallback(
+  const pasteEntryPlain = useCallback(
     async (entryId: string) => {
-      await invoke('copy_clipboard_entry_plain_text', { entryId });
-      flashStatus('Copied as plain text');
+      await invoke('paste_clipboard_entry_plain_text', { entryId });
+      flashStatus('Pasted as plain text');
       void loadEntries();
     },
     [flashStatus, loadEntries],
@@ -636,7 +636,11 @@ export function ClipboardHistoryView() {
         if (isTextInputTarget(event.target)) return;
         if (isEditingActiveText) return;
         event.preventDefault();
-        void pasteEntry(activeEntry.id);
+        if (event.shiftKey && activeEntry.kind === 'text') {
+          void pasteEntryPlain(activeEntry.id);
+        } else {
+          void pasteEntry(activeEntry.id);
+        }
         return;
       }
       if (
@@ -657,6 +661,7 @@ export function ClipboardHistoryView() {
     displayEntries,
     isEditingActiveText,
     pasteEntry,
+    pasteEntryPlain,
     saveTextEdit,
     selectedId,
   ]);
@@ -727,7 +732,7 @@ export function ClipboardHistoryView() {
             onEditingTextChange={setEditingText}
             isSavingEdit={isSavingEdit}
             onCopy={copyEntry}
-            onCopyPlain={copyEntryPlainText}
+            onPastePlain={pasteEntryPlain}
             onPaste={pasteEntry}
             onAiAction={(id, prompt) => void openInOling(id, prompt, true)}
             onEdit={editEntry}
@@ -1296,7 +1301,7 @@ type DetailPaneProps = {
   onEditingTextChange: (value: string) => void;
   isSavingEdit: boolean;
   onCopy: (id: string) => void;
-  onCopyPlain: (id: string) => void;
+  onPastePlain: (id: string) => void;
   onPaste: (id: string) => void;
   onAiAction: (id: string, prompt: string) => void;
   onEdit: (id: string) => void;
@@ -1379,7 +1384,7 @@ function DetailPane(props: DetailPaneProps) {
         isEditingActiveText={props.isEditingActiveText}
         isSavingEdit={props.isSavingEdit}
         onCopy={props.onCopy}
-        onCopyPlain={props.onCopyPlain}
+        onPastePlain={props.onPastePlain}
         onPaste={props.onPaste}
         onEdit={props.onEdit}
         onStartTextEdit={props.onStartTextEdit}
@@ -1910,7 +1915,7 @@ function StickyActionBar({
   isEditingActiveText,
   isSavingEdit,
   onCopy,
-  onCopyPlain,
+  onPastePlain,
   onPaste,
   onEdit,
   onStartTextEdit,
@@ -1923,7 +1928,7 @@ function StickyActionBar({
   isEditingActiveText: boolean;
   isSavingEdit: boolean;
   onCopy: (id: string) => void;
-  onCopyPlain: (id: string) => void;
+  onPastePlain: (id: string) => void;
   onPaste: (id: string) => void;
   onEdit: (id: string) => void;
   onStartTextEdit: (entry: ClipboardEntry) => void;
@@ -1966,12 +1971,14 @@ function StickyActionBar({
       {activeType !== 'image' ? (
         <button
           type="button"
-          data-testid="clipboard-copy-plain-btn"
-          onClick={() => onCopyPlain(activeEntry.id)}
+          data-testid="clipboard-paste-plain-btn"
+          onClick={() => onPastePlain(activeEntry.id)}
+          title="Paste without formatting (strips RTF/HTML)"
           className="oling-secondary-btn"
           style={secondaryButtonStyle()}
         >
-          Plain Text
+          <span>As Text</span>
+          <KeyCap label="⇧⏎" />
         </button>
       ) : null}
       {activeType === 'image' ? (

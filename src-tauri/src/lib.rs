@@ -1037,6 +1037,8 @@ pub fn run() {
             #[cfg(not(coverage))]
             clipboard_history::paste_clipboard_entry,
             #[cfg(not(coverage))]
+            clipboard_history::paste_clipboard_entry_plain_text,
+            #[cfg(not(coverage))]
             clipboard_history::toggle_clipboard_entry_favorite,
             #[cfg(not(coverage))]
             clipboard_history::delete_clipboard_entry,

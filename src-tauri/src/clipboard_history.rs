@@ -928,11 +928,24 @@ fn paste_entry_to_previous_app(
     state: &ClipboardHistoryState,
     entry: &ClipboardEntryRecord,
 ) -> Result<(), String> {
+    paste_entry_to_previous_app_with(app_handle, state, entry, false)
+}
+
+fn paste_entry_to_previous_app_with(
+    app_handle: &tauri::AppHandle,
+    state: &ClipboardHistoryState,
+    entry: &ClipboardEntryRecord,
+    plain_text: bool,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let backup = read_pasteboard_snapshot();
         state.suppress_writes(CLIPBOARD_WRITE_SUPPRESSION);
-        write_entry_to_clipboard(entry)?;
+        if plain_text {
+            write_entry_to_plain_text_clipboard(entry)?;
+        } else {
+            write_entry_to_clipboard(entry)?;
+        }
         let target_bundle_id = state
             .target_bundle_id()
             .ok_or_else(|| "No previous app is available for paste".to_string())?;
@@ -962,6 +975,7 @@ fn paste_entry_to_previous_app(
         let _ = app_handle;
         let _ = state;
         let _ = entry;
+        let _ = plain_text;
         Err("Clipboard paste is only supported on macOS".to_string())
     }
 }
@@ -1036,6 +1050,28 @@ pub fn paste_clipboard_entry(
     touch_entry(&conn, &entry_id)?;
     drop(conn);
     paste_entry_to_previous_app(&app_handle, &clipboard_state, &entry)
+}
+
+/// Plain-text variant of `paste_clipboard_entry`: writes *only* the
+/// entry's plain text to the pasteboard (no RTF / HTML flavour) then
+/// triggers ⌘V into the previous app. Lets the user drop formatted
+/// clipboard history into apps that would otherwise pick up the rich
+/// styling (e.g. code editors, terminals).
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn paste_clipboard_entry_plain_text(
+    app_handle: tauri::AppHandle,
+    db: tauri::State<'_, Database>,
+    clipboard_state: tauri::State<'_, ClipboardHistoryState>,
+    entry_id: String,
+) -> Result<(), String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    let entry = get_entry(&conn, &entry_id)?;
+    touch_entry(&conn, &entry_id)?;
+    drop(conn);
+    paste_entry_to_previous_app_with(&app_handle, &clipboard_state, &entry, true)
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]

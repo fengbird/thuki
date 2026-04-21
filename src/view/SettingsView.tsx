@@ -1542,8 +1542,7 @@ function ClipboardAiActionsPicker({
           }}
         >
           {available.map((cmd) => {
-            const idx = selected.indexOf(cmd.trigger);
-            const checked = idx !== -1;
+            const checked = selected.includes(cmd.trigger);
             return (
               <button
                 key={cmd.trigger}
@@ -1554,11 +1553,12 @@ function ClipboardAiActionsPicker({
                 title={cmd.description}
                 style={aiActionPillStyle(checked)}
               >
-                {checked ? (
-                  <span style={aiActionPillOrderBadge}>{idx + 1}</span>
-                ) : (
-                  <span style={aiActionPillPlus}>+</span>
-                )}
+                <span
+                  style={checked ? aiActionPillCheck : aiActionPillPlus}
+                  aria-hidden
+                >
+                  {checked ? '✓' : '+'}
+                </span>
                 <span style={{ fontWeight: 600 }}>
                   {formatAiActionLabel(cmd.trigger)}
                 </span>
@@ -1689,16 +1689,16 @@ function ClipboardAiActionsPicker({
   );
 }
 
-const aiActionPillOrderBadge: React.CSSProperties = {
+const aiActionPillCheck: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
   width: 18,
   height: 18,
   borderRadius: 9,
-  fontSize: 9.5,
-  fontWeight: 800,
-  background: 'rgba(255,255,255,0.18)',
+  fontSize: 11,
+  fontWeight: 700,
+  background: 'rgba(255,255,255,0.2)',
   color: '#fff',
   flexShrink: 0,
 };

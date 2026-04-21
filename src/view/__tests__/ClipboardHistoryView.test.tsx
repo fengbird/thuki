@@ -141,7 +141,7 @@ describe('ClipboardHistoryView', () => {
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('clipboard-copy-btn'));
-      fireEvent.click(screen.getByTestId('clipboard-copy-plain-btn'));
+      fireEvent.click(screen.getByTestId('clipboard-paste-plain-btn'));
       fireEvent.click(screen.getByTestId('clipboard-paste-btn'));
       fireEvent.click(screen.getByTestId('clipboard-ai-tldr'));
       fireEvent.click(screen.getByTestId('clipboard-ai-translate'));
@@ -150,7 +150,7 @@ describe('ClipboardHistoryView', () => {
     expect(invoke).toHaveBeenCalledWith('copy_clipboard_entry', {
       entryId: 'text-1',
     });
-    expect(invoke).toHaveBeenCalledWith('copy_clipboard_entry_plain_text', {
+    expect(invoke).toHaveBeenCalledWith('paste_clipboard_entry_plain_text', {
       entryId: 'text-1',
     });
     expect(invoke).toHaveBeenCalledWith('paste_clipboard_entry', {
@@ -165,6 +165,21 @@ describe('ClipboardHistoryView', () => {
       entryId: 'text-1',
       prompt: '/translate',
       autoSubmit: true,
+    });
+  });
+
+  it('Shift+Enter triggers paste-as-plain-text for the active text entry', async () => {
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-entry-text-1');
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Enter', shiftKey: true });
+    });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('paste_clipboard_entry_plain_text', {
+        entryId: 'text-1',
+      });
     });
   });
 
