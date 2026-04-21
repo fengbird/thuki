@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import {
   CLIPBOARD_MAX_ENTRIES_DEFAULT,
   CLIPBOARD_MAX_ENTRIES_MAX,
@@ -961,6 +962,8 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
                   Range: {CLIPBOARD_MAX_ENTRIES_MIN}–{CLIPBOARD_MAX_ENTRIES_MAX}
                 </span>
               </div>
+              <Divider />
+              <CrashReportsPanel />
             </Section>
           )}
         </div>
@@ -1448,4 +1451,165 @@ function Field({
 
 function Divider() {
   return <div style={{ height: 1, background: THEME.divider }} />;
+}
+
+// ─── Crash reports panel ──────────────────────────────────────────────────
+
+interface CrashReportEntry {
+  path: string;
+  file_name: string;
+  size_bytes: number;
+  modified_ms: number;
+}
+
+function CrashReportsPanel() {
+  const [entries, setEntries] = useState<CrashReportEntry[]>([]);
+  const [isBusy, setIsBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setError(null);
+    try {
+      const list = await invoke<CrashReportEntry[]>('list_crash_reports');
+      setEntries(Array.isArray(list) ? list : []);
+    } catch (e) {
+      setError(typeof e === 'string' ? e : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const openFolder = useCallback(async () => {
+    setIsBusy(true);
+    setError(null);
+    try {
+      await invoke('open_crash_reports_dir');
+    } catch (e) {
+      setError(typeof e === 'string' ? e : String(e));
+    } finally {
+      setIsBusy(false);
+    }
+  }, []);
+
+  const clearAll = useCallback(async () => {
+    setIsBusy(true);
+    setError(null);
+    try {
+      await invoke('clear_crash_reports');
+      await refresh();
+    } catch (e) {
+      setError(typeof e === 'string' ? e : String(e));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [refresh]);
+
+  return (
+    <Section title="Crash Reports">
+      <p
+        style={{
+          margin: '0 0 10px',
+          fontSize: 11.5,
+          color: 'rgba(255,255,255,0.5)',
+          lineHeight: 1.5,
+        }}
+      >
+        Rust panics and unhandled JS errors are saved under{' '}
+        <code style={{ color: 'rgba(255,255,255,0.72)' }}>
+          {'<Application Support>/com.quietnode.oling/crashes/'}
+        </code>
+        . A rolling plaintext log also lives under{' '}
+        <code style={{ color: 'rgba(255,255,255,0.72)' }}>
+          {'~/Library/Logs/com.quietnode.oling/'}
+        </code>
+        .
+      </p>
+      <div
+        data-testid="settings-crash-report-count"
+        style={{
+          fontSize: 12,
+          color: 'rgba(255,255,255,0.68)',
+          marginBottom: 10,
+        }}
+      >
+        {entries.length === 0
+          ? 'No crash reports — nothing has crashed (yet).'
+          : `${entries.length} crash report${entries.length === 1 ? '' : 's'} on disk.`}
+      </div>
+      {error ? (
+        <div
+          style={{
+            fontSize: 11.5,
+            color: '#ef4444',
+            marginBottom: 8,
+          }}
+        >
+          {error}
+        </div>
+      ) : null}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          data-testid="settings-crash-open-folder"
+          onClick={() => void openFolder()}
+          disabled={isBusy}
+          style={{
+            padding: '6px 12px',
+            borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.12)',
+            background: 'rgba(255,255,255,0.04)',
+            color: THEME.textPrimary,
+            fontSize: 11.5,
+            fontWeight: 600,
+            cursor: isBusy ? 'wait' : 'pointer',
+            fontFamily: THEME.fontFamily,
+          }}
+        >
+          Open Folder
+        </button>
+        <button
+          type="button"
+          data-testid="settings-crash-refresh"
+          onClick={() => void refresh()}
+          disabled={isBusy}
+          style={{
+            padding: '6px 12px',
+            borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.12)',
+            background: 'transparent',
+            color: 'rgba(255,255,255,0.68)',
+            fontSize: 11.5,
+            fontWeight: 600,
+            cursor: isBusy ? 'wait' : 'pointer',
+            fontFamily: THEME.fontFamily,
+          }}
+        >
+          Refresh
+        </button>
+        {entries.length > 0 ? (
+          <button
+            type="button"
+            data-testid="settings-crash-clear"
+            onClick={() => void clearAll()}
+            disabled={isBusy}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 8,
+              border: '1px solid rgba(239,68,68,0.4)',
+              background: 'transparent',
+              color: '#ef4444',
+              fontSize: 11.5,
+              fontWeight: 600,
+              cursor: isBusy ? 'wait' : 'pointer',
+              fontFamily: THEME.fontFamily,
+            }}
+          >
+            Clear All
+          </button>
+        ) : null}
+      </div>
+    </Section>
+  );
 }

@@ -487,6 +487,81 @@ describe('SettingsView', () => {
     expect(Number(input.value)).toBe(200);
   });
 
+  it('crash panel: loads count, opens folder, clears list', async () => {
+    let stored = [
+      {
+        path: '/tmp/crashes/1.log',
+        file_name: '1.log',
+        size_bytes: 42,
+        modified_ms: 1,
+      },
+      {
+        path: '/tmp/crashes/2.log',
+        file_name: '2.log',
+        size_bytes: 19,
+        modified_ms: 2,
+      },
+    ];
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_settings') return { ...MOCK_SETTINGS };
+      if (cmd === 'list_crash_reports') return [...stored];
+      if (cmd === 'open_crash_reports_dir') return undefined;
+      if (cmd === 'clear_crash_reports') {
+        stored = [];
+        return undefined;
+      }
+    });
+
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+    await act(async () => {});
+
+    expect(
+      screen.getByTestId('settings-crash-report-count').textContent,
+    ).toContain('2 crash reports');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-crash-open-folder'));
+    });
+    expect(invoke).toHaveBeenCalledWith('open_crash_reports_dir');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-crash-clear'));
+    });
+    await act(async () => {});
+    expect(
+      screen.getByTestId('settings-crash-report-count').textContent,
+    ).toContain('No crash reports');
+  });
+
+  it('crash panel: shows empty state when nothing is recorded', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_settings') return { ...MOCK_SETTINGS };
+      if (cmd === 'list_crash_reports') return [];
+    });
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+    await act(async () => {});
+    expect(
+      screen.getByTestId('settings-crash-report-count').textContent,
+    ).toContain('No crash reports');
+    expect(screen.queryByTestId('settings-crash-clear')).toBeNull();
+  });
+
+  it('crash panel: surfaces errors from list_crash_reports', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_settings') return { ...MOCK_SETTINGS };
+      if (cmd === 'list_crash_reports') throw 'readdir denied';
+    });
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+    await act(async () => {});
+    expect(screen.getByText(/readdir denied/)).toBeInTheDocument();
+  });
+
   it('renders all commands in a unified list with edit and delete', async () => {
     render(<SettingsView onDismiss={vi.fn()} />);
     await act(async () => {});

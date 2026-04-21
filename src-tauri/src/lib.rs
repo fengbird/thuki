@@ -18,6 +18,7 @@
 pub mod app_icons;
 pub mod clipboard_history;
 pub mod commands;
+pub mod crash_reporter;
 pub mod database;
 pub mod images;
 pub mod long_shot;
@@ -777,7 +778,23 @@ pub fn run() {
     // work the same way as Vite's VITE_* vars for the frontend.
     dotenvy::dotenv().ok();
 
-    let mut builder = tauri::Builder::default();
+    // Install the panic hook as early as possible so a crash during
+    // plugin bootstrap or window setup still produces a report on disk.
+    crash_reporter::install_panic_hook();
+
+    let mut builder = tauri::Builder::default().plugin(
+        tauri_plugin_log::Builder::new()
+            .level(log::LevelFilter::Info)
+            .targets([
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                    file_name: Some("oling".to_string()),
+                }),
+            ])
+            .max_file_size(2 * 1024 * 1024)
+            .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+            .build(),
+    );
 
     #[cfg(target_os = "macos")]
     {
@@ -801,8 +818,7 @@ pub fn run() {
             let settings_item =
                 MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let tray_menu =
-                Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
 
             let tray_icon =
                 tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
@@ -1036,6 +1052,14 @@ pub fn run() {
             clipboard_history::close_clipboard_window,
             #[cfg(not(coverage))]
             app_icons::get_source_app_icon,
+            #[cfg(not(coverage))]
+            crash_reporter::report_frontend_error,
+            #[cfg(not(coverage))]
+            crash_reporter::list_crash_reports,
+            #[cfg(not(coverage))]
+            crash_reporter::open_crash_reports_dir,
+            #[cfg(not(coverage))]
+            crash_reporter::clear_crash_reports,
             #[cfg(not(coverage))]
             long_shot::start_manual_long_capture,
             #[cfg(not(coverage))]
