@@ -67,6 +67,7 @@ const DEFAULT_MOCK_SETTINGS = {
   },
   commands_config: { overrides: {}, custom: [], disabled: [] },
   clipboard_max_entries: 200,
+  clipboard_ai_actions: ['/tldr', '/translate', '/rewrite'],
 };
 
 export function enableChannelCapture() {

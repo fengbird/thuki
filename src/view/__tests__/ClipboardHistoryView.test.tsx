@@ -78,6 +78,12 @@ describe('ClipboardHistoryView', () => {
             return true;
           });
         }
+        if (cmd === 'get_settings') {
+          return {
+            clipboard_ai_actions: ['/tldr', '/translate', '/rewrite'],
+            commands_config: { overrides: {}, custom: [], disabled: [] },
+          };
+        }
         if (cmd === 'update_clipboard_text_entry') {
           entries = entries.map((entry) =>
             entry.id === args?.entryId
@@ -128,16 +134,17 @@ describe('ClipboardHistoryView', () => {
     expect(screen.getByText('Image copied from Chrome')).toBeInTheDocument();
   });
 
-  it('runs copy, paste, and Ask in Oling actions for the active entry', async () => {
+  it('runs copy, paste, and user-selected AI actions for the active entry', async () => {
     render(<ClipboardHistoryView />);
     await screen.findByTestId('clipboard-root');
+    await screen.findByTestId('clipboard-ai-tldr');
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('clipboard-copy-btn'));
       fireEvent.click(screen.getByTestId('clipboard-copy-plain-btn'));
       fireEvent.click(screen.getByTestId('clipboard-paste-btn'));
-      fireEvent.click(screen.getByTestId('clipboard-ask-btn'));
-      fireEvent.click(screen.getByTestId('clipboard-ai-summarize'));
+      fireEvent.click(screen.getByTestId('clipboard-ai-tldr'));
+      fireEvent.click(screen.getByTestId('clipboard-ai-translate'));
     });
 
     expect(invoke).toHaveBeenCalledWith('copy_clipboard_entry', {
@@ -151,14 +158,31 @@ describe('ClipboardHistoryView', () => {
     });
     expect(invoke).toHaveBeenCalledWith('open_clipboard_entry_in_oling', {
       entryId: 'text-1',
-      prompt: null,
-      autoSubmit: false,
-    });
-    expect(invoke).toHaveBeenCalledWith('open_clipboard_entry_in_oling', {
-      entryId: 'text-1',
       prompt: '/tldr',
       autoSubmit: true,
     });
+    expect(invoke).toHaveBeenCalledWith('open_clipboard_entry_in_oling', {
+      entryId: 'text-1',
+      prompt: '/translate',
+      autoSubmit: true,
+    });
+  });
+
+  it('hides the AI Actions section when the user has selected nothing', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_clipboard_entries') return entries;
+      if (cmd === 'get_settings') {
+        return {
+          clipboard_ai_actions: [],
+          commands_config: { overrides: {}, custom: [], disabled: [] },
+        };
+      }
+      return undefined;
+    });
+    render(<ClipboardHistoryView />);
+    await screen.findByTestId('clipboard-root');
+    await act(async () => {});
+    expect(screen.queryByTestId('clipboard-ai-actions')).toBeNull();
   });
 
   it('allows editing a text clipboard entry and saving it back', async () => {
@@ -210,9 +234,10 @@ describe('ClipboardHistoryView', () => {
     });
   });
 
-  it('shows image preview and image-specific AI action', async () => {
+  it('shows the image preview and fires AI action against the image entry', async () => {
     render(<ClipboardHistoryView />);
     await screen.findByTestId('clipboard-root');
+    await screen.findByTestId('clipboard-ai-tldr');
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('clipboard-entry-image-1'));
@@ -221,13 +246,14 @@ describe('ClipboardHistoryView', () => {
     expect(screen.getByTestId('clipboard-preview-image')).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId('clipboard-ai-ocr-clean'));
+      fireEvent.click(screen.getByTestId('clipboard-ai-translate'));
     });
 
     expect(invoke).toHaveBeenCalledWith(
       'open_clipboard_entry_in_oling',
       expect.objectContaining({
         entryId: 'image-1',
+        prompt: '/translate',
         autoSubmit: true,
       }),
     );
@@ -488,8 +514,9 @@ describe('ClipboardHistoryView', () => {
   });
 
   it('reports backend load errors in the footer', async () => {
-    invoke.mockImplementationOnce(async () => {
-      throw 'boom';
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_clipboard_entries') throw 'boom';
+      return undefined;
     });
     render(<ClipboardHistoryView />);
     await waitFor(() => {

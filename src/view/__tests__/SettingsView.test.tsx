@@ -27,6 +27,7 @@ const MOCK_SETTINGS: SettingsData = {
   },
   commands_config: { overrides: {}, custom: [], disabled: [] },
   clipboard_max_entries: 200,
+  clipboard_ai_actions: ['/tldr', '/translate', '/rewrite'],
 };
 
 /** Navigate to a sidebar tab after settings has loaded. */
@@ -485,6 +486,61 @@ describe('SettingsView', () => {
       fireEvent.change(input, { target: { value: '' } });
     });
     expect(Number(input.value)).toBe(200);
+  });
+
+  it('AI actions picker: toggling a command persists through save', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+
+    const tldr = screen.getByTestId('settings-ai-action-tldr');
+    const refine = screen.getByTestId('settings-ai-action-refine');
+    // /tldr is selected by default; /refine is not.
+    expect(tldr.querySelector('input')).toHaveProperty('checked', true);
+    expect(refine.querySelector('input')).toHaveProperty('checked', false);
+
+    await act(async () => {
+      fireEvent.click(refine.querySelector('input') as HTMLInputElement);
+      fireEvent.click(tldr.querySelector('input') as HTMLInputElement);
+    });
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-save-btn'));
+    });
+    const saveCall = invoke.mock.calls.find(
+      ([cmd]) => cmd === 'update_settings',
+    );
+    expect(saveCall?.[1]?.data?.clipboard_ai_actions).toEqual([
+      '/translate',
+      '/rewrite',
+      '/refine',
+    ]);
+  });
+
+  it('AI actions picker: Reset restores the defaults', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+
+    const tldrCheckbox = screen
+      .getByTestId('settings-ai-action-tldr')
+      .querySelector('input') as HTMLInputElement;
+    await act(async () => {
+      fireEvent.click(tldrCheckbox);
+    });
+    expect(tldrCheckbox.checked).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-ai-actions-reset'));
+    });
+    expect(
+      (
+        screen
+          .getByTestId('settings-ai-action-tldr')
+          .querySelector('input') as HTMLInputElement
+      ).checked,
+    ).toBe(true);
   });
 
   it('crash panel: loads count, opens folder, clears list', async () => {

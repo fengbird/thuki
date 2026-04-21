@@ -27,6 +27,7 @@ const MOCK_SETTINGS: SettingsData = {
   },
   commands_config: { overrides: {}, custom: [], disabled: [] },
   clipboard_max_entries: 200,
+  clipboard_ai_actions: ['/tldr', '/translate', '/rewrite'],
 };
 
 describe('useSettings', () => {

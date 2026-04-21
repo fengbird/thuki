@@ -4,10 +4,15 @@ import {
   CLIPBOARD_MAX_ENTRIES_DEFAULT,
   CLIPBOARD_MAX_ENTRIES_MAX,
   CLIPBOARD_MAX_ENTRIES_MIN,
+  DEFAULT_CLIPBOARD_AI_ACTIONS,
   useSettings,
 } from '../hooks/useSettings';
 import type { SettingsData } from '../hooks/useSettings';
-import { COMMANDS, EMPTY_COMMANDS_CONFIG } from '../config/commands';
+import {
+  COMMANDS,
+  EMPTY_COMMANDS_CONFIG,
+  mergeCommands,
+} from '../config/commands';
 import {
   DEFAULT_SHORTCUT_CONFIG,
   captureKeyComboFromEvent,
@@ -963,6 +968,12 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
                 </span>
               </div>
               <Divider />
+              <ClipboardAiActionsPicker
+                selected={draft.clipboard_ai_actions}
+                commands={draft.commands_config}
+                onChange={(next) => update('clipboard_ai_actions', next)}
+              />
+              <Divider />
               <CrashReportsPanel />
             </Section>
           )}
@@ -1451,6 +1462,154 @@ function Field({
 
 function Divider() {
   return <div style={{ height: 1, background: THEME.divider }} />;
+}
+
+// ─── Clipboard AI Actions picker ──────────────────────────────────────────
+
+function ClipboardAiActionsPicker({
+  selected,
+  commands,
+  onChange,
+}: {
+  selected: string[];
+  commands: CommandsConfig;
+  onChange: (next: string[]) => void;
+}) {
+  // The picker lists every live command the user could pick — it
+  // shouldn't expose disabled or system-only entries. Custom commands
+  // are included via `mergeCommands`.
+  const available = mergeCommands(commands).filter(
+    (c) => c.category !== 'system',
+  );
+  const toggle = useCallback(
+    (trigger: string) => {
+      if (selected.includes(trigger)) {
+        onChange(selected.filter((t) => t !== trigger));
+      } else {
+        onChange([...selected, trigger]);
+      }
+    },
+    [onChange, selected],
+  );
+  return (
+    <Section title="Clipboard AI Actions">
+      <p
+        style={{
+          margin: '0 0 10px',
+          fontSize: 11.5,
+          color: 'rgba(255,255,255,0.5)',
+          lineHeight: 1.5,
+        }}
+      >
+        Pick which slash commands appear as tiles in the clipboard panel. Order
+        in the panel matches the order you pick them here. Leave empty to hide
+        the AI Actions section entirely.
+      </p>
+      {available.length === 0 ? (
+        <div
+          style={{
+            fontSize: 12,
+            color: 'rgba(255,255,255,0.5)',
+            padding: '10px 0',
+          }}
+        >
+          No commands available — add or re-enable some under the Commands tab.
+        </div>
+      ) : (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+            borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.06)',
+            background: 'rgba(255,255,255,0.02)',
+            padding: 4,
+            maxHeight: 220,
+            overflowY: 'auto',
+          }}
+        >
+          {available.map((cmd) => {
+            const checked = selected.includes(cmd.trigger);
+            return (
+              <label
+                key={cmd.trigger}
+                data-testid={`settings-ai-action-${cmd.trigger.slice(1)}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  background: checked ? 'rgba(255,141,92,0.1)' : 'transparent',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(cmd.trigger)}
+                  style={{ cursor: 'pointer', flexShrink: 0 }}
+                />
+                <span
+                  style={{
+                    fontFamily:
+                      'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    fontSize: 11.5,
+                    color: 'rgba(255,141,92,0.9)',
+                    minWidth: 90,
+                  }}
+                >
+                  {cmd.trigger}
+                </span>
+                <span
+                  style={{
+                    fontSize: 11.5,
+                    color: 'rgba(255,255,255,0.6)',
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {cmd.description}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+      {selected.length > 0 ? (
+        <div
+          data-testid="settings-ai-actions-summary"
+          style={{
+            marginTop: 8,
+            fontSize: 11,
+            color: 'rgba(255,255,255,0.45)',
+          }}
+        >
+          Showing {selected.length} tile{selected.length === 1 ? '' : 's'}:{' '}
+          {selected.join(', ')}
+        </div>
+      ) : null}
+      <button
+        type="button"
+        data-testid="settings-ai-actions-reset"
+        onClick={() => onChange([...DEFAULT_CLIPBOARD_AI_ACTIONS])}
+        style={{
+          marginTop: 8,
+          padding: '6px 10px',
+          borderRadius: 8,
+          border: '1px solid rgba(255,255,255,0.12)',
+          background: 'transparent',
+          color: 'rgba(255,255,255,0.68)',
+          fontSize: 11,
+          fontWeight: 600,
+          cursor: 'pointer',
+          fontFamily: THEME.fontFamily,
+        }}
+      >
+        Reset to defaults
+      </button>
+    </Section>
+  );
 }
 
 // ─── Crash reports panel ──────────────────────────────────────────────────

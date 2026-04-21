@@ -25,16 +25,73 @@ import { rust } from '@codemirror/lang-rust';
 import { go } from '@codemirror/lang-go';
 import { sql } from '@codemirror/lang-sql';
 import { markdown } from '@codemirror/lang-markdown';
+import { mergeCommands, type CommandsConfig } from '../config/commands';
 import type { ClipboardEntry } from '../types/clipboard';
 
 const UPDATED_EVENT = 'oling://clipboard-history-updated';
-const OCR_AND_CLEAN_PROMPT =
-  'Read all clearly visible text in the image, then tidy the formatting without changing the meaning so the result is cleaner, easier to read, and easy to copy. Do not add any commentary, title, explanation, numbering, or bullet markers — output only the cleaned-up body text.';
 const STATUS_AUTO_DISMISS_MS = 2200;
+
+/**
+ * Maps a slash-command trigger to a short 1-word tile label.
+ * Unknown triggers are capitalised without the leading slash so
+ * custom commands still render something readable.
+ */
+const AI_ACTION_LABELS: Record<string, string> = {
+  '/tldr': 'Summarize',
+  '/translate': 'Translate',
+  '/rewrite': 'Rewrite',
+  '/refine': 'Refine',
+  '/bullets': 'Bullets',
+  '/todos': 'Todos',
+};
+
+export function formatAiActionLabel(trigger: string): string {
+  if (AI_ACTION_LABELS[trigger]) return AI_ACTION_LABELS[trigger];
+  const stem = trigger.replace(/^\//, '');
+  if (!stem) return trigger;
+  return stem.charAt(0).toUpperCase() + stem.slice(1);
+}
 
 type FilterKey = 'all' | 'text' | 'image' | 'favorites';
 type ClipType = 'image' | 'url' | 'color' | 'code' | 'text';
 type SectionKey = 'pinned' | 'today' | 'yesterday' | 'earlier';
+
+/** Resolved AI Action — a slash command trigger + display label. */
+interface AiActionSpec {
+  trigger: string;
+  label: string;
+  description: string;
+}
+
+interface SettingsSnapshot {
+  clipboard_ai_actions?: string[];
+  commands_config?: CommandsConfig;
+}
+
+/**
+ * Resolves the user-selected AI action triggers against the live
+ * commands config, returning renderable tile specs. Triggers that
+ * reference a deleted/disabled command are silently dropped so the
+ * panel never shows a dead tile. Pure helper for unit testing.
+ */
+export function resolveAiActions(snapshot: SettingsSnapshot): AiActionSpec[] {
+  const selected = snapshot.clipboard_ai_actions ?? [];
+  if (selected.length === 0) return [];
+  const commands = mergeCommands(snapshot.commands_config ?? null);
+  return selected
+    .map((trigger) => {
+      const cmd = commands.find(
+        (c) => c.trigger === trigger || c.originalTrigger === trigger,
+      );
+      if (!cmd) return null;
+      return {
+        trigger: cmd.trigger,
+        label: formatAiActionLabel(cmd.trigger),
+        description: cmd.description,
+      } satisfies AiActionSpec;
+    })
+    .filter((spec): spec is AiActionSpec => spec !== null);
+}
 
 interface Section {
   key: SectionKey;
@@ -274,6 +331,7 @@ export function ClipboardHistoryView() {
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [aiActions, setAiActions] = useState<AiActionSpec[]>([]);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const statusTimerRef = useRef<number | null>(null);
 
@@ -293,6 +351,26 @@ export function ClipboardHistoryView() {
       if (statusTimerRef.current != null) {
         window.clearTimeout(statusTimerRef.current);
       }
+    };
+  }, []);
+
+  // Read the user's picked AI Action commands on mount. Re-fetch when
+  // the clipboard panel is re-opened; settings changes while the panel
+  // is already open still require a reopen — good enough for now.
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<SettingsSnapshot>('get_settings')
+      .then((snapshot) => {
+        if (cancelled) return;
+        setAiActions(resolveAiActions(snapshot ?? {}));
+      })
+      .catch(() => {
+        // If settings can't be loaded the AI Actions section just
+        // renders empty; nothing else in the panel depends on this.
+        if (!cancelled) setAiActions([]);
+      });
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -657,9 +735,9 @@ export function ClipboardHistoryView() {
             onCopy={copyEntry}
             onCopyPlain={copyEntryPlainText}
             onPaste={pasteEntry}
-            onAsk={(id) => void openInOling(id)}
             onAiAction={(id, prompt) => void openInOling(id, prompt, true)}
             onEdit={editEntry}
+            aiActions={aiActions}
             onStartTextEdit={beginTextEdit}
             onSaveTextEdit={saveTextEdit}
             onCancelTextEdit={cancelTextEdit}
@@ -1226,9 +1304,9 @@ type DetailPaneProps = {
   onCopy: (id: string) => void;
   onCopyPlain: (id: string) => void;
   onPaste: (id: string) => void;
-  onAsk: (id: string) => void;
   onAiAction: (id: string, prompt: string) => void;
   onEdit: (id: string) => void;
+  aiActions: AiActionSpec[];
   onStartTextEdit: (entry: ClipboardEntry) => void;
   onSaveTextEdit: (id: string) => void;
   onCancelTextEdit: () => void;
@@ -1297,7 +1375,7 @@ function DetailPane(props: DetailPaneProps) {
         <AiActionsPanel
           activeEntry={activeEntry}
           onAiAction={props.onAiAction}
-          onAsk={props.onAsk}
+          actions={props.aiActions}
         />
       </div>
 
@@ -1707,14 +1785,19 @@ function MetaChips({
 function AiActionsPanel({
   activeEntry,
   onAiAction,
-  onAsk,
+  actions,
 }: {
   activeEntry: ClipboardEntry;
   onAiAction: (id: string, prompt: string) => void;
-  onAsk: (id: string) => void;
+  actions: AiActionSpec[];
 }) {
+  if (actions.length === 0) {
+    return null;
+  }
+  const columns = Math.min(actions.length, 4);
   return (
     <div
+      data-testid="clipboard-ai-actions"
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -1747,46 +1830,40 @@ function AiActionsPanel({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          gridTemplateColumns: `repeat(${columns}, 1fr)`,
           gap: 6,
         }}
       >
-        <AiTile
-          testId="clipboard-ai-summarize"
-          glyph={<TileGlyphSummarize />}
-          label="Summarize"
-          onClick={() => onAiAction(activeEntry.id, '/tldr')}
-        />
-        <AiTile
-          testId="clipboard-ai-translate"
-          glyph={<TileGlyphTranslate />}
-          label="Translate"
-          onClick={() => onAiAction(activeEntry.id, '/translate')}
-        />
-        {activeEntry.kind === 'text' ? (
+        {actions.map((action) => (
           <AiTile
-            testId="clipboard-ai-rewrite"
-            glyph={<TileGlyphRewrite />}
-            label="Rewrite"
-            onClick={() => onAiAction(activeEntry.id, '/rewrite')}
+            key={action.trigger}
+            testId={`clipboard-ai-${action.trigger.slice(1)}`}
+            glyph={<AiActionGlyphFor trigger={action.trigger} />}
+            label={action.label}
+            title={action.description}
+            onClick={() => onAiAction(activeEntry.id, action.trigger)}
           />
-        ) : (
-          <AiTile
-            testId="clipboard-ai-ocr-clean"
-            glyph={<TileGlyphOcr />}
-            label="OCR & Clean"
-            onClick={() => onAiAction(activeEntry.id, OCR_AND_CLEAN_PROMPT)}
-          />
-        )}
-        <AiTile
-          testId="clipboard-ask-btn"
-          glyph={<TileGlyphAsk />}
-          label="Ask Oling"
-          onClick={() => onAsk(activeEntry.id)}
-        />
+        ))}
       </div>
     </div>
   );
+}
+
+function AiActionGlyphFor({ trigger }: { trigger: string }) {
+  switch (trigger) {
+    case '/tldr':
+      return <TileGlyphSummarize />;
+    case '/translate':
+      return <TileGlyphTranslate />;
+    case '/rewrite':
+    case '/refine':
+      return <TileGlyphRewrite />;
+    case '/bullets':
+    case '/todos':
+      return <TileGlyphSummarize />;
+    default:
+      return <SparkleGlyph />;
+  }
 }
 
 function AiTile({
@@ -1794,17 +1871,20 @@ function AiTile({
   glyph,
   label,
   onClick,
+  title,
 }: {
   testId: string;
   glyph: ReactNode;
   label: string;
   onClick: () => void;
+  title?: string;
 }) {
   return (
     <button
       data-testid={testId}
       type="button"
       onClick={onClick}
+      title={title}
       className="oling-ai-tile"
       style={{
         display: 'flex',
@@ -2523,41 +2603,6 @@ function TileGlyphRewrite() {
         stroke="currentColor"
         strokeWidth="1.3"
         strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function TileGlyphOcr() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <rect
-        x="2"
-        y="2"
-        width="12"
-        height="12"
-        rx="1.5"
-        stroke="currentColor"
-        strokeWidth="1.3"
-      />
-      <path
-        d="M4.5 7.5h7M4.5 10.5h5"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function TileGlyphAsk() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M8 2.2l1.8 3.6 4 .58-2.9 2.82.68 3.98L8 11.3l-3.58 1.88.68-3.98-2.9-2.82 4-.58L8 2.2z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinejoin="round"
       />
     </svg>
   );

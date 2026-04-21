@@ -20,7 +20,20 @@ export interface SettingsData {
   commands_config: CommandsConfig;
   /** Cap on non-pinned clipboard history entries (pinned items are always kept). */
   clipboard_max_entries: number;
+  /**
+   * Slash-command triggers (e.g. `/tldr`, `/translate`) rendered as
+   * AI Action tiles in the clipboard history panel. Order in the array
+   * is the render order.
+   */
+  clipboard_ai_actions: string[];
 }
+
+/** Defaults mirrored from `settings.rs` `DEFAULT_CLIPBOARD_AI_ACTIONS`. */
+export const DEFAULT_CLIPBOARD_AI_ACTIONS: string[] = [
+  '/tldr',
+  '/translate',
+  '/rewrite',
+];
 
 /** Keep these in sync with `settings.rs` `*_CLIPBOARD_MAX_ENTRIES` constants. */
 export const CLIPBOARD_MAX_ENTRIES_DEFAULT = 200;
