@@ -5,12 +5,13 @@ import type { SettingsData } from '../useSettings';
 import { invoke } from '../../testUtils/mocks/tauri';
 
 const MOCK_SETTINGS: SettingsData = {
-  api_base_url: 'http://10.0.0.4:1234/v1',
+  api_base_url: 'http://127.0.0.1:1234/v1',
   api_key: 'lm-studio',
   model_name: 'qwen3-vl-8b-thinking',
   system_prompt: 'Be helpful.',
   reply_prompt: 'Reply concisely.',
-  ocr_prompt: '请提取图中所有文字，原样输出。',
+  ocr_prompt:
+    'Extract every piece of visible text from the image and output it exactly as shown.',
   shortcut_config: {
     overlay_activation: { kind: 'double_tap_modifier', modifier: 'ctrl' },
     screenshot_capture: {
@@ -25,6 +26,8 @@ const MOCK_SETTINGS: SettingsData = {
     },
   },
   commands_config: { overrides: {}, custom: [], disabled: [] },
+  clipboard_max_entries: 200,
+  clipboard_ai_actions: ['/tldr', '/translate', '/rewrite'],
 };
 
 describe('useSettings', () => {

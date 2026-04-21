@@ -5,12 +5,13 @@ import type { SettingsData } from '../../hooks/useSettings';
 import { invoke } from '../../testUtils/mocks/tauri';
 
 const MOCK_SETTINGS: SettingsData = {
-  api_base_url: 'http://10.0.0.4:1234/v1',
+  api_base_url: 'http://127.0.0.1:1234/v1',
   api_key: 'lm-studio',
   model_name: 'qwen3-vl-8b-thinking',
   system_prompt: 'Default system prompt',
   reply_prompt: 'Default reply prompt',
-  ocr_prompt: '请提取图中所有文字，原样输出。',
+  ocr_prompt:
+    'Extract every piece of visible text from the image and output it exactly as shown.',
   shortcut_config: {
     overlay_activation: { kind: 'double_tap_modifier', modifier: 'ctrl' },
     screenshot_capture: {
@@ -25,10 +26,14 @@ const MOCK_SETTINGS: SettingsData = {
     },
   },
   commands_config: { overrides: {}, custom: [], disabled: [] },
+  clipboard_max_entries: 200,
+  clipboard_ai_actions: ['/tldr', '/translate', '/rewrite'],
 };
 
 /** Navigate to a sidebar tab after settings has loaded. */
-async function switchTab(tab: 'model' | 'prompts' | 'shortcuts' | 'commands') {
+async function switchTab(
+  tab: 'model' | 'prompts' | 'shortcuts' | 'commands' | 'clipboard' | 'storage',
+) {
   await act(async () => {
     fireEvent.click(screen.getByTestId(`settings-tab-${tab}`));
   });
@@ -55,7 +60,7 @@ describe('SettingsView', () => {
     await act(async () => {});
     expect(
       (screen.getByTestId('settings-base-url') as HTMLInputElement).value,
-    ).toBe('http://10.0.0.4:1234/v1');
+    ).toBe('http://127.0.0.1:1234/v1');
     expect(
       (screen.getByTestId('settings-model') as HTMLInputElement).value,
     ).toBe('qwen3-vl-8b-thinking');
@@ -174,7 +179,7 @@ describe('SettingsView', () => {
     await act(async () => {});
 
     expect(invoke).toHaveBeenCalledWith('test_api_connection', {
-      baseUrl: 'http://10.0.0.4:1234/v1',
+      baseUrl: 'http://127.0.0.1:1234/v1',
       apiKey: 'lm-studio',
     });
     expect(screen.getByTestId('settings-test-result').textContent).toContain(
@@ -237,16 +242,20 @@ describe('SettingsView', () => {
 
     expect(sysTa.value).toBe('Default system prompt');
     expect(replyTa.value).toBe('Default reply prompt');
-    expect(ocrTa.value).toBe('请提取图中所有文字，原样输出。');
+    expect(ocrTa.value).toBe(
+      'Extract every piece of visible text from the image and output it exactly as shown.',
+    );
 
     await act(async () => {
       fireEvent.change(sysTa, { target: { value: 'New sys' } });
       fireEvent.change(replyTa, { target: { value: 'New reply' } });
-      fireEvent.change(ocrTa, { target: { value: '只输出图片里的文本' } });
+      fireEvent.change(ocrTa, {
+        target: { value: 'Output only the text visible in the image.' },
+      });
     });
     expect(sysTa.value).toBe('New sys');
     expect(replyTa.value).toBe('New reply');
-    expect(ocrTa.value).toBe('只输出图片里的文本');
+    expect(ocrTa.value).toBe('Output only the text visible in the image.');
   });
 
   it('saving persists the OCR prompt field', async () => {
@@ -256,7 +265,10 @@ describe('SettingsView', () => {
 
     await act(async () => {
       fireEvent.change(screen.getByTestId('settings-ocr-prompt'), {
-        target: { value: '请按段落提取图片中的文字，不要解释。' },
+        target: {
+          value:
+            'Extract the text paragraph by paragraph without explanations.',
+        },
       });
     });
 
@@ -269,7 +281,7 @@ describe('SettingsView', () => {
       ([cmd]) => cmd === 'update_settings',
     );
     expect(saveCall?.[1]?.data?.ocr_prompt).toBe(
-      '请按段落提取图片中的文字，不要解释。',
+      'Extract the text paragraph by paragraph without explanations.',
     );
   });
 
@@ -392,6 +404,254 @@ describe('SettingsView', () => {
     expect(screen.getByTestId('settings-tab-model')).toBeInTheDocument();
     expect(screen.getByTestId('settings-tab-prompts')).toBeInTheDocument();
     expect(screen.getByTestId('settings-tab-commands')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-tab-storage')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-tab-clipboard')).toBeInTheDocument();
+  });
+
+  it('persists a changed clipboard history cap through save', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('clipboard');
+
+    const input = screen.getByTestId(
+      'settings-clipboard-max-entries',
+    ) as HTMLInputElement;
+    expect(Number(input.value)).toBe(200);
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '450' } });
+    });
+    expect(Number(input.value)).toBe(450);
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-save-btn'));
+    });
+    const saveCall = invoke.mock.calls.find(
+      ([cmd]) => cmd === 'update_settings',
+    );
+    expect(saveCall?.[1]?.data?.clipboard_max_entries).toBe(450);
+  });
+
+  it('clamps clipboard history cap to the allowed bounds on input', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('clipboard');
+
+    const input = screen.getByTestId(
+      'settings-clipboard-max-entries',
+    ) as HTMLInputElement;
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '0' } });
+    });
+    expect(Number(input.value)).toBe(10);
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '999999' } });
+    });
+    expect(Number(input.value)).toBe(10000);
+  });
+
+  it('reset button restores the default clipboard cap', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('clipboard');
+
+    const input = screen.getByTestId(
+      'settings-clipboard-max-entries',
+    ) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '777' } });
+    });
+    expect(Number(input.value)).toBe(777);
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId('settings-clipboard-max-entries-reset'),
+      );
+    });
+    expect(Number(input.value)).toBe(200);
+  });
+
+  it('falls back to the default when the cap input is not a number', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('clipboard');
+
+    const input = screen.getByTestId(
+      'settings-clipboard-max-entries',
+    ) as HTMLInputElement;
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '' } });
+    });
+    expect(Number(input.value)).toBe(200);
+  });
+
+  it('AI actions picker: tapping a pill toggles selection and save persists the new order', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('clipboard');
+
+    const tldr = screen.getByTestId('settings-ai-action-tldr');
+    const refine = screen.getByTestId('settings-ai-action-refine');
+    // /tldr is selected by default, /refine is not.
+    expect(tldr.getAttribute('data-selected')).toBe('1');
+    expect(refine.getAttribute('data-selected')).toBeNull();
+
+    // Click in two separate act() blocks so the state update from the
+    // first toggle flushes before the second click reads the new draft.
+    await act(async () => {
+      fireEvent.click(refine);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-ai-action-tldr'));
+    });
+    expect(
+      screen
+        .getByTestId('settings-ai-action-refine')
+        .getAttribute('data-selected'),
+    ).toBe('1');
+    expect(
+      screen
+        .getByTestId('settings-ai-action-tldr')
+        .getAttribute('data-selected'),
+    ).toBeNull();
+
+    invoke.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-save-btn'));
+    });
+    const saveCall = invoke.mock.calls.find(
+      ([cmd]) => cmd === 'update_settings',
+    );
+    expect(saveCall?.[1]?.data?.clipboard_ai_actions).toEqual([
+      '/translate',
+      '/rewrite',
+      '/refine',
+    ]);
+  });
+
+  it('AI actions picker: preview + summary reflect current selection', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('clipboard');
+
+    expect(
+      screen.getByTestId('settings-ai-actions-summary').textContent,
+    ).toContain('3 tiles selected');
+    expect(
+      screen.getByTestId('settings-ai-actions-preview'),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-ai-actions-clear'));
+    });
+
+    expect(screen.queryByTestId('settings-ai-actions-preview')).toBeNull();
+    expect(
+      screen.getByTestId('settings-ai-actions-summary').textContent,
+    ).toContain('hidden');
+  });
+
+  it('AI actions picker: Reset restores the defaults', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('clipboard');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-ai-action-tldr'));
+    });
+    expect(
+      screen
+        .getByTestId('settings-ai-action-tldr')
+        .getAttribute('data-selected'),
+    ).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-ai-actions-reset'));
+    });
+    expect(
+      screen
+        .getByTestId('settings-ai-action-tldr')
+        .getAttribute('data-selected'),
+    ).toBe('1');
+  });
+
+  it('crash panel: loads count, opens folder, clears list', async () => {
+    let stored = [
+      {
+        path: '/tmp/crashes/1.log',
+        file_name: '1.log',
+        size_bytes: 42,
+        modified_ms: 1,
+      },
+      {
+        path: '/tmp/crashes/2.log',
+        file_name: '2.log',
+        size_bytes: 19,
+        modified_ms: 2,
+      },
+    ];
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_settings') return { ...MOCK_SETTINGS };
+      if (cmd === 'list_crash_reports') return [...stored];
+      if (cmd === 'open_crash_reports_dir') return undefined;
+      if (cmd === 'clear_crash_reports') {
+        stored = [];
+        return undefined;
+      }
+    });
+
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+    await act(async () => {});
+
+    expect(
+      screen.getByTestId('settings-crash-report-count').textContent,
+    ).toContain('2 crash reports');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-crash-open-folder'));
+    });
+    expect(invoke).toHaveBeenCalledWith('open_crash_reports_dir');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-crash-clear'));
+    });
+    await act(async () => {});
+    expect(
+      screen.getByTestId('settings-crash-report-count').textContent,
+    ).toContain('No crash reports');
+  });
+
+  it('crash panel: shows empty state when nothing is recorded', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_settings') return { ...MOCK_SETTINGS };
+      if (cmd === 'list_crash_reports') return [];
+    });
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+    await act(async () => {});
+    expect(
+      screen.getByTestId('settings-crash-report-count').textContent,
+    ).toContain('No crash reports');
+    expect(screen.queryByTestId('settings-crash-clear')).toBeNull();
+  });
+
+  it('crash panel: surfaces errors from list_crash_reports', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_settings') return { ...MOCK_SETTINGS };
+      if (cmd === 'list_crash_reports') throw 'readdir denied';
+    });
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('storage');
+    await act(async () => {});
+    expect(screen.getByText(/readdir denied/)).toBeInTheDocument();
   });
 
   it('renders all commands in a unified list with edit and delete', async () => {

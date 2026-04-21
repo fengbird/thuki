@@ -34,6 +34,15 @@ pub struct SettingsData {
     /// The frontend owns the schema (overrides, custom, disabled).
     #[serde(default)]
     pub commands_config: serde_json::Value,
+    /// Cap on non-pinned clipboard entries kept in the rolling history.
+    /// Pinned (favorited) entries are always preserved.
+    #[serde(default = "default_clipboard_max_entries")]
+    pub clipboard_max_entries: u64,
+    /// Slash-command triggers (e.g. `/tldr`, `/translate`) that should
+    /// appear as AI Action tiles in the clipboard history panel. Order
+    /// in the vec is the render order.
+    #[serde(default = "default_clipboard_ai_actions")]
+    pub clipboard_ai_actions: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,11 +102,80 @@ const K_REPLY_PROMPT: &str = "settings.reply_prompt";
 const K_OCR_PROMPT: &str = "settings.ocr_prompt";
 const K_SHORTCUT_CONFIG: &str = "settings.shortcut_config";
 const K_COMMANDS_CONFIG: &str = "settings.commands_config";
+const K_CLIPBOARD_MAX_ENTRIES: &str = "settings.clipboard_max_entries";
+const K_CLIPBOARD_AI_ACTIONS: &str = "settings.clipboard_ai_actions";
 
-pub const DEFAULT_OCR_PROMPT: &str = "请提取图中所有文字，原样输出。";
+pub const DEFAULT_OCR_PROMPT: &str =
+    "Extract every piece of visible text from the image and output it exactly as shown.";
+
+/// Default cap on non-pinned clipboard history entries. Used when the
+/// value is absent from the DB or fails to parse.
+pub const DEFAULT_CLIPBOARD_MAX_ENTRIES: u64 = 200;
+
+/// Hard bounds so the user can't misconfigure this into disabling
+/// prune (0) or blowing out the DB (very large values). Pinned entries
+/// always survive independent of this cap.
+pub const MIN_CLIPBOARD_MAX_ENTRIES: u64 = 10;
+pub const MAX_CLIPBOARD_MAX_ENTRIES: u64 = 10_000;
 
 fn default_ocr_prompt() -> String {
     DEFAULT_OCR_PROMPT.to_string()
+}
+
+fn default_clipboard_max_entries() -> u64 {
+    DEFAULT_CLIPBOARD_MAX_ENTRIES
+}
+
+/// Default clipboard AI Action tiles, preserving the look of the old
+/// hardcoded set so existing users don't see an empty section after
+/// upgrade. Users can edit this list in Settings → Storage.
+pub const DEFAULT_CLIPBOARD_AI_ACTIONS: &[&str] = &["/tldr", "/translate", "/rewrite"];
+
+fn default_clipboard_ai_actions() -> Vec<String> {
+    DEFAULT_CLIPBOARD_AI_ACTIONS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Normalizes raw user input: trims whitespace, ensures a leading `/`,
+/// drops empties, dedupes while preserving order. Backend-side defence
+/// so the persisted list is always well-formed.
+pub fn normalize_clipboard_ai_actions(raw: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::with_capacity(raw.len());
+    for entry in raw {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let normalized = if trimmed.starts_with('/') {
+            trimmed.to_string()
+        } else {
+            format!("/{trimmed}")
+        };
+        if seen.insert(normalized.clone()) {
+            out.push(normalized);
+        }
+    }
+    out
+}
+
+/// Clamps the raw user-provided value into `[MIN, MAX]`. Defensive:
+/// the frontend also clamps, but the backend is the source of truth
+/// for anything that touches the DB prune query.
+pub fn clamp_clipboard_max_entries(raw: u64) -> u64 {
+    raw.clamp(MIN_CLIPBOARD_MAX_ENTRIES, MAX_CLIPBOARD_MAX_ENTRIES)
+}
+
+/// Wraps the live cap behind a Mutex so every subsequent
+/// `persist_capture` call reads the fresh value without a restart.
+pub struct ClipboardMaxEntriesState(pub Arc<Mutex<u64>>);
+
+impl ClipboardMaxEntriesState {
+    pub fn new(max: u64) -> Self {
+        Self(Arc::new(Mutex::new(clamp_clipboard_max_entries(max))))
+    }
 }
 
 fn default_overlay_activation_shortcut() -> OverlayActivationShortcut {
@@ -205,6 +283,14 @@ pub fn load_settings(conn: &rusqlite::Connection) -> SettingsData {
     let ocr_prompt = db(K_OCR_PROMPT).unwrap_or_else(default_ocr_prompt);
     let shortcut_config = load_shortcut_config(conn);
     let commands_config = load_commands_config(conn);
+    let clipboard_max_entries = db(K_CLIPBOARD_MAX_ENTRIES)
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(clamp_clipboard_max_entries)
+        .unwrap_or(DEFAULT_CLIPBOARD_MAX_ENTRIES);
+    let clipboard_ai_actions = db(K_CLIPBOARD_AI_ACTIONS)
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .map(normalize_clipboard_ai_actions)
+        .unwrap_or_else(default_clipboard_ai_actions);
 
     SettingsData {
         api_base_url,
@@ -215,6 +301,8 @@ pub fn load_settings(conn: &rusqlite::Connection) -> SettingsData {
         ocr_prompt,
         shortcut_config,
         commands_config,
+        clipboard_max_entries,
+        clipboard_ai_actions,
     }
 }
 
@@ -236,6 +324,15 @@ pub fn save_settings(conn: &rusqlite::Connection, data: &SettingsData) -> Result
     let config_json = serde_json::to_string(&data.commands_config)
         .map_err(|e| format!("Failed to serialize commands_config: {e}"))?;
     set(K_COMMANDS_CONFIG, &config_json)?;
+    set(
+        K_CLIPBOARD_MAX_ENTRIES,
+        &clamp_clipboard_max_entries(data.clipboard_max_entries).to_string(),
+    )?;
+    let ai_actions_json = serde_json::to_string(&normalize_clipboard_ai_actions(
+        data.clipboard_ai_actions.clone(),
+    ))
+    .map_err(|e| format!("Failed to serialize clipboard_ai_actions: {e}"))?;
+    set(K_CLIPBOARD_AI_ACTIONS, &ai_actions_json)?;
     Ok(())
 }
 
@@ -249,6 +346,7 @@ pub fn apply_to_live_states(
     system_prompt: &Mutex<SystemPrompt>,
     reply_prompt: &Mutex<ReplyPrompt>,
     shortcut_config: &ShortcutConfigState,
+    clipboard_max_entries: &ClipboardMaxEntriesState,
 ) {
     *api_config.lock().unwrap() = ApiConfig {
         base_url: data.api_base_url.trim_end_matches('/').to_string(),
@@ -261,6 +359,8 @@ pub fn apply_to_live_states(
     *system_prompt.lock().unwrap() = SystemPrompt(data.system_prompt.clone());
     *reply_prompt.lock().unwrap() = ReplyPrompt(data.reply_prompt.clone());
     *shortcut_config.0.lock().unwrap() = data.shortcut_config.normalize();
+    *clipboard_max_entries.0.lock().unwrap() =
+        clamp_clipboard_max_entries(data.clipboard_max_entries);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -319,16 +419,21 @@ pub fn get_settings(db: State<'_, Database>) -> Result<SettingsData, String> {
 #[cfg_attr(not(coverage), tauri::command)]
 pub fn update_settings(
     data: SettingsData,
+    app: tauri::AppHandle,
     db: State<'_, Database>,
     api_config: State<'_, Mutex<ApiConfig>>,
     model_config: State<'_, Mutex<ModelConfig>>,
     system_prompt: State<'_, Mutex<SystemPrompt>>,
     reply_prompt: State<'_, Mutex<ReplyPrompt>>,
     shortcut_config: State<'_, ShortcutConfigState>,
+    clipboard_max_entries: State<'_, ClipboardMaxEntriesState>,
 ) -> Result<(), String> {
+    use tauri::Emitter;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut data = data;
     data.shortcut_config = data.shortcut_config.normalize();
+    data.clipboard_max_entries = clamp_clipboard_max_entries(data.clipboard_max_entries);
+    data.clipboard_ai_actions = normalize_clipboard_ai_actions(data.clipboard_ai_actions.clone());
     save_settings(&conn, &data)?;
     apply_to_live_states(
         &data,
@@ -337,7 +442,12 @@ pub fn update_settings(
         &system_prompt,
         &reply_prompt,
         &shortcut_config,
+        &clipboard_max_entries,
     );
+    // Let satellite windows (clipboard panel, overlay, …) know settings
+    // have changed so they can re-fetch live values like the picked
+    // AI-action tiles without waiting for a reopen.
+    let _ = app.emit("oling://settings-updated", ());
     Ok(())
 }
 
@@ -391,6 +501,8 @@ mod tests {
         assert!(!s.reply_prompt.is_empty());
         assert_eq!(s.ocr_prompt, DEFAULT_OCR_PROMPT);
         assert_eq!(s.shortcut_config, default_shortcut_config());
+        assert_eq!(s.clipboard_max_entries, DEFAULT_CLIPBOARD_MAX_ENTRIES);
+        assert_eq!(s.clipboard_ai_actions, default_clipboard_ai_actions());
         // Default commands_config has empty overrides/custom/disabled.
         assert!(s.commands_config["overrides"]
             .as_object()
@@ -401,10 +513,83 @@ mod tests {
     }
 
     #[test]
+    fn clamp_clipboard_max_entries_bounds() {
+        assert_eq!(clamp_clipboard_max_entries(0), MIN_CLIPBOARD_MAX_ENTRIES);
+        assert_eq!(clamp_clipboard_max_entries(5), MIN_CLIPBOARD_MAX_ENTRIES);
+        assert_eq!(clamp_clipboard_max_entries(200), 200);
+        assert_eq!(
+            clamp_clipboard_max_entries(MAX_CLIPBOARD_MAX_ENTRIES + 1),
+            MAX_CLIPBOARD_MAX_ENTRIES,
+        );
+    }
+
+    #[test]
+    fn normalize_clipboard_ai_actions_trims_prefixes_and_dedupes() {
+        let got = normalize_clipboard_ai_actions(vec![
+            "  /tldr ".to_string(),
+            "translate".to_string(),
+            "/tldr".to_string(),
+            "  ".to_string(),
+            "rewrite".to_string(),
+        ]);
+        assert_eq!(
+            got,
+            vec![
+                "/tldr".to_string(),
+                "/translate".to_string(),
+                "/rewrite".to_string(),
+            ],
+        );
+    }
+
+    #[test]
+    fn clipboard_ai_actions_round_trip_normalises_on_write() {
+        let conn = test_conn();
+        let mut data = load_settings(&conn);
+        data.clipboard_ai_actions = vec![
+            "tldr".to_string(),
+            "/translate".to_string(),
+            "/translate".to_string(),
+        ];
+        save_settings(&conn, &data).unwrap();
+        let loaded = load_settings(&conn);
+        assert_eq!(
+            loaded.clipboard_ai_actions,
+            vec!["/tldr".to_string(), "/translate".to_string()],
+        );
+    }
+
+    #[test]
+    fn clipboard_ai_actions_falls_back_on_garbage_db_value() {
+        let conn = test_conn();
+        database::set_config(&conn, K_CLIPBOARD_AI_ACTIONS, "!not json").unwrap();
+        let s = load_settings(&conn);
+        assert_eq!(s.clipboard_ai_actions, default_clipboard_ai_actions());
+    }
+
+    #[test]
+    fn clipboard_max_entries_round_trips_with_clamp() {
+        let conn = test_conn();
+        database::set_config(&conn, K_CLIPBOARD_MAX_ENTRIES, "42").unwrap();
+        let s = load_settings(&conn);
+        assert_eq!(s.clipboard_max_entries, 42);
+
+        // Above the ceiling → clamped.
+        database::set_config(&conn, K_CLIPBOARD_MAX_ENTRIES, "99999").unwrap();
+        let s = load_settings(&conn);
+        assert_eq!(s.clipboard_max_entries, MAX_CLIPBOARD_MAX_ENTRIES);
+
+        // Garbage string → fall back to default.
+        database::set_config(&conn, K_CLIPBOARD_MAX_ENTRIES, "nope").unwrap();
+        let s = load_settings(&conn);
+        assert_eq!(s.clipboard_max_entries, DEFAULT_CLIPBOARD_MAX_ENTRIES);
+    }
+
+    #[test]
     fn save_and_load_round_trips() {
         let conn = test_conn();
         let data = SettingsData {
-            api_base_url: "http://10.0.0.4:5678/v1".to_string(),
+            api_base_url: "http://127.0.0.1:5678/v1".to_string(),
             api_key: "sk-test".to_string(),
             model_name: "llama3.1-8b".to_string(),
             system_prompt: "Be brief.".to_string(),
@@ -433,16 +618,19 @@ mod tests {
                 ],
                 "disabled": ["/refine"]
             }),
+            clipboard_max_entries: 350,
+            clipboard_ai_actions: vec!["/translate".to_string(), "/refine".to_string()],
         };
         save_settings(&conn, &data).unwrap();
 
         let loaded = load_settings(&conn);
-        assert_eq!(loaded.api_base_url, "http://10.0.0.4:5678/v1");
+        assert_eq!(loaded.api_base_url, "http://127.0.0.1:5678/v1");
         assert_eq!(loaded.api_key, "sk-test");
         assert_eq!(loaded.model_name, "llama3.1-8b");
         assert_eq!(loaded.system_prompt, "Be brief.");
         assert_eq!(loaded.reply_prompt, "Reply concisely.");
         assert_eq!(loaded.ocr_prompt, "Extract every visible line.");
+        assert_eq!(loaded.clipboard_max_entries, 350);
         assert_eq!(
             loaded.shortcut_config.overlay_activation,
             OverlayActivationShortcut::KeyCombo {
@@ -539,6 +727,8 @@ mod tests {
                 },
             },
             commands_config: serde_json::json!({}),
+            clipboard_max_entries: 77,
+            clipboard_ai_actions: vec!["/tldr".to_string()],
         };
         let api = Mutex::new(ApiConfig {
             base_url: "old".to_string(),
@@ -551,8 +741,19 @@ mod tests {
         let sys = Mutex::new(SystemPrompt("old".to_string()));
         let reply = Mutex::new(ReplyPrompt("old".to_string()));
         let shortcuts = ShortcutConfigState::new(default_shortcut_config());
+        let clipboard_cap = ClipboardMaxEntriesState::new(DEFAULT_CLIPBOARD_MAX_ENTRIES);
 
-        apply_to_live_states(&data, &api, &model, &sys, &reply, &shortcuts);
+        apply_to_live_states(
+            &data,
+            &api,
+            &model,
+            &sys,
+            &reply,
+            &shortcuts,
+            &clipboard_cap,
+        );
+
+        assert_eq!(*clipboard_cap.0.lock().unwrap(), 77);
 
         let a = api.lock().unwrap();
         assert_eq!(a.base_url, "http://new:1234/v1"); // trailing slash stripped
@@ -595,6 +796,8 @@ mod tests {
             ocr_prompt: "o".to_string(),
             shortcut_config: default_shortcut_config(),
             commands_config: serde_json::json!({ "overrides": {}, "custom": [], "disabled": [] }),
+            clipboard_max_entries: DEFAULT_CLIPBOARD_MAX_ENTRIES,
+            clipboard_ai_actions: default_clipboard_ai_actions(),
         };
         let json = serde_json::to_value(&data).unwrap();
         assert_eq!(json["api_base_url"], "http://x");
@@ -605,6 +808,7 @@ mod tests {
             "double_tap_modifier"
         );
         assert!(json["commands_config"]["overrides"].is_object());
+        assert_eq!(json["clipboard_max_entries"], DEFAULT_CLIPBOARD_MAX_ENTRIES);
     }
 
     #[test]
@@ -743,6 +947,8 @@ mod tests {
             ocr_prompt: "o".to_string(),
             shortcut_config: default_shortcut_config(),
             commands_config: serde_json::json!({ "overrides": {}, "custom": [], "disabled": [] }),
+            clipboard_max_entries: DEFAULT_CLIPBOARD_MAX_ENTRIES,
+            clipboard_ai_actions: default_clipboard_ai_actions(),
         };
         save_settings(&conn, &data).unwrap();
 

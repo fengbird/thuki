@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSettings } from '../hooks/useSettings';
+import { invoke } from '@tauri-apps/api/core';
+import {
+  CLIPBOARD_MAX_ENTRIES_DEFAULT,
+  CLIPBOARD_MAX_ENTRIES_MAX,
+  CLIPBOARD_MAX_ENTRIES_MIN,
+  DEFAULT_CLIPBOARD_AI_ACTIONS,
+  useSettings,
+} from '../hooks/useSettings';
 import type { SettingsData } from '../hooks/useSettings';
-import { COMMANDS, EMPTY_COMMANDS_CONFIG } from '../config/commands';
+import { formatAiActionLabel } from '../config/aiActions';
+import {
+  COMMANDS,
+  EMPTY_COMMANDS_CONFIG,
+  mergeCommands,
+} from '../config/commands';
 import {
   DEFAULT_SHORTCUT_CONFIG,
   captureKeyComboFromEvent,
@@ -61,7 +73,13 @@ export interface SettingsViewProps {
   onDismiss: (saved: boolean) => void;
 }
 
-type SettingsTab = 'model' | 'prompts' | 'shortcuts' | 'commands';
+type SettingsTab =
+  | 'model'
+  | 'prompts'
+  | 'shortcuts'
+  | 'commands'
+  | 'clipboard'
+  | 'storage';
 type RecordingShortcutField =
   | 'overlay_activation'
   | 'screenshot_capture'
@@ -72,6 +90,8 @@ const TAB_ITEMS: { key: SettingsTab; label: string }[] = [
   { key: 'prompts', label: 'Prompts' },
   { key: 'shortcuts', label: 'Shortcuts' },
   { key: 'commands', label: 'Commands' },
+  { key: 'clipboard', label: 'Clipboard' },
+  { key: 'storage', label: 'Storage' },
 ];
 
 // ─── Main component ────────────────────────────────────────────────────────
@@ -524,7 +544,7 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
                     style={inputStyle}
                     value={draft.api_base_url}
                     onChange={(e) => update('api_base_url', e.target.value)}
-                    placeholder="http://10.0.0.4:1234/v1"
+                    placeholder="http://127.0.0.1:1234/v1"
                   />
                 </Field>
                 <Field label="API Key">
@@ -871,6 +891,103 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
               </div>
             </div>
           )}
+
+          {/* ── Clipboard Tab ─────────────────────────── */}
+          {activeTab === 'clipboard' && (
+            <>
+              <Section title="History Limit">
+                <p
+                  style={{
+                    margin: '0 0 10px',
+                    fontSize: 11.5,
+                    color: 'rgba(255,255,255,0.5)',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Maximum number of non-pinned clipboard entries kept in
+                  history. Pinned items are always preserved. Older entries
+                  beyond this cap are pruned (including their image files) as
+                  new clips arrive. Default: {CLIPBOARD_MAX_ENTRIES_DEFAULT}.
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <input
+                    data-testid="settings-clipboard-max-entries"
+                    type="number"
+                    min={CLIPBOARD_MAX_ENTRIES_MIN}
+                    max={CLIPBOARD_MAX_ENTRIES_MAX}
+                    step={10}
+                    value={draft.clipboard_max_entries}
+                    onChange={(e) => {
+                      const text = e.target.value.trim();
+                      if (text === '') {
+                        update(
+                          'clipboard_max_entries',
+                          CLIPBOARD_MAX_ENTRIES_DEFAULT,
+                        );
+                        return;
+                      }
+                      const raw = Number(text);
+                      const safe = Number.isFinite(raw)
+                        ? Math.min(
+                            CLIPBOARD_MAX_ENTRIES_MAX,
+                            Math.max(
+                              CLIPBOARD_MAX_ENTRIES_MIN,
+                              Math.round(raw),
+                            ),
+                          )
+                        : CLIPBOARD_MAX_ENTRIES_DEFAULT;
+                      update('clipboard_max_entries', safe);
+                    }}
+                    style={{ ...inputStyle, width: 160 }}
+                  />
+                  <button
+                    type="button"
+                    data-testid="settings-clipboard-max-entries-reset"
+                    onClick={() =>
+                      update(
+                        'clipboard_max_entries',
+                        CLIPBOARD_MAX_ENTRIES_DEFAULT,
+                      )
+                    }
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: 8,
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      background: 'transparent',
+                      color: 'rgba(255,255,255,0.68)',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      fontFamily: THEME.fontFamily,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Reset to {CLIPBOARD_MAX_ENTRIES_DEFAULT}
+                  </button>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: 'rgba(255,255,255,0.4)',
+                    }}
+                  >
+                    Range: {CLIPBOARD_MAX_ENTRIES_MIN}–
+                    {CLIPBOARD_MAX_ENTRIES_MAX}
+                  </span>
+                </div>
+              </Section>
+
+              <Divider />
+
+              <ClipboardAiActionsPicker
+                selected={draft.clipboard_ai_actions}
+                commands={draft.commands_config}
+                onChange={(next) => update('clipboard_ai_actions', next)}
+              />
+            </>
+          )}
+
+          {/* ── Storage Tab ───────────────────────────── */}
+          {activeTab === 'storage' && <CrashReportsPanel />}
         </div>
       </div>
 
@@ -1356,4 +1473,450 @@ function Field({
 
 function Divider() {
   return <div style={{ height: 1, background: THEME.divider }} />;
+}
+
+// ─── Clipboard AI Actions picker ──────────────────────────────────────────
+
+function ClipboardAiActionsPicker({
+  selected,
+  commands,
+  onChange,
+}: {
+  selected: string[];
+  commands: CommandsConfig;
+  onChange: (next: string[]) => void;
+}) {
+  // Hide system-only entries (e.g. /think) — they have no prompt
+  // template to apply to a clipboard entry. Custom commands ride
+  // through `mergeCommands` so they appear alongside the built-ins.
+  const available = mergeCommands(commands).filter(
+    (c) => c.category !== 'system',
+  );
+  const toggle = useCallback(
+    (trigger: string) => {
+      if (selected.includes(trigger)) {
+        onChange(selected.filter((t) => t !== trigger));
+      } else {
+        onChange([...selected, trigger]);
+      }
+    },
+    [onChange, selected],
+  );
+  // Active tiles preserve the order the user picked them in, so the
+  // preview matches the clipboard panel exactly.
+  const previewSpecs = selected
+    .map((trigger) => available.find((c) => c.trigger === trigger) ?? null)
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+  const previewColumns = Math.min(Math.max(previewSpecs.length, 1), 4);
+
+  return (
+    <Section title="AI Actions">
+      <p
+        style={{
+          margin: '0 0 10px',
+          fontSize: 11.5,
+          color: 'rgba(255,255,255,0.5)',
+          lineHeight: 1.5,
+        }}
+      >
+        Pick which slash commands appear as tiles in the clipboard panel. Tap a
+        pill to add it; tap again to remove. Order follows your pick order — the
+        preview below is exactly what the panel will render.
+      </p>
+      {available.length === 0 ? (
+        <div
+          style={{
+            fontSize: 12,
+            color: 'rgba(255,255,255,0.5)',
+            padding: '10px 0',
+          }}
+        >
+          No commands available — add or re-enable some under the Commands tab.
+        </div>
+      ) : (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+          }}
+        >
+          {available.map((cmd) => {
+            const checked = selected.includes(cmd.trigger);
+            return (
+              <button
+                key={cmd.trigger}
+                type="button"
+                data-testid={`settings-ai-action-${cmd.trigger.slice(1)}`}
+                data-selected={checked ? '1' : undefined}
+                onClick={() => toggle(cmd.trigger)}
+                title={cmd.description}
+                style={aiActionPillStyle(checked)}
+              >
+                <span
+                  style={checked ? aiActionPillCheck : aiActionPillPlus}
+                  aria-hidden
+                >
+                  {checked ? '✓' : '+'}
+                </span>
+                <span style={{ fontWeight: 600 }}>
+                  {formatAiActionLabel(cmd.trigger)}
+                </span>
+                <span style={aiActionPillTrigger(checked)}>{cmd.trigger}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {selected.length > 0 ? (
+        <div
+          data-testid="settings-ai-actions-preview"
+          style={{
+            marginTop: 14,
+            padding: 12,
+            borderRadius: 12,
+            border: '1px solid rgba(255,141,92,0.18)',
+            background:
+              'radial-gradient(ellipse 80% 60% at 50% -10%, rgba(255,141,92,0.08) 0%, rgba(28,24,20,0.6) 70%)',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: 1.2,
+              textTransform: 'uppercase',
+              color: 'rgba(255,255,255,0.4)',
+              marginBottom: 10,
+            }}
+          >
+            Live preview · clipboard panel
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${previewColumns}, 1fr)`,
+              gap: 6,
+            }}
+          >
+            {previewSpecs.map((spec) => (
+              <div key={spec.trigger} style={aiActionPreviewTileStyle}>
+                <span
+                  style={{ fontSize: 11, fontWeight: 600, color: '#f4f1ed' }}
+                >
+                  {formatAiActionLabel(spec.trigger)}
+                </span>
+                <span
+                  style={{
+                    fontFamily:
+                      'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    fontSize: 9.5,
+                    color: 'rgba(255,141,92,0.7)',
+                  }}
+                >
+                  {spec.trigger}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginTop: 12,
+        }}
+      >
+        <button
+          type="button"
+          data-testid="settings-ai-actions-reset"
+          onClick={() => onChange([...DEFAULT_CLIPBOARD_AI_ACTIONS])}
+          style={{
+            padding: '6px 10px',
+            borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.12)',
+            background: 'transparent',
+            color: 'rgba(255,255,255,0.68)',
+            fontSize: 11,
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontFamily: THEME.fontFamily,
+          }}
+        >
+          Reset to defaults
+        </button>
+        {selected.length > 0 ? (
+          <button
+            type="button"
+            data-testid="settings-ai-actions-clear"
+            onClick={() => onChange([])}
+            style={{
+              padding: '6px 10px',
+              borderRadius: 8,
+              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'transparent',
+              color: 'rgba(255,255,255,0.4)',
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontFamily: THEME.fontFamily,
+            }}
+          >
+            Clear
+          </button>
+        ) : null}
+        <span
+          data-testid="settings-ai-actions-summary"
+          style={{
+            marginLeft: 'auto',
+            fontSize: 11,
+            color: 'rgba(255,255,255,0.4)',
+          }}
+        >
+          {selected.length === 0
+            ? 'AI Actions section will be hidden'
+            : `${selected.length} tile${selected.length === 1 ? '' : 's'} selected`}
+        </span>
+      </div>
+    </Section>
+  );
+}
+
+const aiActionPillCheck: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 18,
+  height: 18,
+  borderRadius: 9,
+  fontSize: 11,
+  fontWeight: 700,
+  background: 'rgba(255,255,255,0.2)',
+  color: '#fff',
+  flexShrink: 0,
+};
+
+const aiActionPillPlus: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 18,
+  height: 18,
+  borderRadius: 9,
+  fontSize: 14,
+  fontWeight: 400,
+  color: 'rgba(255,255,255,0.4)',
+  flexShrink: 0,
+};
+
+function aiActionPillStyle(selected: boolean): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 7,
+    padding: '6px 12px 6px 6px',
+    borderRadius: 999,
+    border: selected
+      ? '1px solid rgba(255,141,92,0.45)'
+      : '1px solid rgba(255,255,255,0.1)',
+    background: selected
+      ? 'linear-gradient(180deg, rgba(255,141,92,0.22), rgba(255,141,92,0.12))'
+      : 'rgba(255,255,255,0.04)',
+    color: selected ? '#ffe6d6' : 'rgba(255,255,255,0.72)',
+    fontSize: 11.5,
+    fontFamily: THEME.fontFamily,
+    cursor: 'pointer',
+    boxShadow: selected ? 'inset 0 1px 0 rgba(255,255,255,0.12)' : 'none',
+    transition:
+      'background 140ms ease, border-color 140ms ease, color 140ms ease',
+  };
+}
+
+function aiActionPillTrigger(selected: boolean): React.CSSProperties {
+  return {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 10.5,
+    color: selected ? 'rgba(255,255,255,0.75)' : 'rgba(255,141,92,0.75)',
+  };
+}
+
+const aiActionPreviewTileStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 4,
+  padding: '12px 6px',
+  borderRadius: 12,
+  border: '1px solid rgba(255,255,255,0.06)',
+  background: 'rgba(255,255,255,0.03)',
+  minHeight: 58,
+};
+
+// ─── Crash reports panel ──────────────────────────────────────────────────
+
+interface CrashReportEntry {
+  path: string;
+  file_name: string;
+  size_bytes: number;
+  modified_ms: number;
+}
+
+function CrashReportsPanel() {
+  const [entries, setEntries] = useState<CrashReportEntry[]>([]);
+  const [isBusy, setIsBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setError(null);
+    try {
+      const list = await invoke<CrashReportEntry[]>('list_crash_reports');
+      setEntries(Array.isArray(list) ? list : []);
+    } catch (e) {
+      setError(typeof e === 'string' ? e : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const openFolder = useCallback(async () => {
+    setIsBusy(true);
+    setError(null);
+    try {
+      await invoke('open_crash_reports_dir');
+    } catch (e) {
+      setError(typeof e === 'string' ? e : String(e));
+    } finally {
+      setIsBusy(false);
+    }
+  }, []);
+
+  const clearAll = useCallback(async () => {
+    setIsBusy(true);
+    setError(null);
+    try {
+      await invoke('clear_crash_reports');
+      await refresh();
+    } catch (e) {
+      setError(typeof e === 'string' ? e : String(e));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [refresh]);
+
+  return (
+    <Section title="Crash Reports">
+      <p
+        style={{
+          margin: '0 0 10px',
+          fontSize: 11.5,
+          color: 'rgba(255,255,255,0.5)',
+          lineHeight: 1.5,
+        }}
+      >
+        Rust panics and unhandled JS errors are saved under{' '}
+        <code style={{ color: 'rgba(255,255,255,0.72)' }}>
+          {'<Application Support>/com.quietnode.oling/crashes/'}
+        </code>
+        . A rolling plaintext log also lives under{' '}
+        <code style={{ color: 'rgba(255,255,255,0.72)' }}>
+          {'~/Library/Logs/com.quietnode.oling/'}
+        </code>
+        .
+      </p>
+      <div
+        data-testid="settings-crash-report-count"
+        style={{
+          fontSize: 12,
+          color: 'rgba(255,255,255,0.68)',
+          marginBottom: 10,
+        }}
+      >
+        {entries.length === 0
+          ? 'No crash reports — nothing has crashed (yet).'
+          : `${entries.length} crash report${entries.length === 1 ? '' : 's'} on disk.`}
+      </div>
+      {error ? (
+        <div
+          style={{
+            fontSize: 11.5,
+            color: '#ef4444',
+            marginBottom: 8,
+          }}
+        >
+          {error}
+        </div>
+      ) : null}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          data-testid="settings-crash-open-folder"
+          onClick={() => void openFolder()}
+          disabled={isBusy}
+          style={{
+            padding: '6px 12px',
+            borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.12)',
+            background: 'rgba(255,255,255,0.04)',
+            color: THEME.textPrimary,
+            fontSize: 11.5,
+            fontWeight: 600,
+            cursor: isBusy ? 'wait' : 'pointer',
+            fontFamily: THEME.fontFamily,
+          }}
+        >
+          Open Folder
+        </button>
+        <button
+          type="button"
+          data-testid="settings-crash-refresh"
+          onClick={() => void refresh()}
+          disabled={isBusy}
+          style={{
+            padding: '6px 12px',
+            borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.12)',
+            background: 'transparent',
+            color: 'rgba(255,255,255,0.68)',
+            fontSize: 11.5,
+            fontWeight: 600,
+            cursor: isBusy ? 'wait' : 'pointer',
+            fontFamily: THEME.fontFamily,
+          }}
+        >
+          Refresh
+        </button>
+        {entries.length > 0 ? (
+          <button
+            type="button"
+            data-testid="settings-crash-clear"
+            onClick={() => void clearAll()}
+            disabled={isBusy}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 8,
+              border: '1px solid rgba(239,68,68,0.4)',
+              background: 'transparent',
+              color: '#ef4444',
+              fontSize: 11.5,
+              fontWeight: 600,
+              cursor: isBusy ? 'wait' : 'pointer',
+              fontFamily: THEME.fontFamily,
+            }}
+          >
+            Clear All
+          </button>
+        ) : null}
+      </div>
+    </Section>
+  );
 }

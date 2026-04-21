@@ -1,1 +1,2 @@
-export const DEFAULT_OCR_PROMPT = '请提取图中所有文字，原样输出。';
+export const DEFAULT_OCR_PROMPT =
+  'Extract every piece of visible text from the image and output it exactly as shown.';

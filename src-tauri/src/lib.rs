@@ -15,8 +15,10 @@
 
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
+pub mod app_icons;
 pub mod clipboard_history;
 pub mod commands;
+pub mod crash_reporter;
 pub mod database;
 pub mod images;
 pub mod long_shot;
@@ -776,7 +778,23 @@ pub fn run() {
     // work the same way as Vite's VITE_* vars for the frontend.
     dotenvy::dotenv().ok();
 
-    let mut builder = tauri::Builder::default();
+    // Install the panic hook as early as possible so a crash during
+    // plugin bootstrap or window setup still produces a report on disk.
+    crash_reporter::install_panic_hook();
+
+    let mut builder = tauri::Builder::default().plugin(
+        tauri_plugin_log::Builder::new()
+            .level(log::LevelFilter::Info)
+            .targets([
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                    file_name: Some("oling".to_string()),
+                }),
+            ])
+            .max_file_size(2 * 1024 * 1024)
+            .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+            .build(),
+    );
 
     #[cfg(target_os = "macos")]
     {
@@ -793,21 +811,14 @@ pub fn run() {
             init_panel(app.app_handle());
 
             // ── System tray icon + menu ───────────────────────────────────
+            // Clipboard History is intentionally omitted from the tray menu —
+            // it's opened via its global shortcut (⌘⇧V by default). Leaving
+            // it here created two entry points that felt redundant.
             let show_item = MenuItem::with_id(app, "show", "Open Oling", true, None::<&str>)?;
-            let clipboard_item = MenuItem::with_id(
-                app,
-                "clipboard_history",
-                "Clipboard History…",
-                true,
-                None::<&str>,
-            )?;
             let settings_item =
                 MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(
-                app,
-                &[&show_item, &clipboard_item, &settings_item, &quit_item],
-            )?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
 
             let tray_icon =
                 tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
@@ -822,9 +833,6 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         show_overlay(app, crate::context::ActivationContext::empty());
-                    }
-                    "clipboard_history" => {
-                        clipboard_history::toggle_window(app);
                     }
                     "settings" => {
                         let _ = app.emit("oling://settings-open", ());
@@ -883,6 +891,9 @@ pub fn run() {
                 )));
                 app.manage(std::sync::Mutex::new(reply::ReplyPrompt(s.reply_prompt)));
                 app.manage(settings::ShortcutConfigState::new(s.shortcut_config));
+                app.manage(settings::ClipboardMaxEntriesState::new(
+                    s.clipboard_max_entries,
+                ));
             }
             app.manage(clipboard_history::ClipboardHistoryState::new());
             clipboard_history::start_monitor(
@@ -1026,6 +1037,8 @@ pub fn run() {
             #[cfg(not(coverage))]
             clipboard_history::paste_clipboard_entry,
             #[cfg(not(coverage))]
+            clipboard_history::paste_clipboard_entry_plain_text,
+            #[cfg(not(coverage))]
             clipboard_history::toggle_clipboard_entry_favorite,
             #[cfg(not(coverage))]
             clipboard_history::delete_clipboard_entry,
@@ -1039,6 +1052,16 @@ pub fn run() {
             clipboard_history::edit_clipboard_entry,
             #[cfg(not(coverage))]
             clipboard_history::close_clipboard_window,
+            #[cfg(not(coverage))]
+            app_icons::get_source_app_icon,
+            #[cfg(not(coverage))]
+            crash_reporter::report_frontend_error,
+            #[cfg(not(coverage))]
+            crash_reporter::list_crash_reports,
+            #[cfg(not(coverage))]
+            crash_reporter::open_crash_reports_dir,
+            #[cfg(not(coverage))]
+            crash_reporter::clear_crash_reports,
             #[cfg(not(coverage))]
             long_shot::start_manual_long_capture,
             #[cfg(not(coverage))]

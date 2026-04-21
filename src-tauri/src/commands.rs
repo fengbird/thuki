@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Default OpenAI-compatible API base URL (includes any `/v1`-style prefix).
 /// The streaming endpoint is constructed as `{base}/chat/completions`.
-pub const DEFAULT_API_BASE_URL: &str = "http://10.0.0.4:1234/v1";
+pub const DEFAULT_API_BASE_URL: &str = "http://127.0.0.1:1234/v1";
 /// Default model name used when `OLING_SUPPORTED_AI_MODELS` is unset.
 pub const DEFAULT_MODEL_NAME: &str = "qwen3-vl-8b-thinking";
 /// Default API key sent via `Authorization: Bearer`. LM Studio does not

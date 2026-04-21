@@ -1499,12 +1499,13 @@ describe('App', () => {
           }
           if (cmd === 'get_settings') {
             return {
-              api_base_url: 'http://10.0.0.4:1234/v1',
+              api_base_url: 'http://127.0.0.1:1234/v1',
               api_key: 'lm-studio',
               model_name: 'qwen3-vl-8b-thinking',
               system_prompt: 'Be helpful.',
               reply_prompt: 'Reply concisely.',
-              ocr_prompt: '请提取图中所有文字，原样输出。',
+              ocr_prompt:
+                'Extract every piece of visible text from the image and output it exactly as shown.',
               commands_config: { overrides: {}, custom: [], disabled: [] },
             };
           }
@@ -1908,12 +1909,13 @@ describe('App', () => {
           }
           if (cmd === 'get_settings') {
             return {
-              api_base_url: 'http://10.0.0.4:1234/v1',
+              api_base_url: 'http://127.0.0.1:1234/v1',
               api_key: 'lm-studio',
               model_name: 'qwen3-vl-8b-thinking',
               system_prompt: 'Be helpful.',
               reply_prompt: 'Reply concisely.',
-              ocr_prompt: '请提取图中所有文字，原样输出。',
+              ocr_prompt:
+                'Extract every piece of visible text from the image and output it exactly as shown.',
               commands_config: {
                 overrides: {},
                 custom: [],
@@ -2901,7 +2903,7 @@ describe('App', () => {
           }
           if (cmd === 'get_settings')
             return {
-              api_base_url: 'http://10.0.0.4:1234/v1',
+              api_base_url: 'http://127.0.0.1:1234/v1',
               api_key: 'lm-studio',
               model_name: 'qwen3-vl-8b-thinking',
               system_prompt: 'sys',
@@ -3086,7 +3088,7 @@ describe('App', () => {
       await act(async () => {
         emitTauriEvent('oling://overlay-submit', {
           imagePath: '/tmp/editor-shot.png',
-          prompt: '提取图中文字',
+          prompt: 'Extract the text from the image.',
           autoSubmit: true,
         });
       });

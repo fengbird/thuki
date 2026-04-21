@@ -29,7 +29,49 @@ const CLIPBOARD_WINDOW_HEIGHT: f64 = 640.0;
 const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(350);
 const CLIPBOARD_WRITE_SUPPRESSION: Duration = Duration::from_millis(1200);
 const CLIPBOARD_PASTE_RESTORE_DELAY: Duration = Duration::from_millis(700);
-const MAX_CLIPBOARD_ENTRIES: usize = 200;
+/// Fallback cap used when the live user setting can't be read (first-boot
+/// DB race, poisoned Mutex). The authoritative value is owned by
+/// `settings::ClipboardMaxEntriesState` and read on every capture so the
+/// user's choice takes effect without a restart.
+const FALLBACK_CLIPBOARD_MAX_ENTRIES: usize =
+    crate::settings::DEFAULT_CLIPBOARD_MAX_ENTRIES as usize;
+
+/// Rounds the NSWindow's content layer so the OS-level window rectangle
+/// stops drawing corners outside the 24px rounded glass panel. Without
+/// this, the resize hit-area (at the square window frame) visibly
+/// overshoots the rounded inner UI and leaves faint rectangular artifacts
+/// at each corner.
+///
+/// Excluded from coverage — pure AppKit FFI with no observable return
+/// value. The corner-radius effect is validated manually.
+#[cfg(target_os = "macos")]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn apply_rounded_window_corners(window: &tauri::WebviewWindow, radius: f64) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::NSWindow;
+
+    let Ok(raw_ptr) = window.ns_window() else {
+        return;
+    };
+    if raw_ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let ns_window = &*(raw_ptr as *const NSWindow);
+        let Some(content_view) = ns_window.contentView() else {
+            return;
+        };
+        content_view.setWantsLayer(true);
+        let layer: *mut AnyObject = msg_send![&*content_view, layer];
+        if layer.is_null() {
+            return;
+        }
+        let layer_ref: &AnyObject = &*layer;
+        let _: () = msg_send![layer_ref, setCornerRadius: radius];
+        let _: () = msg_send![layer_ref, setMasksToBounds: true];
+    }
+}
 
 #[derive(Clone)]
 pub struct ClipboardHistoryState {
@@ -213,7 +255,11 @@ fn persist_capture(app_handle: &tauri::AppHandle, capture: ClipboardCapture) -> 
         db.0.lock()
             .map_err(|_| "clipboard database lock poisoned".to_string())?;
     upsert_entry(&conn, &capture)?;
-    let stale_paths = prune_old_entries(&conn, MAX_CLIPBOARD_ENTRIES)?;
+    let max_entries = app_handle
+        .try_state::<crate::settings::ClipboardMaxEntriesState>()
+        .and_then(|state| state.0.lock().ok().map(|guard| *guard as usize))
+        .unwrap_or(FALLBACK_CLIPBOARD_MAX_ENTRIES);
+    let stale_paths = prune_old_entries(&conn, max_entries)?;
     drop(conn);
 
     for path in stale_paths {
@@ -755,6 +801,9 @@ fn open_window(app_handle: &tauri::AppHandle, state: &ClipboardHistoryState) -> 
     .build()
     .map_err(|e| format!("Failed to open clipboard window: {e}"))?;
 
+    #[cfg(target_os = "macos")]
+    apply_rounded_window_corners(&window, 24.0);
+
     state.set_window_visible(true);
     let _ = window.show();
     let _ = window.set_focus();
@@ -879,11 +928,24 @@ fn paste_entry_to_previous_app(
     state: &ClipboardHistoryState,
     entry: &ClipboardEntryRecord,
 ) -> Result<(), String> {
+    paste_entry_to_previous_app_with(app_handle, state, entry, false)
+}
+
+fn paste_entry_to_previous_app_with(
+    app_handle: &tauri::AppHandle,
+    state: &ClipboardHistoryState,
+    entry: &ClipboardEntryRecord,
+    plain_text: bool,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let backup = read_pasteboard_snapshot();
         state.suppress_writes(CLIPBOARD_WRITE_SUPPRESSION);
-        write_entry_to_clipboard(entry)?;
+        if plain_text {
+            write_entry_to_plain_text_clipboard(entry)?;
+        } else {
+            write_entry_to_clipboard(entry)?;
+        }
         let target_bundle_id = state
             .target_bundle_id()
             .ok_or_else(|| "No previous app is available for paste".to_string())?;
@@ -913,6 +975,7 @@ fn paste_entry_to_previous_app(
         let _ = app_handle;
         let _ = state;
         let _ = entry;
+        let _ = plain_text;
         Err("Clipboard paste is only supported on macOS".to_string())
     }
 }
@@ -987,6 +1050,28 @@ pub fn paste_clipboard_entry(
     touch_entry(&conn, &entry_id)?;
     drop(conn);
     paste_entry_to_previous_app(&app_handle, &clipboard_state, &entry)
+}
+
+/// Plain-text variant of `paste_clipboard_entry`: writes *only* the
+/// entry's plain text to the pasteboard (no RTF / HTML flavour) then
+/// triggers ⌘V into the previous app. Lets the user drop formatted
+/// clipboard history into apps that would otherwise pick up the rich
+/// styling (e.g. code editors, terminals).
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn paste_clipboard_entry_plain_text(
+    app_handle: tauri::AppHandle,
+    db: tauri::State<'_, Database>,
+    clipboard_state: tauri::State<'_, ClipboardHistoryState>,
+    entry_id: String,
+) -> Result<(), String> {
+    let conn =
+        db.0.lock()
+            .map_err(|_| "clipboard db lock poisoned".to_string())?;
+    let entry = get_entry(&conn, &entry_id)?;
+    touch_entry(&conn, &entry_id)?;
+    drop(conn);
+    paste_entry_to_previous_app_with(&app_handle, &clipboard_state, &entry, true)
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
