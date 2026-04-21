@@ -5,7 +5,7 @@ import type { SettingsData } from '../../hooks/useSettings';
 import { invoke } from '../../testUtils/mocks/tauri';
 
 const MOCK_SETTINGS: SettingsData = {
-  api_base_url: 'http://10.0.0.4:1234/v1',
+  api_base_url: 'http://127.0.0.1:1234/v1',
   api_key: 'lm-studio',
   model_name: 'qwen3-vl-8b-thinking',
   system_prompt: 'Default system prompt',
@@ -60,7 +60,7 @@ describe('SettingsView', () => {
     await act(async () => {});
     expect(
       (screen.getByTestId('settings-base-url') as HTMLInputElement).value,
-    ).toBe('http://10.0.0.4:1234/v1');
+    ).toBe('http://127.0.0.1:1234/v1');
     expect(
       (screen.getByTestId('settings-model') as HTMLInputElement).value,
     ).toBe('qwen3-vl-8b-thinking');
@@ -179,7 +179,7 @@ describe('SettingsView', () => {
     await act(async () => {});
 
     expect(invoke).toHaveBeenCalledWith('test_api_connection', {
-      baseUrl: 'http://10.0.0.4:1234/v1',
+      baseUrl: 'http://127.0.0.1:1234/v1',
       apiKey: 'lm-studio',
     });
     expect(screen.getByTestId('settings-test-result').textContent).toContain(

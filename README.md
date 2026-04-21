@@ -120,7 +120,7 @@ Choose one of the two options below to set up your AI engine before installing O
    export OLING_SUPPORTED_AI_MODELS=<your-ollama-model-name>
    ```
 
-   The default (`http://10.0.0.4:1234/v1` with API key `lm-studio`) is set up for an LM Studio server on the LAN; override it via `OLING_API_BASE_URL` / `OLING_API_KEY`.
+   The default (`http://127.0.0.1:1234/v1` with API key `lm-studio`) is set up for an LM Studio server on the LAN; override it via `OLING_API_BASE_URL` / `OLING_API_KEY`.
 
 #### Option B: Docker Sandbox (For security-conscious users)
 

@@ -6,7 +6,7 @@ import { http, HttpResponse } from 'msw';
  * so this handler mostly exists to catch stray fetches and provide a sensible
  * stream shape if any test ever calls the endpoint directly.
  */
-const API_URL = 'http://10.0.0.4:1234/v1';
+const API_URL = 'http://127.0.0.1:1234/v1';
 
 function sseStreamResponse(tokens: string[]) {
   const events = tokens

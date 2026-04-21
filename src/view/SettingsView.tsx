@@ -544,7 +544,7 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
                     style={inputStyle}
                     value={draft.api_base_url}
                     onChange={(e) => update('api_base_url', e.target.value)}
-                    placeholder="http://10.0.0.4:1234/v1"
+                    placeholder="http://127.0.0.1:1234/v1"
                   />
                 </Field>
                 <Field label="API Key">

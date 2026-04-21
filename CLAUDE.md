@@ -47,7 +47,7 @@ Tests use **Vitest** for the frontend (React/TypeScript with React Testing Libra
 
 ## Architecture
 
-Oling is a macOS-only desktop app, a floating AI secretary activated by double-tapping the Control key. It is a **Tauri v2** app (Rust backend + React/TypeScript frontend) that talks to any **OpenAI-compatible** inference server (LM Studio, vLLM, llama.cpp, Ollama's OpenAI-compat endpoint, hosted providers, …) via `POST {base}/chat/completions` with SSE streaming. The backend endpoint is configured through `OLING_API_BASE_URL` / `OLING_API_KEY` and defaults to `http://10.0.0.4:1234/v1` with key `lm-studio`.
+Oling is a macOS-only desktop app, a floating AI secretary activated by double-tapping the Control key. It is a **Tauri v2** app (Rust backend + React/TypeScript frontend) that talks to any **OpenAI-compatible** inference server (LM Studio, vLLM, llama.cpp, Ollama's OpenAI-compat endpoint, hosted providers, …) via `POST {base}/chat/completions` with SSE streaming. The backend endpoint is configured through `OLING_API_BASE_URL` / `OLING_API_KEY` and defaults to `http://127.0.0.1:1234/v1` with key `lm-studio`.
 
 ### Frontend (`src/`)
 

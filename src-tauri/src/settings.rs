@@ -589,7 +589,7 @@ mod tests {
     fn save_and_load_round_trips() {
         let conn = test_conn();
         let data = SettingsData {
-            api_base_url: "http://10.0.0.4:5678/v1".to_string(),
+            api_base_url: "http://127.0.0.1:5678/v1".to_string(),
             api_key: "sk-test".to_string(),
             model_name: "llama3.1-8b".to_string(),
             system_prompt: "Be brief.".to_string(),
@@ -624,7 +624,7 @@ mod tests {
         save_settings(&conn, &data).unwrap();
 
         let loaded = load_settings(&conn);
-        assert_eq!(loaded.api_base_url, "http://10.0.0.4:5678/v1");
+        assert_eq!(loaded.api_base_url, "http://127.0.0.1:5678/v1");
         assert_eq!(loaded.api_key, "sk-test");
         assert_eq!(loaded.model_name, "llama3.1-8b");
         assert_eq!(loaded.system_prompt, "Be brief.");

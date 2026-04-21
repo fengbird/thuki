@@ -45,7 +45,7 @@ export function getLastChannel(): Channel | null {
  */
 /** Default settings returned by the mock for `get_settings`. */
 const DEFAULT_MOCK_SETTINGS = {
-  api_base_url: 'http://10.0.0.4:1234/v1',
+  api_base_url: 'http://127.0.0.1:1234/v1',
   api_key: 'lm-studio',
   model_name: 'qwen3-vl-8b-thinking',
   system_prompt: 'Be helpful.',
