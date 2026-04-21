@@ -8,6 +8,7 @@ import {
   useSettings,
 } from '../hooks/useSettings';
 import type { SettingsData } from '../hooks/useSettings';
+import { formatAiActionLabel } from '../config/aiActions';
 import {
   COMMANDS,
   EMPTY_COMMANDS_CONFIG,
@@ -72,7 +73,13 @@ export interface SettingsViewProps {
   onDismiss: (saved: boolean) => void;
 }
 
-type SettingsTab = 'model' | 'prompts' | 'shortcuts' | 'commands' | 'storage';
+type SettingsTab =
+  | 'model'
+  | 'prompts'
+  | 'shortcuts'
+  | 'commands'
+  | 'clipboard'
+  | 'storage';
 type RecordingShortcutField =
   | 'overlay_activation'
   | 'screenshot_capture'
@@ -83,6 +90,7 @@ const TAB_ITEMS: { key: SettingsTab; label: string }[] = [
   { key: 'prompts', label: 'Prompts' },
   { key: 'shortcuts', label: 'Shortcuts' },
   { key: 'commands', label: 'Commands' },
+  { key: 'clipboard', label: 'Clipboard' },
   { key: 'storage', label: 'Storage' },
 ];
 
@@ -884,99 +892,102 @@ export function SettingsView({ onDismiss }: SettingsViewProps) {
             </div>
           )}
 
-          {/* ── Storage Tab ───────────────────────────── */}
-          {activeTab === 'storage' && (
-            <Section title="Clipboard History Limit">
-              <p
-                style={{
-                  margin: '0 0 10px',
-                  fontSize: 11.5,
-                  color: 'rgba(255,255,255,0.5)',
-                  lineHeight: 1.5,
-                }}
-              >
-                Maximum number of non-pinned clipboard entries kept in history.
-                Pinned items are always preserved. Older entries beyond this cap
-                are pruned (including their image files) as new clips arrive.
-                Default: {CLIPBOARD_MAX_ENTRIES_DEFAULT}.
-              </p>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                }}
-              >
-                <input
-                  data-testid="settings-clipboard-max-entries"
-                  type="number"
-                  min={CLIPBOARD_MAX_ENTRIES_MIN}
-                  max={CLIPBOARD_MAX_ENTRIES_MAX}
-                  step={10}
-                  value={draft.clipboard_max_entries}
-                  onChange={(e) => {
-                    const text = e.target.value.trim();
-                    if (text === '') {
+          {/* ── Clipboard Tab ─────────────────────────── */}
+          {activeTab === 'clipboard' && (
+            <>
+              <Section title="History Limit">
+                <p
+                  style={{
+                    margin: '0 0 10px',
+                    fontSize: 11.5,
+                    color: 'rgba(255,255,255,0.5)',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Maximum number of non-pinned clipboard entries kept in
+                  history. Pinned items are always preserved. Older entries
+                  beyond this cap are pruned (including their image files) as
+                  new clips arrive. Default: {CLIPBOARD_MAX_ENTRIES_DEFAULT}.
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <input
+                    data-testid="settings-clipboard-max-entries"
+                    type="number"
+                    min={CLIPBOARD_MAX_ENTRIES_MIN}
+                    max={CLIPBOARD_MAX_ENTRIES_MAX}
+                    step={10}
+                    value={draft.clipboard_max_entries}
+                    onChange={(e) => {
+                      const text = e.target.value.trim();
+                      if (text === '') {
+                        update(
+                          'clipboard_max_entries',
+                          CLIPBOARD_MAX_ENTRIES_DEFAULT,
+                        );
+                        return;
+                      }
+                      const raw = Number(text);
+                      const safe = Number.isFinite(raw)
+                        ? Math.min(
+                            CLIPBOARD_MAX_ENTRIES_MAX,
+                            Math.max(
+                              CLIPBOARD_MAX_ENTRIES_MIN,
+                              Math.round(raw),
+                            ),
+                          )
+                        : CLIPBOARD_MAX_ENTRIES_DEFAULT;
+                      update('clipboard_max_entries', safe);
+                    }}
+                    style={{ ...inputStyle, width: 160 }}
+                  />
+                  <button
+                    type="button"
+                    data-testid="settings-clipboard-max-entries-reset"
+                    onClick={() =>
                       update(
                         'clipboard_max_entries',
                         CLIPBOARD_MAX_ENTRIES_DEFAULT,
-                      );
-                      return;
+                      )
                     }
-                    const raw = Number(text);
-                    const safe = Number.isFinite(raw)
-                      ? Math.min(
-                          CLIPBOARD_MAX_ENTRIES_MAX,
-                          Math.max(CLIPBOARD_MAX_ENTRIES_MIN, Math.round(raw)),
-                        )
-                      : CLIPBOARD_MAX_ENTRIES_DEFAULT;
-                    update('clipboard_max_entries', safe);
-                  }}
-                  style={{ ...inputStyle, width: 160 }}
-                />
-                <button
-                  type="button"
-                  data-testid="settings-clipboard-max-entries-reset"
-                  onClick={() =>
-                    update(
-                      'clipboard_max_entries',
-                      CLIPBOARD_MAX_ENTRIES_DEFAULT,
-                    )
-                  }
-                  style={{
-                    padding: '6px 10px',
-                    borderRadius: 8,
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    background: 'transparent',
-                    color: 'rgba(255,255,255,0.68)',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    fontFamily: THEME.fontFamily,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Reset to {CLIPBOARD_MAX_ENTRIES_DEFAULT}
-                </button>
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: 'rgba(255,255,255,0.4)',
-                  }}
-                >
-                  Range: {CLIPBOARD_MAX_ENTRIES_MIN}–{CLIPBOARD_MAX_ENTRIES_MAX}
-                </span>
-              </div>
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: 8,
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      background: 'transparent',
+                      color: 'rgba(255,255,255,0.68)',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      fontFamily: THEME.fontFamily,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Reset to {CLIPBOARD_MAX_ENTRIES_DEFAULT}
+                  </button>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: 'rgba(255,255,255,0.4)',
+                    }}
+                  >
+                    Range: {CLIPBOARD_MAX_ENTRIES_MIN}–
+                    {CLIPBOARD_MAX_ENTRIES_MAX}
+                  </span>
+                </div>
+              </Section>
+
               <Divider />
+
               <ClipboardAiActionsPicker
                 selected={draft.clipboard_ai_actions}
                 commands={draft.commands_config}
                 onChange={(next) => update('clipboard_ai_actions', next)}
               />
-              <Divider />
-              <CrashReportsPanel />
-            </Section>
+            </>
           )}
+
+          {/* ── Storage Tab ───────────────────────────── */}
+          {activeTab === 'storage' && <CrashReportsPanel />}
         </div>
       </div>
 
@@ -1475,9 +1486,9 @@ function ClipboardAiActionsPicker({
   commands: CommandsConfig;
   onChange: (next: string[]) => void;
 }) {
-  // The picker lists every live command the user could pick — it
-  // shouldn't expose disabled or system-only entries. Custom commands
-  // are included via `mergeCommands`.
+  // Hide system-only entries (e.g. /think) — they have no prompt
+  // template to apply to a clipboard entry. Custom commands ride
+  // through `mergeCommands` so they appear alongside the built-ins.
   const available = mergeCommands(commands).filter(
     (c) => c.category !== 'system',
   );
@@ -1491,8 +1502,15 @@ function ClipboardAiActionsPicker({
     },
     [onChange, selected],
   );
+  // Active tiles preserve the order the user picked them in, so the
+  // preview matches the clipboard panel exactly.
+  const previewSpecs = selected
+    .map((trigger) => available.find((c) => c.trigger === trigger) ?? null)
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+  const previewColumns = Math.min(Math.max(previewSpecs.length, 1), 4);
+
   return (
-    <Section title="Clipboard AI Actions">
+    <Section title="AI Actions">
       <p
         style={{
           margin: '0 0 10px',
@@ -1501,9 +1519,9 @@ function ClipboardAiActionsPicker({
           lineHeight: 1.5,
         }}
       >
-        Pick which slash commands appear as tiles in the clipboard panel. Order
-        in the panel matches the order you pick them here. Leave empty to hide
-        the AI Actions section entirely.
+        Pick which slash commands appear as tiles in the clipboard panel. Tap a
+        pill to add it; tap again to remove. Order follows your pick order — the
+        preview below is exactly what the panel will render.
       </p>
       {available.length === 0 ? (
         <div
@@ -1519,98 +1537,228 @@ function ClipboardAiActionsPicker({
         <div
           style={{
             display: 'flex',
-            flexDirection: 'column',
-            gap: 4,
-            borderRadius: 8,
-            border: '1px solid rgba(255,255,255,0.06)',
-            background: 'rgba(255,255,255,0.02)',
-            padding: 4,
-            maxHeight: 220,
-            overflowY: 'auto',
+            flexWrap: 'wrap',
+            gap: 6,
           }}
         >
           {available.map((cmd) => {
-            const checked = selected.includes(cmd.trigger);
+            const idx = selected.indexOf(cmd.trigger);
+            const checked = idx !== -1;
             return (
-              <label
+              <button
                 key={cmd.trigger}
+                type="button"
                 data-testid={`settings-ai-action-${cmd.trigger.slice(1)}`}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '6px 10px',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  background: checked ? 'rgba(255,141,92,0.1)' : 'transparent',
-                }}
+                data-selected={checked ? '1' : undefined}
+                onClick={() => toggle(cmd.trigger)}
+                title={cmd.description}
+                style={aiActionPillStyle(checked)}
               >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggle(cmd.trigger)}
-                  style={{ cursor: 'pointer', flexShrink: 0 }}
-                />
-                <span
-                  style={{
-                    fontFamily:
-                      'ui-monospace, SFMono-Regular, Menlo, monospace',
-                    fontSize: 11.5,
-                    color: 'rgba(255,141,92,0.9)',
-                    minWidth: 90,
-                  }}
-                >
-                  {cmd.trigger}
+                {checked ? (
+                  <span style={aiActionPillOrderBadge}>{idx + 1}</span>
+                ) : (
+                  <span style={aiActionPillPlus}>+</span>
+                )}
+                <span style={{ fontWeight: 600 }}>
+                  {formatAiActionLabel(cmd.trigger)}
                 </span>
-                <span
-                  style={{
-                    fontSize: 11.5,
-                    color: 'rgba(255,255,255,0.6)',
-                    lineHeight: 1.4,
-                  }}
-                >
-                  {cmd.description}
-                </span>
-              </label>
+                <span style={aiActionPillTrigger(checked)}>{cmd.trigger}</span>
+              </button>
             );
           })}
         </div>
       )}
+
       {selected.length > 0 ? (
         <div
-          data-testid="settings-ai-actions-summary"
+          data-testid="settings-ai-actions-preview"
           style={{
-            marginTop: 8,
-            fontSize: 11,
-            color: 'rgba(255,255,255,0.45)',
+            marginTop: 14,
+            padding: 12,
+            borderRadius: 12,
+            border: '1px solid rgba(255,141,92,0.18)',
+            background:
+              'radial-gradient(ellipse 80% 60% at 50% -10%, rgba(255,141,92,0.08) 0%, rgba(28,24,20,0.6) 70%)',
           }}
         >
-          Showing {selected.length} tile{selected.length === 1 ? '' : 's'}:{' '}
-          {selected.join(', ')}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: 1.2,
+              textTransform: 'uppercase',
+              color: 'rgba(255,255,255,0.4)',
+              marginBottom: 10,
+            }}
+          >
+            Live preview · clipboard panel
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${previewColumns}, 1fr)`,
+              gap: 6,
+            }}
+          >
+            {previewSpecs.map((spec) => (
+              <div key={spec.trigger} style={aiActionPreviewTileStyle}>
+                <span
+                  style={{ fontSize: 11, fontWeight: 600, color: '#f4f1ed' }}
+                >
+                  {formatAiActionLabel(spec.trigger)}
+                </span>
+                <span
+                  style={{
+                    fontFamily:
+                      'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    fontSize: 9.5,
+                    color: 'rgba(255,141,92,0.7)',
+                  }}
+                >
+                  {spec.trigger}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
-      <button
-        type="button"
-        data-testid="settings-ai-actions-reset"
-        onClick={() => onChange([...DEFAULT_CLIPBOARD_AI_ACTIONS])}
+
+      <div
         style={{
-          marginTop: 8,
-          padding: '6px 10px',
-          borderRadius: 8,
-          border: '1px solid rgba(255,255,255,0.12)',
-          background: 'transparent',
-          color: 'rgba(255,255,255,0.68)',
-          fontSize: 11,
-          fontWeight: 600,
-          cursor: 'pointer',
-          fontFamily: THEME.fontFamily,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginTop: 12,
         }}
       >
-        Reset to defaults
-      </button>
+        <button
+          type="button"
+          data-testid="settings-ai-actions-reset"
+          onClick={() => onChange([...DEFAULT_CLIPBOARD_AI_ACTIONS])}
+          style={{
+            padding: '6px 10px',
+            borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.12)',
+            background: 'transparent',
+            color: 'rgba(255,255,255,0.68)',
+            fontSize: 11,
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontFamily: THEME.fontFamily,
+          }}
+        >
+          Reset to defaults
+        </button>
+        {selected.length > 0 ? (
+          <button
+            type="button"
+            data-testid="settings-ai-actions-clear"
+            onClick={() => onChange([])}
+            style={{
+              padding: '6px 10px',
+              borderRadius: 8,
+              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'transparent',
+              color: 'rgba(255,255,255,0.4)',
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontFamily: THEME.fontFamily,
+            }}
+          >
+            Clear
+          </button>
+        ) : null}
+        <span
+          data-testid="settings-ai-actions-summary"
+          style={{
+            marginLeft: 'auto',
+            fontSize: 11,
+            color: 'rgba(255,255,255,0.4)',
+          }}
+        >
+          {selected.length === 0
+            ? 'AI Actions section will be hidden'
+            : `${selected.length} tile${selected.length === 1 ? '' : 's'} selected`}
+        </span>
+      </div>
     </Section>
   );
 }
+
+const aiActionPillOrderBadge: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 18,
+  height: 18,
+  borderRadius: 9,
+  fontSize: 9.5,
+  fontWeight: 800,
+  background: 'rgba(255,255,255,0.18)',
+  color: '#fff',
+  flexShrink: 0,
+};
+
+const aiActionPillPlus: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 18,
+  height: 18,
+  borderRadius: 9,
+  fontSize: 14,
+  fontWeight: 400,
+  color: 'rgba(255,255,255,0.4)',
+  flexShrink: 0,
+};
+
+function aiActionPillStyle(selected: boolean): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 7,
+    padding: '6px 12px 6px 6px',
+    borderRadius: 999,
+    border: selected
+      ? '1px solid rgba(255,141,92,0.45)'
+      : '1px solid rgba(255,255,255,0.1)',
+    background: selected
+      ? 'linear-gradient(180deg, rgba(255,141,92,0.22), rgba(255,141,92,0.12))'
+      : 'rgba(255,255,255,0.04)',
+    color: selected ? '#ffe6d6' : 'rgba(255,255,255,0.72)',
+    fontSize: 11.5,
+    fontFamily: THEME.fontFamily,
+    cursor: 'pointer',
+    boxShadow: selected ? 'inset 0 1px 0 rgba(255,255,255,0.12)' : 'none',
+    transition:
+      'background 140ms ease, border-color 140ms ease, color 140ms ease',
+  };
+}
+
+function aiActionPillTrigger(selected: boolean): React.CSSProperties {
+  return {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 10.5,
+    color: selected ? 'rgba(255,255,255,0.75)' : 'rgba(255,141,92,0.75)',
+  };
+}
+
+const aiActionPreviewTileStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 4,
+  padding: '12px 6px',
+  borderRadius: 12,
+  border: '1px solid rgba(255,255,255,0.06)',
+  background: 'rgba(255,255,255,0.03)',
+  minHeight: 58,
+};
 
 // ─── Crash reports panel ──────────────────────────────────────────────────
 

@@ -32,7 +32,7 @@ const MOCK_SETTINGS: SettingsData = {
 
 /** Navigate to a sidebar tab after settings has loaded. */
 async function switchTab(
-  tab: 'model' | 'prompts' | 'shortcuts' | 'commands' | 'storage',
+  tab: 'model' | 'prompts' | 'shortcuts' | 'commands' | 'clipboard' | 'storage',
 ) {
   await act(async () => {
     fireEvent.click(screen.getByTestId(`settings-tab-${tab}`));
@@ -405,12 +405,13 @@ describe('SettingsView', () => {
     expect(screen.getByTestId('settings-tab-prompts')).toBeInTheDocument();
     expect(screen.getByTestId('settings-tab-commands')).toBeInTheDocument();
     expect(screen.getByTestId('settings-tab-storage')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-tab-clipboard')).toBeInTheDocument();
   });
 
   it('persists a changed clipboard history cap through save', async () => {
     render(<SettingsView onDismiss={vi.fn()} />);
     await act(async () => {});
-    await switchTab('storage');
+    await switchTab('clipboard');
 
     const input = screen.getByTestId(
       'settings-clipboard-max-entries',
@@ -435,7 +436,7 @@ describe('SettingsView', () => {
   it('clamps clipboard history cap to the allowed bounds on input', async () => {
     render(<SettingsView onDismiss={vi.fn()} />);
     await act(async () => {});
-    await switchTab('storage');
+    await switchTab('clipboard');
 
     const input = screen.getByTestId(
       'settings-clipboard-max-entries',
@@ -455,7 +456,7 @@ describe('SettingsView', () => {
   it('reset button restores the default clipboard cap', async () => {
     render(<SettingsView onDismiss={vi.fn()} />);
     await act(async () => {});
-    await switchTab('storage');
+    await switchTab('clipboard');
 
     const input = screen.getByTestId(
       'settings-clipboard-max-entries',
@@ -476,7 +477,7 @@ describe('SettingsView', () => {
   it('falls back to the default when the cap input is not a number', async () => {
     render(<SettingsView onDismiss={vi.fn()} />);
     await act(async () => {});
-    await switchTab('storage');
+    await switchTab('clipboard');
 
     const input = screen.getByTestId(
       'settings-clipboard-max-entries',
@@ -488,21 +489,35 @@ describe('SettingsView', () => {
     expect(Number(input.value)).toBe(200);
   });
 
-  it('AI actions picker: toggling a command persists through save', async () => {
+  it('AI actions picker: tapping a pill toggles selection and save persists the new order', async () => {
     render(<SettingsView onDismiss={vi.fn()} />);
     await act(async () => {});
-    await switchTab('storage');
+    await switchTab('clipboard');
 
     const tldr = screen.getByTestId('settings-ai-action-tldr');
     const refine = screen.getByTestId('settings-ai-action-refine');
-    // /tldr is selected by default; /refine is not.
-    expect(tldr.querySelector('input')).toHaveProperty('checked', true);
-    expect(refine.querySelector('input')).toHaveProperty('checked', false);
+    // /tldr is selected by default, /refine is not.
+    expect(tldr.getAttribute('data-selected')).toBe('1');
+    expect(refine.getAttribute('data-selected')).toBeNull();
 
+    // Click in two separate act() blocks so the state update from the
+    // first toggle flushes before the second click reads the new draft.
     await act(async () => {
-      fireEvent.click(refine.querySelector('input') as HTMLInputElement);
-      fireEvent.click(tldr.querySelector('input') as HTMLInputElement);
+      fireEvent.click(refine);
     });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-ai-action-tldr'));
+    });
+    expect(
+      screen
+        .getByTestId('settings-ai-action-refine')
+        .getAttribute('data-selected'),
+    ).toBe('1');
+    expect(
+      screen
+        .getByTestId('settings-ai-action-tldr')
+        .getAttribute('data-selected'),
+    ).toBeNull();
 
     invoke.mockClear();
     await act(async () => {
@@ -518,29 +533,50 @@ describe('SettingsView', () => {
     ]);
   });
 
+  it('AI actions picker: preview + summary reflect current selection', async () => {
+    render(<SettingsView onDismiss={vi.fn()} />);
+    await act(async () => {});
+    await switchTab('clipboard');
+
+    expect(
+      screen.getByTestId('settings-ai-actions-summary').textContent,
+    ).toContain('3 tiles selected');
+    expect(
+      screen.getByTestId('settings-ai-actions-preview'),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('settings-ai-actions-clear'));
+    });
+
+    expect(screen.queryByTestId('settings-ai-actions-preview')).toBeNull();
+    expect(
+      screen.getByTestId('settings-ai-actions-summary').textContent,
+    ).toContain('hidden');
+  });
+
   it('AI actions picker: Reset restores the defaults', async () => {
     render(<SettingsView onDismiss={vi.fn()} />);
     await act(async () => {});
-    await switchTab('storage');
+    await switchTab('clipboard');
 
-    const tldrCheckbox = screen
-      .getByTestId('settings-ai-action-tldr')
-      .querySelector('input') as HTMLInputElement;
     await act(async () => {
-      fireEvent.click(tldrCheckbox);
+      fireEvent.click(screen.getByTestId('settings-ai-action-tldr'));
     });
-    expect(tldrCheckbox.checked).toBe(false);
+    expect(
+      screen
+        .getByTestId('settings-ai-action-tldr')
+        .getAttribute('data-selected'),
+    ).toBeNull();
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('settings-ai-actions-reset'));
     });
     expect(
-      (
-        screen
-          .getByTestId('settings-ai-action-tldr')
-          .querySelector('input') as HTMLInputElement
-      ).checked,
-    ).toBe(true);
+      screen
+        .getByTestId('settings-ai-action-tldr')
+        .getAttribute('data-selected'),
+    ).toBe('1');
   });
 
   it('crash panel: loads count, opens folder, clears list', async () => {

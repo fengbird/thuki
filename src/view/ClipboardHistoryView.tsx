@@ -25,32 +25,12 @@ import { rust } from '@codemirror/lang-rust';
 import { go } from '@codemirror/lang-go';
 import { sql } from '@codemirror/lang-sql';
 import { markdown } from '@codemirror/lang-markdown';
+import { formatAiActionLabel } from '../config/aiActions';
 import { mergeCommands, type CommandsConfig } from '../config/commands';
 import type { ClipboardEntry } from '../types/clipboard';
 
 const UPDATED_EVENT = 'oling://clipboard-history-updated';
 const STATUS_AUTO_DISMISS_MS = 2200;
-
-/**
- * Maps a slash-command trigger to a short 1-word tile label.
- * Unknown triggers are capitalised without the leading slash so
- * custom commands still render something readable.
- */
-const AI_ACTION_LABELS: Record<string, string> = {
-  '/tldr': 'Summarize',
-  '/translate': 'Translate',
-  '/rewrite': 'Rewrite',
-  '/refine': 'Refine',
-  '/bullets': 'Bullets',
-  '/todos': 'Todos',
-};
-
-export function formatAiActionLabel(trigger: string): string {
-  if (AI_ACTION_LABELS[trigger]) return AI_ACTION_LABELS[trigger];
-  const stem = trigger.replace(/^\//, '');
-  if (!stem) return trigger;
-  return stem.charAt(0).toUpperCase() + stem.slice(1);
-}
 
 type FilterKey = 'all' | 'text' | 'image' | 'favorites';
 type ClipType = 'image' | 'url' | 'color' | 'code' | 'text';
