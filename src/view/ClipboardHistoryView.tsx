@@ -1071,9 +1071,9 @@ function EntryRow({ entry, active, onSelect }: EntryRowProps) {
         </div>
         <div
           style={{
-            fontSize: 13,
-            lineHeight: 1.4,
-            fontWeight: 600,
+            fontSize: 12,
+            lineHeight: 1.45,
+            fontWeight: 400,
             color: THEME.text,
             display: '-webkit-box',
             WebkitLineClamp: 2,
