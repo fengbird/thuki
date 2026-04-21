@@ -354,23 +354,37 @@ export function ClipboardHistoryView() {
     };
   }, []);
 
-  // Read the user's picked AI Action commands on mount. Re-fetch when
-  // the clipboard panel is re-opened; settings changes while the panel
-  // is already open still require a reopen — good enough for now.
+  // Read the user's picked AI Action commands on mount AND whenever
+  // the main window emits `oling://settings-updated`, so tile changes
+  // propagate to an already-open clipboard panel without a reopen.
   useEffect(() => {
     let cancelled = false;
-    void invoke<SettingsSnapshot>('get_settings')
-      .then((snapshot) => {
-        if (cancelled) return;
-        setAiActions(resolveAiActions(snapshot ?? {}));
-      })
-      .catch(() => {
-        // If settings can't be loaded the AI Actions section just
-        // renders empty; nothing else in the panel depends on this.
-        if (!cancelled) setAiActions([]);
-      });
+    let unlisten: (() => void) | undefined;
+
+    const refetch = () => {
+      void invoke<SettingsSnapshot>('get_settings')
+        .then((snapshot) => {
+          if (cancelled) return;
+          setAiActions(resolveAiActions(snapshot ?? {}));
+        })
+        .catch(() => {
+          // Settings failures just collapse the AI Actions section;
+          // nothing else in the panel depends on this read.
+          if (!cancelled) setAiActions([]);
+        });
+    };
+
+    refetch();
+    void listen('oling://settings-updated', () => refetch()).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+    });
     return () => {
       cancelled = true;
+      unlisten?.();
     };
   }, []);
 

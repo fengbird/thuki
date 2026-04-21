@@ -419,6 +419,7 @@ pub fn get_settings(db: State<'_, Database>) -> Result<SettingsData, String> {
 #[cfg_attr(not(coverage), tauri::command)]
 pub fn update_settings(
     data: SettingsData,
+    app: tauri::AppHandle,
     db: State<'_, Database>,
     api_config: State<'_, Mutex<ApiConfig>>,
     model_config: State<'_, Mutex<ModelConfig>>,
@@ -427,6 +428,7 @@ pub fn update_settings(
     shortcut_config: State<'_, ShortcutConfigState>,
     clipboard_max_entries: State<'_, ClipboardMaxEntriesState>,
 ) -> Result<(), String> {
+    use tauri::Emitter;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut data = data;
     data.shortcut_config = data.shortcut_config.normalize();
@@ -442,6 +444,10 @@ pub fn update_settings(
         &shortcut_config,
         &clipboard_max_entries,
     );
+    // Let satellite windows (clipboard panel, overlay, …) know settings
+    // have changed so they can re-fetch live values like the picked
+    // AI-action tiles without waiting for a reopen.
+    let _ = app.emit("oling://settings-updated", ());
     Ok(())
 }
 
