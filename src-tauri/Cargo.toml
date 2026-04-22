@@ -4,8 +4,8 @@ version = "0.6.1"
 description = "Oling: The context-aware floating secretary"
 authors = ["Logan Nguyen"]
 license = "Apache-2.0"
-repository = "https://github.com/quiet-node/oling"
-homepage = "https://github.com/quiet-node/oling"
+repository = "https://github.com/fengbird/thuki"
+homepage = "https://github.com/fengbird/thuki"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

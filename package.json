@@ -5,9 +5,9 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/quiet-node/oling"
+    "url": "https://github.com/fengbird/thuki"
   },
-  "homepage": "https://github.com/quiet-node/oling",
+  "homepage": "https://github.com/fengbird/thuki",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",

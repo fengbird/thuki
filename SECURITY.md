@@ -4,7 +4,7 @@
 
 **Please do not open a public GitHub issue for security vulnerabilities.**
 
-Report vulnerabilities privately via [GitHub Security Advisories](https://github.com/quiet-node/oling/security/advisories/new). This keeps the details confidential until a fix is ready.
+Report vulnerabilities privately via [GitHub Security Advisories](https://github.com/fengbird/thuki/security/advisories/new). This keeps the details confidential until a fix is ready.
 
 We will acknowledge your report within **48 hours** and aim to release a fix within **14 days** for critical issues, depending on severity and complexity.
 

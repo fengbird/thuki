@@ -1,255 +1,357 @@
 
 
-<h1 align="center">
-  Oling - WIP
-</h1>
+<h1 align="center">Oling</h1>
 
 <p align="center">
-  <img src="public/oling-logo.png" alt="Oling logo" width="300" />
+  <img src="public/oling-logo.png" alt="Oling logo" width="260" />
 </p>
 
 <p align="center">
-<a align="center" href="https://www.producthunt.com/products/oling?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-oling" target="_blank" rel="noopener noreferrer"><img alt="Oling  - Floating AI for macOS. Free &amp; Local. No cloud, no API keys. | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1122707&amp;theme=light&amp;t=1776150241085"></a>  
+  A floating AI secretary for macOS — with a Raycast-style clipboard manager, Xnip-style screenshot & annotation, scrolling screenshot, smart reply, pinnable image stickers, and <strong>fully user-customizable AI commands that span every feature</strong>.
 </p>
 
 <p align="center">
-  A floating AI secretary for macOS. Fully local, completely free, zero data ever leaves your machine.
+  Fully local. Completely free. Zero data ever leaves your machine.
 </p>
 
+<p align="center">
+  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a>
+</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-beta-yellow.svg" alt="Beta" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
-  <a href="https://github.com/quiet-node/oling/actions/workflows/pr-pipeline.yml"><img src="https://github.com/quiet-node/oling/actions/workflows/pr-pipeline.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey.svg" alt="Platform: macOS" />
-</p>
-
-<p align="center">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8DB?logo=tauri&logoColor=white" alt="Tauri v2" />
-  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React 19" />
-  <img src="https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/Rust-stable-CE422B?logo=rust&logoColor=white" alt="Rust" />
-  <img src="https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?logo=tailwindcss&logoColor=white" alt="Tailwind CSS 4" />
-  <img src="https://img.shields.io/badge/SQLite-bundled-003B57?logo=sqlite&logoColor=white" alt="SQLite" />
-  <img src="https://img.shields.io/badge/Ollama-local-black" alt="Ollama" />
+  <img src="https://img.shields.io/badge/OpenAI--compatible-any_backend-412991?logo=openai&logoColor=white" alt="OpenAI-compatible" />
+  <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/fengbird/thuki?color=brightgreen&label=latest" alt="Latest release" /></a>
 </p>
 
 ---
 
-**No API keys. No subscriptions. No cloud. No telemetry. Free forever.**
+## Quick Install
 
-Oling (thư kí - Vietnamese for secretary) is a lightweight macOS overlay powered by local AI models running entirely on your own machine, built for quick, uninterrupted asks without ever leaving what you're doing.
+Download the latest signed & notarized DMG and double-click — no Terminal commands required:
 
-## See It in Action
+```bash
+curl -L https://github.com/fengbird/thuki/releases/latest/download/Oling.dmg -o Oling.dmg
+open Oling.dmg
+```
 
-### Basic Usage
+Or [download from the Releases page](../../releases/latest) and drag the app into Applications.
 
-Double-tap Control <kbd>⌃</kbd> to summon Oling from anywhere. Ask a question, get an answer, and dismiss. Press <kbd>⌘⇧X</kbd> to open the screenshot flow when you want visual context.
+> **Fork notice** — Oling is a fork of [**quiet-node/Thuki**](https://github.com/quiet-node/Thuki) by [Logan Nguyen](https://x.com/quiet_node) (originally released as *Thuki*), renamed and substantially extended in this repo. Distributed under the same [Apache License 2.0](LICENSE); all upstream copyright notices are preserved.
 
-https://github.com/user-attachments/assets/57df0efe-24eb-4875-a83d-e605e0c6f8b4
+## Table of Contents
 
+- [Why Oling](#why-oling)
+- [🧠 Custom AI Commands — the standout feature](#-custom-ai-commands--the-standout-feature)
+- [Features](#features)
+  - [AI Secretary](#ai-secretary)
+  - [Workflow Tools](#workflow-tools)
+  - [System & Infrastructure](#system--infrastructure)
+- [This fork vs upstream Thuki](#this-fork-vs-upstream-thuki)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Architecture](#architecture)
+- [Roadmap](#roadmap)
+- [Sponsor](#sponsor)
+- [Credits & License](#credits--license)
 
-### Overlay Mode
+## Why Oling
 
-Oling floats above every app, including fullscreen ones. Highlight text anywhere, double-tap Control <kbd>⌃</kbd>, and Oling opens with your selection pre-filled as a quote, ready to ask about.
+Most AI tools require accounts, API keys, or subscriptions billed per token. Oling is different:
 
-https://github.com/user-attachments/assets/f52b55f7-479d-4c2e-a361-1553fe132712
+- **100% free AI interactions** — bring your own model (local or hosted), no per-query cost, ever
+- **Zero trust by design** — no remote server, no cloud backend, no analytics, no telemetry
+- **Works offline** — once your model is pulled, Oling runs without an internet connection
+- **Your data is yours** — conversations and clipboard history live in a local SQLite database; the conversation table is purged on every launch by design
+- **Works everywhere** — double-tap <kbd>⌃</kbd> and Oling appears on the desktop, inside a browser, inside a terminal, even in fullscreen apps
 
-## Why Oling?
+## 🧠 Custom AI Commands — the standout feature
 
-Most AI tools require accounts, API keys, or subscriptions that bill you per token. Oling is different:
+Oling's slash commands are a **first-class, fully user-editable primitive**. Define a command once — it runs in every place Oling touches your content: the chat bar, any clipboard entry, highlighted text in any app, a screenshot brought into the chat.
 
-- **100% free AI interactions:** you run the model locally, there is no per-query cost, ever
-- **Zero trust by design:** no remote server, no cloud backend, no analytics, no telemetry
-- **Works completely offline:** once your model is pulled, Oling runs without an internet connection
-- **Your data is yours:** conversations are stored in a local SQLite database on your machine and nowhere else
-- **Most importantly: it works everywhere.** Double-tap Control <kbd>⌃</kbd> and Oling appears on your desktop, inside a browser, inside a terminal, and yes, even in fullscreen apps. Your favorite AI chat apps can't do that!
+### Why this design exists: privacy-first intelligence
+
+The surfaces Oling reads from — clipboard entries, screenshots, text selected in another app — are **some of the most privacy-sensitive data on your Mac**. A password you just copied from a password manager. A screenshot of a contract draft. A client email you're excerpting. A SQL row against prod. A reply you're polishing before sending. Cloud AI tools (Raycast AI, ChatGPT plugins, Copilot, hosted Claude) route all of it through a third-party server.
+
+**Oling flips that.** The intelligence runs *locally*, the data never leaves your Mac. A small on-device model (Gemma 4 2B, Qwen 3 8B, Llama 3.2 3B — you pick) handles the tasks daily productivity actually needs — translate, summarize, reformat, rewrite, grammar-fix, extract — without touching the network. These don't need frontier reasoning; they need a model that **sits close to your data**.
+
+> **The thesis:** pair privacy-heavy but inherently "dumb" macOS workflows — clipboard, screenshots, selections — with a small on-device model and user-editable commands. Every piece of ambient text on your Mac gets a layer of intelligence, one keystroke away, that never leaves your machine.
+
+That's why Oling's "one command, everywhere" design is *safe enough to be useful*. Without a local model, universal AI on your clipboard and screenshots would be a privacy disaster. With one, it's the best of both worlds — **absolute privacy + one-keystroke convenience**, and usually the *right tool for the job*: small models are often *enough* for single-purpose, pattern-shaped tasks, and often *better* than shipping your clipboard to a frontier model.
+
+### Fully user-configurable
+
+- **Edit any built-in** — change the trigger, description, or prompt template of `/translate`, `/rewrite`, `/tldr`, `/refine`, `/bullets`, `/todos`, `/think`
+- **Add your own** — just provide a trigger and a prompt template with `$INPUT` / `$LANG` placeholders. No code, no restart.
+- **Disable** the ones you don't use so they stop cluttering your command palette
+- **Live reload** — edit in Settings → next invocation uses the new prompt
+
+### The same command works across every context
+
+| Where | How it runs |
+| --- | --- |
+| **Chat bar** | Type `/your-command` — palette autocomplete, submit with Enter |
+| **Clipboard panel** | One-click **AI Actions** tile on any entry (pick which commands show up in Settings → Clipboard) |
+| **Highlighted text anywhere** | Select text in any app, double-tap <kbd>⌃</kbd>, type `/your-command` |
+| **Screenshots** | Annotate → **Ask AI** opens the chat with the image attached → type any command |
+
+### Example commands you might add
+
+```
+/fix         Fix grammar and spelling issues in $INPUT without changing the meaning.
+/cn2en       Translate $INPUT from Chinese to English. Keep technical terms unchanged.
+/commit      Write a one-line git commit message (imperative mood) for: $INPUT
+/explain     Explain $INPUT to a junior developer. Use a short analogy.
+/json        Reformat $INPUT as clean, minified JSON.
+/sql         Turn the English requirement $INPUT into a SQL query for PostgreSQL.
+```
+
+> Oling runs on **your own OpenAI-compatible backend** — local (Ollama, LM Studio, vLLM, llama.cpp) or hosted (any provider you trust). The design *encourages* local: that's where the privacy story holds end-to-end. **No subscription, no per-query cost.**
 
 ## Features
 
-- **Always available:** double-tap Control <kbd>⌃</kbd> to summon the overlay from any app, including fullscreen apps
-- **Context-aware quotes:** highlight any text, then double-tap Control <kbd>⌃</kbd> to open Oling with the selected text pre-filled as a quote
-- **Throwaway conversations:** fast, lightweight interactions without the overhead of a full chat app
-- **Conversation history:** persist and revisit past conversations across sessions
-- **Fully local LLM:** powered by Ollama; no API keys, no accounts, no cost per query
-- **Isolated sandbox:** optionally run models in a hardened Docker container with capability dropping, read-only volumes, and localhost-only networking
-- **Image input:** paste or drag images and screenshots directly into the chat
-- **Screen capture:** press <kbd>⌘⇧X</kbd> to capture, annotate, and send screen context
-- **Slash commands:** built-in prompt shortcuts for common tasks: `/translate`, `/rewrite`, `/tldr`, `/refine`, `/bullets`, `/todos`. Highlight text anywhere, summon Oling, type a command, and hit Enter
-- **Extended reasoning:** type `/think` to have the model reason through a problem step by step before answering
-- **Privacy-first:** zero-trust architecture, all data stays on your device
+### AI Secretary
 
-## Getting Started
+- **Double-tap <kbd>⌃</kbd>** to summon from any app, including fullscreen
+- **Context-aware quotes** — highlight text anywhere; the selection is pre-filled via macOS Accessibility APIs
+- **Throwaway conversations** — ephemeral by default (purged on launch)
+- **Multimodal input** — paste or drag images; up to 10 per message, 20 MB each, HEIC auto-converted
+- **Streaming with mid-stream cancel** via cancellation token
+- **Reasoning / thinking display** — `<think>…</think>` and OpenAI `reasoning_content` are split into a collapsible block
+- **Multi-model support** — comma-separated list via `OLING_SUPPORTED_AI_MODELS`, pick at runtime
+- **API connection tester** — one click in Settings verifies your LLM server is reachable and lists available models
+- **Classified errors** — `NotRunning` / `ModelNotFound` / `Other` render as inline colored callouts
 
-### Step 1: Set Up Your AI Engine
+### Workflow Tools
 
-> **Default model:** Oling ships with [`gemma4:e2b`](https://ollama.com/library/gemma4) by default, an effective 2B parameter edge model from Google. It runs comfortably on most modern Macs with 8 GB of RAM and delivers strong performance on reasoning, coding, and vision tasks. The model can be changed at runtime via the `OLING_SUPPORTED_AI_MODELS` environment variable; see [Configurations](docs/configurations.md).
+- **Clipboard history workspace (<kbd>⌘⇧V</kbd>)** — grouped by Pinned / Today / Yesterday / Earlier, filterable by type (text / URL / code / image / file), with global search
+  - **Source-app icons** extracted from each app's `Info.plist` and cached locally
+  - **CodeMirror 6 preview & edit** — GitHub Dark, language auto-detection, Enter inserts newlines
+  - **Paste as Text (<kbd>⇧⏎</kbd>)** strips formatting
+  - **Restore to clipboard** / **paste into focused app** (synthesized ⌘V with original clipboard restored after)
+  - **Pin** exempts entries from the history cap (configurable 10 – 10,000, default 200)
+  - **Image entries** — copy as PNG / base64, preview, attach to chat, delete
+  - **SHA-256 dedup** suppresses duplicate clips
+- **Screenshot + annotation (<kbd>⌘⇧X</kbd>)** — Xnip-style drag-to-select across monitors
+  - **Quick-select windows** overlapping the selection
+  - **Konva canvas tools** — pencil, text, eraser, undo/redo, 8-handle resize + move
+  - **Toolbar actions** — copy, pin as sticker, Ask AI, OCR, close
+  - **OCR** uses a dedicated prompt (customizable in Settings)
+  - **Excludes Oling's own windows** from capture by PID
+- **Smart reply (<kbd>⌃⇧R</kbd>)** — screenshots the frontmost app, model drafts a reply, <kbd>Enter</kbd> auto-pastes back to the app; original clipboard is restored after ~700 ms
+- **Scrolling screenshot (Long Shot)** — manual scroll-capture for chat histories (WeChat, Feishu, iMessage), long emails, long articles
+  - **Window-aware** — captures the target window directly and crops to your selection
+  - **Automatic chrome detection** crops out fixed headers/footers by comparing the first two frames
+  - **Stitch algorithm** uses SAD matching on 80 px overlap strips; 200-frame safety cap
+  - **Non-key HUD** while capturing so your scrolling app keeps focus
+  - **Edit in overlay** — stitched output opens in the annotation editor
+- **Pin stickers** — pin any screenshot or clipboard image as an independent frameless window
+  - Native drag-to-move, right-click opacity slider (0.2 – 1.0), edit in overlay, delete
+  - Multiple independent pins, each identified by UUID
 
-Choose one of the two options below to set up your AI engine before installing Oling.
+### System & Infrastructure
 
-#### Option A: Local Ollama (Recommended for most users)
+- **Configurable global shortcuts** — every shortcut below is re-bindable in Settings → Shortcuts
 
-[Ollama](https://ollama.com) runs AI models directly on your Mac. It's free, open-source, and takes about 5 minutes to set up.
+  | Action | Default |
+  | --- | --- |
+  | Summon overlay | Double-tap <kbd>⌃</kbd> |
+  | Screenshot | <kbd>⌘⇧X</kbd> |
+  | Clipboard history | <kbd>⌘⇧V</kbd> |
+  | Smart reply | <kbd>⌃⇧R</kbd> |
+  | Open Settings | <kbd>⌘,</kbd> |
+  | Submit / newline | <kbd>Enter</kbd> / <kbd>⇧Enter</kbd> |
+  | Dismiss | <kbd>Esc</kbd> |
+  | Command palette | <kbd>/</kbd> or <kbd>⌘K</kbd> |
+  | Paste as text (clipboard) | <kbd>⇧⏎</kbd> |
 
-1. **Install Ollama**
+- **Settings — six tabs**: AI Model · Prompts · Shortcuts · Commands · Clipboard · Storage
+- **Onboarding flow** with Accessibility + Screen Recording permission checks, revocation detection, and quit-and-relaunch helper
+- **Crash reporter** — `std::panic::set_hook` writes structured crash records; `installGlobalErrorReporter` forwards `window.onerror` + `unhandledrejection`; browseable in Settings → Storage
+- **Rolling logs** — `tauri-plugin-log`, 2 MB rotation, `KeepAll`
+- **Strict CI coverage** — frontend (Vitest) + backend (cargo-llvm-cov) both enforced at **100% line coverage**
+- **macOS system integration**
+  - NSPanel overlay via `tauri-nspanel` — floats on fullscreen Spaces without stealing focus
+  - `ActivationPolicy::Accessory` — no Dock icon
+  - CGEventTap HID-level + Default tap — survives focus changes and secure input
+  - Multi-monitor aware placement via CoreGraphics
+  - Rounded NSWindow corners synced with inner UI
+  - Tray menu: Open / Settings / Quit
+- **Optional Docker sandbox** for hardened local inference (`cap_drop: ALL`, no-new-privileges, read-only model volume, localhost-only port binding)
 
-   Download and install from [ollama.com](https://ollama.com), or via Homebrew:
+## This fork vs upstream Thuki
 
-   ```bash
-   brew install ollama
-   ```
+| | upstream Thuki | Oling (this fork) |
+| --- | :---: | :---: |
+| Floating overlay (double-tap <kbd>⌃</kbd>) | ✅ | ✅ |
+| Context-aware text quoting | ✅ | ✅ |
+| Built-in slash commands | ✅ (6) | ✅ (7, all editable) |
+| **Custom user-defined slash commands** | ❌ | ✅ |
+| **Commands shared across chat + clipboard + quoted text** | — | ✅ |
+| Screenshot input (basic `/screen`) | ✅ | ✅ (replaced) |
+| **Full Xnip-style screenshot + annotation overlay** | ❌ | ✅ |
+| **OCR via AI** | ❌ | ✅ |
+| **Clipboard history workspace** | ❌ | ✅ |
+| **Source-app icon resolution** | ❌ | ✅ |
+| **CodeMirror preview + edit for code clips** | ❌ | ✅ |
+| **Scrolling screenshot (long shot)** | ❌ | ✅ |
+| **Smart reply** (auto-paste back to source app) | ❌ | ✅ |
+| **Pin stickers** (floating image windows) | ❌ | ✅ |
+| **Configurable global shortcuts** | ❌ | ✅ |
+| **Six-tab Settings panel** | ❌ | ✅ |
+| Onboarding & permission revocation detection | partial | ✅ |
+| **Crash reporter + rolling logs** | ❌ | ✅ |
+| OpenAI-compatible backend (any provider) | Ollama focused | ✅ (any) |
+| Docker sandbox | ✅ | ✅ |
+| Apache 2.0 | ✅ | ✅ (preserved) |
 
-2. **Pull a model**
+## Installation
 
-   ```bash
-   ollama pull gemma4:e2b
-   ```
+### Download (recommended)
 
-   > **Note:** Model files are large (typically 2–8 GB). This step can take several minutes depending on your internet connection. You only need to do it once.
+1. Download `Oling.dmg` from the [latest release](../../releases/latest)
+2. Open the DMG and drag **Oling** into **Applications**
+3. Eject the DMG
+4. Open Oling from Applications — it lives in your menu bar
 
-3. **Verify the model is ready**
+Because Oling is signed with a Developer ID certificate and notarized by Apple, macOS will let you run it without any quarantine workaround.
 
-   ```bash
-   ollama list
-   ```
+> **First launch:** macOS will ask for **Accessibility** (double-tap Control global hotkey) and **Screen Recording** (screenshot, smart reply, long shot). Grant both; they persist across restarts. If you later revoke a permission, Oling detects it and re-shows the onboarding screen.
 
-   You should see your model listed. Oling talks to an **OpenAI-compatible** server — for Ollama, enable its OpenAI-compat endpoint and point Oling at it:
+### Build from source
 
-   ```bash
-   export OLING_API_BASE_URL=http://127.0.0.1:11434/v1
-   export OLING_SUPPORTED_AI_MODELS=<your-ollama-model-name>
-   ```
-
-   The default (`http://127.0.0.1:1234/v1` with API key `lm-studio`) is set up for an LM Studio server on the LAN; override it via `OLING_API_BASE_URL` / `OLING_API_KEY`.
-
-#### Option B: Docker Sandbox (For security-conscious users)
-
-**Prerequisites:** Install [Docker Desktop](https://www.docker.com/get-started)
-
-The Docker sandbox is for users who want the strongest possible isolation between the AI model and their host system, ideal if you work in regulated environments, are security-conscious about what runs on your machine, or simply want peace of mind. The model runs in a hardened container that cannot reach the internet, cannot write to your filesystem, and leaves no trace when stopped.
-
-Start the sandbox:
+**Prerequisites:** [Bun](https://bun.sh), [Rust](https://rustup.rs), optionally [Docker](https://www.docker.com/get-started).
 
 ```bash
-bun run sandbox:start
-```
-
-> **First run:** The sandbox will pull the model inside the container; this may take several minutes depending on your connection. Subsequent starts are instant.
-
-When you're done, stop and wipe all model data:
-
-```bash
-bun run sandbox:stop
-```
-
-For the full architecture and security philosophy behind the sandbox, see [`sandbox/README.md`](sandbox/README.md).
-
-### Step 2: Install Oling
-
-#### Download (Recommended)
-
-1. Download `Oling.dmg` from the [latest release](https://github.com/quiet-node/oling/releases/latest)
-2. Double-click `Oling.dmg` to open it. A window appears showing the Oling app icon next to an Applications folder shortcut.
-3. Drag `Oling` onto the `Applications` folder shortcut.
-4. Eject the disk image (drag it to Trash in the Finder sidebar, or right-click and choose Eject).
-5. **Before opening Oling for the first time**, run this command in Terminal:
-
-   ```bash
-   xattr -rd com.apple.quarantine /Applications/Oling.app
-   ```
-
-   > **Why is this needed?** Oling is a free, non-profit, open-source app distributed directly and not through the Mac App Store. Apple's Gatekeeper automatically blocks any app downloaded from the internet that has not gone through Apple's paid notarization process. This one-time command removes that block. It is safe and [officially documented by Apple](https://support.apple.com/en-us/102445).
-
-6. Open Oling. It will appear in your menu bar.
-
-> **First launch:** macOS will ask for Accessibility permission. This is required for the global keyboard shortcut that lets you summon Oling from any app. Grant it once; it persists across restarts.
-
-#### Build from Source
-
-**Prerequisites:** [Bun](https://bun.sh), [Rust](https://rustup.rs), and optionally [Docker](https://www.docker.com/get-started)
-
-```bash
-# Clone and install dependencies
-git clone https://github.com/quiet-node/oling.git
-cd oling
+git clone https://github.com/fengbird/thuki.git
+cd thuki
 bun install
 
-# Launch in development mode
-bun run dev
+bun run dev            # development with HMR
+bun run build:all      # production build → src-tauri/target/release/bundle/
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development setup guide.
 
-## Architecture & Security
+### Set up your AI backend
+
+Oling speaks the OpenAI `/chat/completions` SSE protocol, so any compliant server works.
 
 <details>
-<summary>Click to expand</summary>
+<summary><strong>Option A: Local Ollama (recommended for most users)</strong></summary>
 
-Oling is a **Tauri v2** app (Rust backend + React/TypeScript frontend) that talks to any OpenAI-compatible `/chat/completions` endpoint — LM Studio, vLLM, llama.cpp server, Ollama's OpenAI-compat endpoint, or a hosted provider — configured via `OLING_API_BASE_URL` and `OLING_API_KEY`.
+```bash
+brew install ollama
+ollama pull gemma4:e2b
+export OLING_API_BASE_URL=http://127.0.0.1:11434/v1
+export OLING_SUPPORTED_AI_MODELS=gemma4:e2b
+```
 
-### Dual-Layer Isolation
+Or configure it in Settings → AI Model and click **Test Connection**.
 
-1. **Frontend (Tauri/React):** Operates within a secure system webview with restricted IPC. Streaming uses Tauri's Channel API; the Rust backend sends typed `StreamChunk` enum variants, and the frontend hook accumulates tokens into React state.
+</details>
 
-2. **Generative Engine (Docker Sandbox):**
-   - **Ingress Isolation:** The API is bound to `127.0.0.1` only, blocking all external network access
-   - **Privilege Dropping:** All Linux kernel capabilities are dropped (`cap_drop: ALL`)
-   - **Model Integrity:** Model weights are mounted read-only (`:ro`) to prevent tampering
-   - **Ephemeral State:** All model data is purged on shutdown via `docker compose down -v`
+<details>
+<summary><strong>Option B: LM Studio / vLLM / llama.cpp / hosted provider</strong></summary>
 
-### Window Lifecycle
+Set `OLING_API_BASE_URL` to the server's base URL (include `/v1`) and `OLING_API_KEY` if auth is required. Any OpenAI-compatible endpoint works.
 
-The app starts hidden. The hotkey or tray menu shows it. The window close button hides (not quits); quit is only available from the tray. `ActivationPolicy::Accessory` hides the Dock icon. `macOSPrivateApi: true` enables NSPanel for fullscreen-app overlay.
+Defaults: `http://127.0.0.1:1234/v1` with API key `lm-studio` (LM Studio convention).
+
+</details>
+
+<details>
+<summary><strong>Option C: Docker sandbox (maximum isolation)</strong></summary>
+
+```bash
+bun run sandbox:start
+# ... when you're done:
+bun run sandbox:stop   # destructive: wipes the volume
+```
+
+Full architecture and security philosophy: [`sandbox/README.md`](sandbox/README.md).
 
 </details>
 
 ## Configuration
 
-See [docs/configurations.md](docs/configurations.md) for the full configuration reference (quote display limits and system prompt).
+Runtime configuration reference: [docs/configurations.md](docs/configurations.md) · Slash command reference: [docs/commands.md](docs/commands.md).
 
-See [docs/commands.md](docs/commands.md) for the full slash command reference.
+Every setting supports **priority fallback**: SQLite → environment variable → built-in default. Changes apply live, no restart.
 
-## Contributing
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `OLING_API_BASE_URL` | OpenAI-compatible base URL | `http://127.0.0.1:1234/v1` |
+| `OLING_API_KEY` | Bearer token | `lm-studio` |
+| `OLING_SUPPORTED_AI_MODELS` | Comma-separated model list | single built-in |
+| `OLING_SYSTEM_PROMPT` | Custom system prompt | built-in |
+| `OLING_REPLY_PROMPT` | Custom smart-reply prompt | built-in |
+| `OLING_OCR_PROMPT` | Custom OCR prompt | built-in |
 
-Contributions are welcome! Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+## Architecture
 
-## Author
+<details>
+<summary>Click to expand</summary>
 
-Reach out to [Logan](https://x.com/quiet_node) on X with questions or feedback.
+Oling is a **Tauri v2** app: Rust backend, React 19 + TypeScript 5.8 frontend, Tailwind CSS 4, SQLite via `rusqlite`, CodeMirror 6 for code, Konva for annotation, Streamdown + Shiki for markdown.
 
-## What's next for Oling
+### Process architecture
 
-Oling is just getting started. Here's where it's headed:
+- **Frontend** runs in the system WebView with restricted IPC
+- **Backend** owns the NSPanel, event taps, clipboard monitor, screenshot capture, and settings store
+- **Streaming** uses Tauri's typed Channel API — the Rust side sends `StreamChunk` variants (`Token`, `ThinkingToken`, `Done`, `Cancelled`, `Error`) and the frontend hook accumulates them into React state
 
-### Secretary Superpowers
+### Windows
 
-The big leap: from answering questions to taking action.
+- **Main overlay** — morphs between ask-bar and chat modes via Framer Motion
+- **Clipboard panel** — 920×640 NSPanel with rounded NSWindow chrome
+- **Screenshot overlay** — fullscreen Konva canvas with quick-window-select
+- **Reply draft** — compact non-key panel
+- **Pin stickers** — frameless, draggable, semi-transparent windows (one per pin)
+- **Long-shot HUD** — non-key capture progress indicator
+- **Settings** — standard window with six tabs
 
-- **Internet search:** let Oling look things up in real time, not just reason from its training data
-- **Tool integrations via [MCP](https://modelcontextprotocol.io/):** connect Oling to Gmail, Slack, Discord, Google Calendar, and any other MCP-compatible service; ask it to draft a reply, summarize a thread, or schedule a meeting without ever leaving your current app
-- **More slash commands:** `/think`, `/translate`, `/rewrite`, `/tldr`, `/refine`, `/bullets`, and `/todos` are live. More domain-specific commands are on the way
+### Storage
 
-### Better AI Control
+`<app_data_dir>/` contains:
+- `oling.db` — settings, clipboard history, onboarding state (conversation table purged on launch)
+- `images/` — saved chat attachments (orphans pruned at startup)
+- `app-icons/` — cached 128 px source-app icons
+- `crashes/` — panic and frontend-error reports
+- `logs/oling.log` — rolling app log
 
-More flexibility over the model powering Oling.
+### Hotkey listener (`activator.rs`)
 
-- **Native settings panel (⌘,):** a proper macOS preferences window to configure your model, Ollama endpoint, activation shortcut, slash commands, and system prompt. No config files needed.
-- **In-app model switching:** swap between any Ollama model from the UI without rebuilding (the backend already supports multiple models via `OLING_SUPPORTED_AI_MODELS`; the picker UI is next)
-- **Multiple provider support:** opt in to OpenAI, Anthropic, or any OpenAI-compatible endpoint as an alternative to local Ollama
-- **Custom activation shortcut:** change the double-tap trigger to any key or combo you prefer
+Core Graphics event tap configured with `CGEventTapLocation::HID` + `CGEventTapOptions::Default`. On macOS 15 Sequoia, **both** are load-bearing — Session-level taps stop delivering events when focus changes, and `ListenOnly` taps are disabled by secure input mode. See `CLAUDE.md` for the full writeup.
 
-### Richer Context
+</details>
 
-Give Oling more to work with.
+## Roadmap
 
-- **Voice input:** dictate your question instead of typing
-- **Auto-capture screen context:** activate Oling and have it automatically read the active window or selected region as context (partial: smart reply already captures the active window today; targeted region capture is next)
-- **File and document drop:** drag a PDF, image, or text file directly into Oling as context for your question
+- In-app model switching without rebuild
+- Internet search and MCP tool integrations
+- Voice input, file/document drop, targeted region capture
+- More built-in slash commands for domain-specific workflows
+- Cross-device sync for custom commands (opt-in)
 
----
+Have a feature idea? [Open an issue](../../issues).
 
-Have a feature idea? [Open an issue](https://github.com/quiet-node/oling/issues) and let's talk about it.
+## Sponsor
 
-## License
+Oling is free and open source. If it saves you time, consider supporting development:
 
-Copyright 2026 Logan Nguyen. Licensed under the [Apache License, Version 2.0](LICENSE).
+- 🌏 **GitHub Sponsors** — [github.com/sponsors/fengbird](https://github.com/sponsors/fengbird)
+- 🇨🇳 **爱发电** (WeChat / Alipay) — coming soon
+
+Your support funds ongoing development, the Apple Developer Program fee that makes notarized builds possible, and domain/CDN costs. Sponsors are listed (opt-in) in the About dialog.
+
+## Credits & License
+
+- **Upstream:** [**quiet-node/Thuki**](https://github.com/quiet-node/Thuki) by [Logan Nguyen](https://x.com/quiet_node) — original overlay, AI secretary core, and project design (originally released as *Thuki*)
+- **This fork** adds the clipboard workspace, Xnip-style screenshot overlay, scrolling screenshot, smart reply, pin stickers, configurable shortcuts, custom slash commands, onboarding flow, crash reporter, rolling logs, and a substantial amount of UI polish
+- **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md)
+- **Security reports:** please use [GitHub Security Advisories](../../security/advisories/new)
+
+Copyright 2026 Logan Nguyen and contributors. Licensed under the [Apache License, Version 2.0](LICENSE). All upstream copyright notices are preserved; see `LICENSE` for the full text.

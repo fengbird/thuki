@@ -58,8 +58,8 @@ rustup toolchain install nightly-2026-03-30 --component llvm-tools
 1. **Fork and clone the repository**
 
    ```bash
-   git clone https://github.com/quiet-node/oling.git
-   cd oling
+   git clone https://github.com/fengbird/thuki.git
+   cd thuki
    ```
 
 2. **Install frontend dependencies**
@@ -211,6 +211,6 @@ Key style rules:
 
 ## Good First Issues
 
-New to the codebase? Look for issues tagged [`good first issue`](https://github.com/quiet-node/oling/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) on GitHub. These are scoped to be approachable without deep knowledge of the full system.
+New to the codebase? Look for issues tagged [`good first issue`](https://github.com/fengbird/thuki/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) on GitHub. These are scoped to be approachable without deep knowledge of the full system.
 
 If you have a question or want to discuss an approach before writing code, open an issue or start a discussion; we're happy to help.
