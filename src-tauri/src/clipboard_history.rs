@@ -23,6 +23,11 @@ use crate::database::Database;
 pub const CLIPBOARD_WINDOW_LABEL: &str = "clipboard-history";
 pub const CLIPBOARD_UPDATED_EVENT: &str = "oling://clipboard-history-updated";
 pub const CLIPBOARD_COMPOSE_EVENT: &str = "oling://clipboard-compose";
+/// Fires every time the clipboard panel transitions from hidden to shown.
+/// The frontend uses this to (a) refetch the latest entries and (b) reset
+/// the selection to the first row, so opening the panel always lands the
+/// keyboard cursor on the most-recently-used clip.
+pub const CLIPBOARD_SHOWN_EVENT: &str = "oling://clipboard-history-shown";
 
 const CLIPBOARD_WINDOW_WIDTH: f64 = 920.0;
 const CLIPBOARD_WINDOW_HEIGHT: f64 = 640.0;
@@ -780,6 +785,7 @@ fn open_window(app_handle: &tauri::AppHandle, state: &ClipboardHistoryState) -> 
         let _ = existing.center();
         let _ = existing.show();
         let _ = existing.set_focus();
+        let _ = app_handle.emit(CLIPBOARD_SHOWN_EVENT, ());
         return Ok(());
     }
 
@@ -807,6 +813,7 @@ fn open_window(app_handle: &tauri::AppHandle, state: &ClipboardHistoryState) -> 
     state.set_window_visible(true);
     let _ = window.show();
     let _ = window.set_focus();
+    let _ = app_handle.emit(CLIPBOARD_SHOWN_EVENT, ());
     Ok(())
 }
 

@@ -30,6 +30,7 @@ import { mergeCommands, type CommandsConfig } from '../config/commands';
 import type { ClipboardEntry } from '../types/clipboard';
 
 const UPDATED_EVENT = 'oling://clipboard-history-updated';
+const SHOWN_EVENT = 'oling://clipboard-history-shown';
 const STATUS_AUTO_DISMISS_MS = 2200;
 
 type FilterKey = 'all' | 'text' | 'image' | 'favorites';
@@ -405,6 +406,32 @@ export function ClipboardHistoryView() {
       if (!disposed) {
         void loadEntries();
       }
+    }).then((fn) => {
+      if (disposed) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [loadEntries]);
+
+  // Every time the panel transitions from hidden → shown, refresh the list
+  // and reset the selection so the most-recently-used clip is highlighted
+  // and Enter pastes it without further navigation.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen(SHOWN_EVENT, () => {
+      if (disposed) return;
+      setSelectedId(null);
+      setEditingEntryId(null);
+      setEditingText('');
+      setIsSavingEdit(false);
+      void loadEntries();
     }).then((fn) => {
       if (disposed) {
         fn();
