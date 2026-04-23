@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTD/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- WebKit / Tauri WebView JIT + unsigned code exec in the browser process -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- Required for dynamic libraries loaded by Tauri + WebKit + tauri-nspanel -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!-- Synthesized ⌘V (smart reply, clipboard paste-as-text) into other apps -->
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+
+  <!-- Outbound HTTP to the local LLM endpoint + any future MCP/tool calls -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!-- "Drop image" / "attach file" flows pick files via system dialogs -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+</dict>
+</plist>
