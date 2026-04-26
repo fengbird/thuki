@@ -15,6 +15,7 @@
     "build:frontend": "tsc && vite build",
     "build:backend": "tauri build --bundles app",
     "build:all": "bun run build:frontend && bun run build:backend",
+    "make-dmg": "bash scripts/make-dmg.sh",
     "preview": "vite preview",
     "tauri": "tauri",
     "lint:frontend": "eslint src",
