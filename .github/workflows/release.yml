@@ -10,7 +10,39 @@ permissions:
   contents: write           # needed to create/update Releases
 
 jobs:
+  precheck:
+    # Cheap gate that confirms all required secrets exist. If any are
+    # missing (e.g. the user just forked the repo), we report a clean
+    # skip instead of a red failure deep inside the build job.
+    runs-on: ubuntu-latest
+    outputs:
+      ok: ${{ steps.gate.outputs.ok }}
+    steps:
+      - id: gate
+        env:
+          DEV_ID_P12_BASE64: ${{ secrets.DEV_ID_P12_BASE64 }}
+          DEV_ID_P12_PASSWORD: ${{ secrets.DEV_ID_P12_PASSWORD }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          missing=()
+          for v in DEV_ID_P12_BASE64 DEV_ID_P12_PASSWORD APPLE_API_KEY_BASE64 \
+                   APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_SIGNING_IDENTITY; do
+            if [[ -z "${!v}" ]]; then missing+=("$v"); fi
+          done
+          if (( ${#missing[@]} )); then
+            echo "::warning ::Skipping signed build — required secrets not set: ${missing[*]}"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "All required secrets present."
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: precheck
+    if: needs.precheck.outputs.ok == 'true'
     runs-on: macos-15       # Apple Silicon, modern Xcode, hardened runtime support
     timeout-minutes: 60     # notarization can take a while; cap to keep CI sane
 
