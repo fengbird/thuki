@@ -1,56 +1,76 @@
 #!/usr/bin/env bash
 # scripts/make-dmg.sh
 #
-# End-to-end DMG pipeline for Oling:
+# End-to-end DMG release pipeline for Oling:
 #   1. Build the .app via `bunx tauri build --bundles app`
-#   2. Notarize the .app (Apple), staple
+#   2. Notarize the .app, staple
 #   3. Bundle a DMG via `hdiutil`
 #   4. Sign the DMG
-#   5. Notarize the DMG (Apple), staple
+#   5. Notarize the DMG, staple
 #   6. Verify the DMG passes Gatekeeper as "Notarized Developer ID"
 #   7. Drop the result at `dist/Oling.dmg`
 #
-# All credentials are pulled from the macOS Keychain (set up earlier when we
-# created the `oling-signing` keychain + stored the App Store Connect API key
-# under known service names — see CONTRIBUTING / README). No env vars needed.
+# Credential sources (each value falls back: env var → macOS Keychain):
+#   APPLE_SIGNING_IDENTITY   env or auto-discover from $OLING_SIGNING_KEYCHAIN
+#   OLING_SIGNING_KEYCHAIN   env or default `oling-signing.keychain-db`
+#   OLING_SIGNING_KEYCHAIN_PASSWORD
+#                            env or login-keychain item `oling-signing-keychain`
+#   APPLE_API_ISSUER         env or login-keychain item `oling-notary-issuer`
+#   APPLE_API_KEY            env or login-keychain item `oling-notary-key-id`
+#   APPLE_API_KEY_PATH       env or login-keychain item `oling-notary-key-path`
 #
-# Usage:
-#   bun run make-dmg
-# or:
-#   bash scripts/make-dmg.sh
+# That way local development uses zero env-var setup (everything in Keychain),
+# while CI just pre-populates env vars from GitHub Actions secrets.
 
 set -euo pipefail
 
-# ── Locate project root (script is at <root>/scripts/make-dmg.sh) ─────────
+# ── Locate project root ───────────────────────────────────────────────────
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# ── Pull credentials from macOS Keychain ──────────────────────────────────
-APPLE_API_ISSUER=$(security find-generic-password -s "oling-notary-issuer" -a "local" -w login.keychain-db)
-APPLE_API_KEY_ID=$(security find-generic-password -s "oling-notary-key-id" -a "local" -w login.keychain-db)
-APPLE_API_KEY_PATH=$(security find-generic-password -s "oling-notary-key-path" -a "local" -w login.keychain-db)
-SIGNING_KEYCHAIN_PASSWORD=$(security find-generic-password -s "oling-signing-keychain" -a "local" -w login.keychain-db)
-SIGNING_KEYCHAIN="$HOME/Library/Keychains/oling-signing.keychain-db"
+# ── Helper: read value from env or Keychain ──────────────────────────────
+keychain_or_env() {
+  local env_name="$1"
+  local service="$2"
+  if [[ -n "${!env_name:-}" ]]; then
+    echo "${!env_name}"
+  else
+    security find-generic-password -s "$service" -a "local" -w login.keychain-db
+  fi
+}
 
-# Discover the Developer ID identity from the signing keychain (no hardcoding
-# of the user's name).
-SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$SIGNING_KEYCHAIN" \
-  | awk -F'"' '/Developer ID Application/ {print $2; exit}')
-if [[ -z "$SIGNING_IDENTITY" ]]; then
-  echo "❌ No 'Developer ID Application' identity found in $SIGNING_KEYCHAIN" >&2
+APPLE_API_ISSUER=$(keychain_or_env APPLE_API_ISSUER oling-notary-issuer)
+APPLE_API_KEY=$(keychain_or_env APPLE_API_KEY oling-notary-key-id)
+APPLE_API_KEY_PATH=$(keychain_or_env APPLE_API_KEY_PATH oling-notary-key-path)
+
+OLING_SIGNING_KEYCHAIN="${OLING_SIGNING_KEYCHAIN:-$HOME/Library/Keychains/oling-signing.keychain-db}"
+OLING_SIGNING_KEYCHAIN_PASSWORD=$(keychain_or_env OLING_SIGNING_KEYCHAIN_PASSWORD oling-signing-keychain)
+
+# Discover signing identity from the keychain unless set via env.
+if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+  APPLE_SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$OLING_SIGNING_KEYCHAIN" \
+    | awk -F'"' '/Developer ID Application/ {print $2; exit}')
+fi
+if [[ -z "$APPLE_SIGNING_IDENTITY" ]]; then
+  echo "❌ No Developer ID Application identity found." >&2
+  echo "   Set APPLE_SIGNING_IDENTITY env or import a cert into $OLING_SIGNING_KEYCHAIN." >&2
   exit 1
 fi
+export APPLE_SIGNING_IDENTITY
 
-echo "▸ Signing identity: $SIGNING_IDENTITY"
+echo "▸ Signing identity: $APPLE_SIGNING_IDENTITY"
 echo "▸ Notary issuer:    $APPLE_API_ISSUER"
-echo "▸ Notary key:       $APPLE_API_KEY_ID"
+echo "▸ Notary key:       $APPLE_API_KEY"
+echo "▸ Signing keychain: $OLING_SIGNING_KEYCHAIN"
 
-# ── Unlock signing keychain (idempotent) ──────────────────────────────────
-security unlock-keychain -p "$SIGNING_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"
+# ── Unlock signing keychain ───────────────────────────────────────────────
+security unlock-keychain -p "$OLING_SIGNING_KEYCHAIN_PASSWORD" "$OLING_SIGNING_KEYCHAIN"
 
-# ── Step 1: build the .app (no auto-notarize from Tauri) ──────────────────
+# ── Step 1: build the .app ────────────────────────────────────────────────
 echo ""
 echo "═══ Step 1/7: building .app ═══"
+# Strip APPLE_API_* so Tauri doesn't try to auto-notarize during build
+# (it would block with --wait and we want to control that ourselves).
 env -u APPLE_API_KEY -u APPLE_API_ISSUER -u APPLE_API_KEY_PATH \
   bunx tauri build --bundles app
 
@@ -69,7 +89,7 @@ ditto -c -k --keepParent "$APP" "$APP_ZIP"
 
 xcrun notarytool submit "$APP_ZIP" \
   --key "$APPLE_API_KEY_PATH" \
-  --key-id "$APPLE_API_KEY_ID" \
+  --key-id "$APPLE_API_KEY" \
   --issuer "$APPLE_API_ISSUER" \
   --wait
 
@@ -102,8 +122,8 @@ hdiutil create -volname "Oling" \
 # ── Step 5: sign the DMG ──────────────────────────────────────────────────
 echo ""
 echo "═══ Step 5/7: signing DMG ═══"
-codesign --sign "$SIGNING_IDENTITY" \
-  --keychain "$SIGNING_KEYCHAIN" \
+codesign --sign "$APPLE_SIGNING_IDENTITY" \
+  --keychain "$OLING_SIGNING_KEYCHAIN" \
   --timestamp \
   "$DMG"
 codesign --verify --verbose=2 "$DMG"
@@ -113,7 +133,7 @@ echo ""
 echo "═══ Step 6/7: notarizing DMG (waits for Apple) ═══"
 xcrun notarytool submit "$DMG" \
   --key "$APPLE_API_KEY_PATH" \
-  --key-id "$APPLE_API_KEY_ID" \
+  --key-id "$APPLE_API_KEY" \
   --issuer "$APPLE_API_ISSUER" \
   --wait
 

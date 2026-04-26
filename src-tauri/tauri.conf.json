@@ -51,7 +51,6 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "signingIdentity": "Developer ID Application: tengchao zhao (3HUQXQBQ8J)",
       "hardenedRuntime": true,
       "entitlements": "entitlements.plist"
     }
