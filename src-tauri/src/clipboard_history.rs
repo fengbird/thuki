@@ -1283,43 +1283,49 @@ fn pasteboard_text_payload() -> Option<TextClipboardPayload> {
     use objc2_foundation::NSString;
 
     autoreleasepool(|_| {
-    let pb = NSPasteboard::generalPasteboard();
-    let s = unsafe { pb.stringForType(NSPasteboardTypeString)? };
-    let text = s.to_string();
-    if text.trim().is_empty() {
-        return None;
-    }
+        let pb = NSPasteboard::generalPasteboard();
+        let baseline = pb.changeCount();
+        let s = unsafe { pb.stringForType(NSPasteboardTypeString)? };
+        let text = s.to_string();
+        if text.trim().is_empty() {
+            return None;
+        }
 
-    let Some(items) = pb.pasteboardItems() else {
-        return Some(TextClipboardPayload {
-            text,
-            rtf: None,
-            html: None,
-        });
-    };
+        let Some(items) = pb.pasteboardItems() else {
+            return Some(TextClipboardPayload {
+                text,
+                rtf: None,
+                html: None,
+            });
+        };
 
-    let rtf_type = NSString::from_str("public.rtf");
-    let html_type = NSString::from_str("public.html");
-    let mut rtf = None;
-    let mut html = None;
-    for idx in 0..items.count() {
-        let item = items.objectAtIndex(idx);
-        if rtf.is_none() {
-            if let Some(data) = item.dataForType(&rtf_type) {
-                rtf = Some(nsdata_to_vec(&data));
+        let rtf_type = NSString::from_str("public.rtf");
+        let html_type = NSString::from_str("public.html");
+        let mut rtf = None;
+        let mut html = None;
+        for idx in 0..items.count() {
+            // Bail if the pasteboard was rewritten while we were iterating;
+            // the items may now point at freed type-cache buffers.
+            if pb.changeCount() != baseline {
+                break;
+            }
+            let item = items.objectAtIndex(idx);
+            if rtf.is_none() {
+                if let Some(data) = item.dataForType(&rtf_type) {
+                    rtf = Some(nsdata_to_vec(&data));
+                }
+            }
+            if html.is_none() {
+                if let Some(data) = item.dataForType(&html_type) {
+                    html = Some(nsdata_to_vec(&data));
+                }
+            }
+            if rtf.is_some() && html.is_some() {
+                break;
             }
         }
-        if html.is_none() {
-            if let Some(data) = item.dataForType(&html_type) {
-                html = Some(nsdata_to_vec(&data));
-            }
-        }
-        if rtf.is_some() && html.is_some() {
-            break;
-        }
-    }
 
-    Some(TextClipboardPayload { text, rtf, html })
+        Some(TextClipboardPayload { text, rtf, html })
     })
 }
 
@@ -1327,16 +1333,26 @@ fn pasteboard_text_payload() -> Option<TextClipboardPayload> {
 fn read_ignored_types() -> bool {
     use objc2::rc::autoreleasepool;
     use objc2_app_kit::NSPasteboard;
-    // The items array and per-item types arrays are autoreleased; without an
-    // explicit pool the pasteboard worker thread can free them mid-iteration
-    // when another app writes to the clipboard, leading to a SIGSEGV in
-    // objc_msgSend (see crash report 2026-04-23).
+    // Defensive against two failure modes:
+    //  1. Autoreleased items getting freed mid-iteration → wrap in
+    //     `autoreleasepool` (objc2's pool drains at scope end).
+    //  2. Another app writing to the pasteboard mid-iteration, which makes
+    //     `[NSPasteboardItem types]` re-enter the pasteboard's type cache and
+    //     find a stale or freed buffer (crash trace: NSPasteboard
+    //     `_updateTypeCacheIfNeeded` → `objc_msgSend` SIGSEGV, see crash
+    //     reports 2026-04-23 and 2026-04-27). Snapshot `changeCount` and
+    //     bail the moment it changes — we'll just pick the new state up on
+    //     the next poll.
     autoreleasepool(|_| {
         let pb = NSPasteboard::generalPasteboard();
+        let baseline = pb.changeCount();
         let Some(items) = pb.pasteboardItems() else {
             return false;
         };
         for idx in 0..items.count() {
+            if pb.changeCount() != baseline {
+                return false;
+            }
             let item = items.objectAtIndex(idx);
             let types = item.types();
             for ty_idx in 0..types.count() {
@@ -1363,12 +1379,16 @@ fn pasteboard_image_bytes() -> Option<Vec<u8>> {
 
     autoreleasepool(|_| {
         let pb = NSPasteboard::generalPasteboard();
+        let baseline = pb.changeCount();
         let Some(items) = pb.pasteboardItems() else {
             return None;
         };
 
         let image_types = ["public.png", "public.jpeg", "public.tiff"];
         for idx in 0..items.count() {
+            if pb.changeCount() != baseline {
+                return None;
+            }
             let item = items.objectAtIndex(idx);
             for pb_type in image_types {
                 let ty = NSString::from_str(pb_type);
@@ -1406,12 +1426,16 @@ fn read_pasteboard_snapshot() -> Vec<PasteboardItemSnapshot> {
 
     autoreleasepool(|_| {
         let pb = NSPasteboard::generalPasteboard();
+        let baseline = pb.changeCount();
         let Some(items) = pb.pasteboardItems() else {
             return Vec::new();
         };
 
         let mut snapshots = Vec::new();
         for idx in 0..items.count() {
+            if pb.changeCount() != baseline {
+                return Vec::new();
+            }
             let item = items.objectAtIndex(idx);
             let types = item.types();
             let mut entries = Vec::new();
