@@ -63,11 +63,16 @@ pub struct ActivationContextResolver {
 }
 
 impl ActivationContextResolver {
-    pub fn new() -> Self {
+    #[cfg(target_os = "macos")]
+    pub fn new(app_handle: tauri::AppHandle) -> Self {
         Self {
-            #[cfg(target_os = "macos")]
-            inner: macos::Resolver::new(),
+            inner: macos::Resolver::new(app_handle),
         }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Hints that the user just pressed Cmd+C / Cmd+X, so the clipboard
@@ -99,6 +104,7 @@ impl ActivationContextResolver {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 impl Default for ActivationContextResolver {
     fn default() -> Self {
         Self::new()
@@ -118,8 +124,8 @@ mod macos {
     use core_foundation::base::{CFTypeRef, TCFType};
     use core_foundation::string::{CFString, CFStringRef};
     use core_graphics::geometry::{CGPoint, CGRect, CGSize};
-    use objc2::rc::Retained;
     use objc2::runtime::ProtocolObject;
+    use objc2::{rc::Retained, MainThreadMarker};
     use objc2_app_kit::{
         NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting, NSWorkspace,
     };
@@ -216,13 +222,15 @@ mod macos {
     }
 
     pub struct Resolver {
+        app_handle: tauri::AppHandle,
         clipboard: ClipboardMonitor,
     }
 
     impl Resolver {
-        pub fn new() -> Self {
+        pub fn new(app_handle: tauri::AppHandle) -> Self {
             Self {
-                clipboard: ClipboardMonitor::new(),
+                clipboard: ClipboardMonitor::new(app_handle.clone()),
+                app_handle,
             }
         }
 
@@ -260,7 +268,7 @@ mod macos {
                 };
             }
 
-            let fallback_text = synthetic_copy_fallback(&self.clipboard);
+            let fallback_text = synthetic_copy_fallback(&self.app_handle, &self.clipboard);
             let fallback_source = fallback_text.as_ref().map(|_| ContextSource::Selection);
             ActivationContext {
                 selected_text: fallback_text,
@@ -319,10 +327,36 @@ mod macos {
         NSPasteboard::generalPasteboard().changeCount()
     }
 
+    fn run_on_main_sync<F, R>(app_handle: &tauri::AppHandle, f: F) -> Option<R>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        if MainThreadMarker::new().is_some() {
+            return Some(f());
+        }
+
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        app_handle
+            .run_on_main_thread(move || {
+                let _ = tx.send(f());
+            })
+            .ok()?;
+        rx.recv_timeout(Duration::from_secs(2)).ok()
+    }
+
+    fn pasteboard_change_count_on_main(app_handle: &tauri::AppHandle) -> Option<NSInteger> {
+        run_on_main_sync(app_handle, pasteboard_change_count)
+    }
+
     fn pasteboard_string() -> Option<String> {
         let pb = NSPasteboard::generalPasteboard();
         let s = unsafe { pb.stringForType(NSPasteboardTypeString)? };
         normalize_text(s.to_string())
+    }
+
+    fn pasteboard_string_on_main(app_handle: &tauri::AppHandle) -> Option<Option<String>> {
+        run_on_main_sync(app_handle, pasteboard_string)
     }
 
     fn nsdata_to_vec(data: &NSData) -> Vec<u8> {
@@ -390,24 +424,40 @@ mod macos {
         }
     }
 
-    fn synthetic_copy_fallback(clipboard: &ClipboardMonitor) -> Option<String> {
+    fn read_pasteboard_snapshot_on_main(
+        app_handle: &tauri::AppHandle,
+    ) -> Option<Vec<PasteboardItemSnapshot>> {
+        run_on_main_sync(app_handle, read_pasteboard_snapshot)
+    }
+
+    fn restore_pasteboard_snapshot_on_main(
+        app_handle: &tauri::AppHandle,
+        snapshot: Vec<PasteboardItemSnapshot>,
+    ) -> Option<Result<(), String>> {
+        run_on_main_sync(app_handle, move || restore_pasteboard_snapshot(&snapshot))
+    }
+
+    fn synthetic_copy_fallback(
+        app_handle: &tauri::AppHandle,
+        clipboard: &ClipboardMonitor,
+    ) -> Option<String> {
         clipboard.suppress_for(SYNTHETIC_COPY_SUPPRESSION);
-        let before_change = pasteboard_change_count();
-        let snapshot = read_pasteboard_snapshot();
+        let before_change = pasteboard_change_count_on_main(app_handle)?;
+        let snapshot = read_pasteboard_snapshot_on_main(app_handle)?;
         unsafe { simulate_cmd_c() };
         std::thread::sleep(Duration::from_millis(10));
 
         let mut copied_text = None;
         for delay_ms in [20, 30, 40, 60, 80, 100, 120, 120] {
             std::thread::sleep(Duration::from_millis(delay_ms));
-            if pasteboard_change_count() == before_change {
+            if pasteboard_change_count_on_main(app_handle)? == before_change {
                 continue;
             }
-            copied_text = pasteboard_string();
+            copied_text = pasteboard_string_on_main(app_handle).flatten();
             break;
         }
 
-        let _ = restore_pasteboard_snapshot(&snapshot);
+        let _ = restore_pasteboard_snapshot_on_main(app_handle, snapshot);
         copied_text
     }
 
@@ -590,8 +640,9 @@ mod macos {
     }
 
     impl ClipboardMonitor {
-        fn new() -> Self {
-            let initial_change_count = pasteboard_change_count();
+        fn new(app_handle: tauri::AppHandle) -> Self {
+            let initial_change_count =
+                pasteboard_change_count_on_main(&app_handle).unwrap_or_default();
             let shared = Arc::new((
                 Mutex::new(ClipboardMonitorState {
                     last_snapshot: None,
@@ -603,9 +654,10 @@ mod macos {
                 Condvar::new(),
             ));
             let thread_shared = shared.clone();
+            let thread_app_handle = app_handle.clone();
             let _ = std::thread::Builder::new()
                 .name("oling-clipboard-monitor".to_string())
-                .spawn(move || run_clipboard_monitor(thread_shared));
+                .spawn(move || run_clipboard_monitor(thread_app_handle, thread_shared));
             Self { shared }
         }
 
@@ -656,7 +708,10 @@ mod macos {
         }
     }
 
-    fn run_clipboard_monitor(shared: Arc<(Mutex<ClipboardMonitorState>, Condvar)>) {
+    fn run_clipboard_monitor(
+        app_handle: tauri::AppHandle,
+        shared: Arc<(Mutex<ClipboardMonitorState>, Condvar)>,
+    ) {
         loop {
             let interval = {
                 let (lock, cvar) = &*shared;
@@ -680,13 +735,18 @@ mod macos {
                 interval
             };
             let _ = interval;
-            poll_clipboard(&shared);
+            poll_clipboard(&app_handle, &shared);
         }
     }
 
-    fn poll_clipboard(shared: &Arc<(Mutex<ClipboardMonitorState>, Condvar)>) {
-        let change_count = pasteboard_change_count();
-        let new_text = pasteboard_string();
+    fn poll_clipboard(
+        app_handle: &tauri::AppHandle,
+        shared: &Arc<(Mutex<ClipboardMonitorState>, Condvar)>,
+    ) {
+        let Some(change_count) = pasteboard_change_count_on_main(app_handle) else {
+            return;
+        };
+        let new_text = pasteboard_string_on_main(app_handle).flatten();
         let new_pid = frontmost_app_pid();
         let now = Instant::now();
 

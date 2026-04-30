@@ -1439,7 +1439,7 @@ pub async fn finish_manual_long_capture(app_handle: tauri::AppHandle) -> Result<
         let path = finalize_running_long_capture().await?;
         let path_for_clipboard = path.clone();
         run_on_main(&app_handle, move || {
-            crate::pasteboard::copy_image_to_clipboard(path_for_clipboard)
+            crate::pasteboard::copy_image_file_to_clipboard(path_for_clipboard)
         })
         .await??;
 

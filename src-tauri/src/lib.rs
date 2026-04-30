@@ -917,7 +917,9 @@ pub fn run() {
                 let clipboard_hint_handle = app.handle().clone();
                 let shortcuts = app.state::<settings::ShortcutConfigState>().0.clone();
                 let activator = activator::OverlayActivator::new();
-                app.manage(crate::context::ActivationContextResolver::new());
+                app.manage(crate::context::ActivationContextResolver::new(
+                    app.handle().clone(),
+                ));
                 if permissions::is_accessibility_granted() {
                     activator.start(
                         shortcuts,

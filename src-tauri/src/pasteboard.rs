@@ -55,6 +55,44 @@ fn write_to_pasteboard(bytes: &[u8], pb_type: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn run_on_main_sync<F, R>(app_handle: &tauri::AppHandle, f: F) -> Option<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    if objc2::MainThreadMarker::new().is_some() {
+        return Some(f());
+    }
+
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    app_handle
+        .run_on_main_thread(move || {
+            let _ = tx.send(f());
+        })
+        .ok()?;
+    rx.recv_timeout(std::time::Duration::from_secs(2)).ok()
+}
+
+#[cfg(target_os = "macos")]
+fn write_to_pasteboard_on_main(
+    app_handle: &tauri::AppHandle,
+    bytes: Vec<u8>,
+    pb_type: &'static str,
+) -> Result<(), String> {
+    run_on_main_sync(app_handle, move || write_to_pasteboard(&bytes, pb_type))
+        .ok_or_else(|| "Timed out writing image to clipboard".to_string())?
+}
+
+#[cfg(target_os = "macos")]
+pub fn copy_image_file_to_clipboard(image_path: String) -> Result<(), String> {
+    let path = Path::new(&image_path);
+    let bytes = read_image_bytes(path)?;
+    let ext = extension_or_default(path);
+    let pb_type = pasteboard_type_for_extension(ext);
+    write_to_pasteboard(&bytes, pb_type)
+}
+
 /// Decodes a base64 image payload. Extracted so the failure path (malformed
 /// payload) can be exercised in tests.
 pub fn decode_base64_image(b64: &str) -> Result<Vec<u8>, String> {
@@ -69,21 +107,43 @@ pub fn decode_base64_image(b64: &str) -> Result<Vec<u8>, String> {
 /// the extension.
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg_attr(not(coverage), tauri::command)]
-pub fn copy_image_to_clipboard(image_path: String) -> Result<(), String> {
+pub fn copy_image_to_clipboard(
+    app_handle: tauri::AppHandle,
+    image_path: String,
+) -> Result<(), String> {
     let path = Path::new(&image_path);
     let bytes = read_image_bytes(path)?;
     let ext = extension_or_default(path);
     let pb_type = pasteboard_type_for_extension(ext);
-    write_to_pasteboard(&bytes, pb_type)
+    #[cfg(target_os = "macos")]
+    {
+        write_to_pasteboard_on_main(&app_handle, bytes, pb_type)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app_handle;
+        write_to_pasteboard(&bytes, pb_type)
+    }
 }
 
 /// Tauri command: copy a base64-encoded PNG (e.g. from a canvas export) to
 /// the clipboard. The payload is always treated as PNG.
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg_attr(not(coverage), tauri::command)]
-pub fn copy_base64_png_to_clipboard(base64_data: String) -> Result<(), String> {
+pub fn copy_base64_png_to_clipboard(
+    app_handle: tauri::AppHandle,
+    base64_data: String,
+) -> Result<(), String> {
     let bytes = decode_base64_image(&base64_data)?;
-    write_to_pasteboard(&bytes, "public.png")
+    #[cfg(target_os = "macos")]
+    {
+        write_to_pasteboard_on_main(&app_handle, bytes, "public.png")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app_handle;
+        write_to_pasteboard(&bytes, "public.png")
+    }
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

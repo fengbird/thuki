@@ -263,6 +263,10 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
+    if objc2::MainThreadMarker::new().is_some() {
+        return Some(f());
+    }
+
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     app_handle
         .run_on_main_thread(move || {
@@ -281,6 +285,36 @@ fn pasteboard_change_count_on_main(app_handle: &tauri::AppHandle) -> Option<isiz
 fn capture_current_clipboard_on_main(app_handle: &tauri::AppHandle) -> Option<ClipboardCapture> {
     let handle = app_handle.clone();
     run_on_main_sync(app_handle, move || capture_current_clipboard(&handle)).flatten()
+}
+
+#[cfg(target_os = "macos")]
+fn read_pasteboard_snapshot_on_main(
+    app_handle: &tauri::AppHandle,
+) -> Option<Vec<PasteboardItemSnapshot>> {
+    run_on_main_sync(app_handle, read_pasteboard_snapshot)
+}
+
+#[cfg(target_os = "macos")]
+fn restore_pasteboard_snapshot_on_main(
+    app_handle: &tauri::AppHandle,
+    snapshot: Vec<PasteboardItemSnapshot>,
+) -> Option<Result<(), String>> {
+    run_on_main_sync(app_handle, move || restore_pasteboard_snapshot(&snapshot))
+}
+
+#[cfg(target_os = "macos")]
+fn write_entry_to_clipboard_on_main(
+    app_handle: &tauri::AppHandle,
+    entry: ClipboardEntryRecord,
+    plain_text: bool,
+) -> Option<Result<(), String>> {
+    run_on_main_sync(app_handle, move || {
+        if plain_text {
+            write_entry_to_plain_text_clipboard(&entry)
+        } else {
+            write_entry_to_clipboard(&entry)
+        }
+    })
 }
 
 fn persist_capture(app_handle: &tauri::AppHandle, capture: ClipboardCapture) -> Result<(), String> {
@@ -940,7 +974,7 @@ fn write_entry_to_clipboard(entry: &ClipboardEntryRecord) -> Result<(), String> 
                 .image_path
                 .clone()
                 .ok_or_else(|| "Image clipboard entry has no image path".to_string())?;
-            crate::pasteboard::copy_image_to_clipboard(image_path)
+            crate::pasteboard::copy_image_file_to_clipboard(image_path)
         }
     }
 }
@@ -975,13 +1009,11 @@ fn paste_entry_to_previous_app_with(
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let backup = read_pasteboard_snapshot();
+        let backup = read_pasteboard_snapshot_on_main(app_handle)
+            .ok_or_else(|| "Timed out reading current clipboard".to_string())?;
         state.suppress_writes(CLIPBOARD_WRITE_SUPPRESSION);
-        if plain_text {
-            write_entry_to_plain_text_clipboard(entry)?;
-        } else {
-            write_entry_to_clipboard(entry)?;
-        }
+        write_entry_to_clipboard_on_main(app_handle, entry.clone(), plain_text)
+            .ok_or_else(|| "Timed out writing clipboard entry".to_string())??;
         let target_bundle_id = state
             .target_bundle_id()
             .ok_or_else(|| "No previous app is available for paste".to_string())?;
@@ -989,18 +1021,19 @@ fn paste_entry_to_previous_app_with(
         hide_window(app_handle)?;
 
         if !crate::reply::activate_app_by_bundle_id(&target_bundle_id) {
-            let _ = restore_pasteboard_snapshot(&backup);
+            let _ = restore_pasteboard_snapshot_on_main(app_handle, backup);
             return Err(format!("Target app '{target_bundle_id}' is not running"));
         }
 
         let backup_for_restore = backup.clone();
+        let restore_handle = app_handle.clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(crate::reply::APP_ACTIVATE_DELAY).await;
             if crate::reply::post_cmd_v_to_frontmost() {
                 tokio::time::sleep(CLIPBOARD_PASTE_RESTORE_DELAY).await;
-                let _ = restore_pasteboard_snapshot(&backup_for_restore);
+                let _ = restore_pasteboard_snapshot_on_main(&restore_handle, backup_for_restore);
             } else {
-                let _ = restore_pasteboard_snapshot(&backup_for_restore);
+                let _ = restore_pasteboard_snapshot_on_main(&restore_handle, backup_for_restore);
             }
         });
         return Ok(());
@@ -1038,6 +1071,7 @@ pub fn list_clipboard_entries(
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg_attr(not(coverage), tauri::command)]
 pub fn copy_clipboard_entry(
+    app_handle: tauri::AppHandle,
     db: tauri::State<'_, Database>,
     clipboard_state: tauri::State<'_, ClipboardHistoryState>,
     entry_id: String,
@@ -1050,12 +1084,21 @@ pub fn copy_clipboard_entry(
     drop(conn);
 
     clipboard_state.suppress_writes(CLIPBOARD_WRITE_SUPPRESSION);
-    write_entry_to_clipboard(&entry)
+    #[cfg(target_os = "macos")]
+    {
+        write_entry_to_clipboard_on_main(&app_handle, entry, false)
+            .ok_or_else(|| "Timed out writing clipboard entry".to_string())?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        write_entry_to_clipboard(&entry)
+    }
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg_attr(not(coverage), tauri::command)]
 pub fn copy_clipboard_entry_plain_text(
+    app_handle: tauri::AppHandle,
     db: tauri::State<'_, Database>,
     clipboard_state: tauri::State<'_, ClipboardHistoryState>,
     entry_id: String,
@@ -1068,7 +1111,15 @@ pub fn copy_clipboard_entry_plain_text(
     drop(conn);
 
     clipboard_state.suppress_writes(CLIPBOARD_WRITE_SUPPRESSION);
-    write_entry_to_plain_text_clipboard(&entry)
+    #[cfg(target_os = "macos")]
+    {
+        write_entry_to_clipboard_on_main(&app_handle, entry, true)
+            .ok_or_else(|| "Timed out writing clipboard entry".to_string())?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        write_entry_to_plain_text_clipboard(&entry)
+    }
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
