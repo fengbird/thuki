@@ -1363,6 +1363,43 @@ describe('AskBarView', () => {
       fireEvent.scroll(textarea);
       expect(mirror.scrollTop).toBe(42);
     });
+
+    it('resizes multiline input and keeps the caret line visible', () => {
+      const ref = makeRef();
+      const baseProps = {
+        ...IMAGE_DEFAULTS,
+        setQuery: vi.fn(),
+        isChatMode: true,
+        isGenerating: false,
+        onSubmit: vi.fn(),
+        onCancel: vi.fn(),
+        inputRef: ref,
+      };
+      const { container, rerender } = render(
+        <AskBarView {...baseProps} query="first line" />,
+      );
+      const textarea = container.querySelector('textarea')!;
+      const mirror = container.querySelector('[aria-hidden="true"]')!;
+
+      Object.defineProperty(textarea, 'scrollHeight', {
+        value: 72,
+        configurable: true,
+      });
+      Object.defineProperty(textarea, 'clientHeight', {
+        value: 40,
+        configurable: true,
+      });
+      textarea.setSelectionRange(
+        'first line\nsecond line'.length,
+        'first line\nsecond line'.length,
+      );
+
+      rerender(<AskBarView {...baseProps} query={'first line\nsecond line'} />);
+
+      expect(textarea.style.height).toBe('72px');
+      expect(textarea.scrollTop).toBe(72);
+      expect(mirror.scrollTop).toBe(72);
+    });
   });
 
   describe('CommandPalette', () => {

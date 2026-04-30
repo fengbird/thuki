@@ -1,6 +1,13 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import type React from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { formatQuotedText } from '../utils/formatQuote';
 import { quote } from '../config';
 import { ImageThumbnails } from '../components/ImageThumbnails';
@@ -269,6 +276,28 @@ export function AskBarView({
   const showPalette =
     !isChatMode && !isBusy && !showSuggestions && query.trim().length === 0;
 
+  const syncTextareaLayout = useCallback((el: HTMLTextAreaElement) => {
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
+    el.style.overflowY = el.scrollHeight > 144 ? 'auto' : 'hidden';
+
+    const caretAtEnd =
+      el.selectionStart === el.value.length &&
+      el.selectionEnd === el.value.length;
+    if (caretAtEnd) {
+      el.scrollTop = el.scrollHeight;
+    }
+
+    if (mirrorRef.current) {
+      mirrorRef.current.scrollTop = el.scrollTop;
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!inputRef.current) return;
+    syncTextareaLayout(inputRef.current);
+  }, [inputRef, query, syncTextareaLayout]);
+
   /** The active command prefix (e.g. "/sc"). Empty when not suggesting. */
   const commandPrefix = showSuggestions ? lastSlashWord : '';
 
@@ -359,11 +388,9 @@ export function AskBarView({
       // if the user types a new "/" prefix after having pressed Escape.
       setDismissedQuery('');
       setQuery(newValue);
-      const el = e.target;
-      el.style.height = 'auto'; // Reset to auto to trigger height recalculation
-      el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
+      syncTextareaLayout(e.target);
     },
-    [setQuery],
+    [setQuery, syncTextareaLayout],
   );
 
   /**
@@ -604,7 +631,7 @@ export function AskBarView({
               autoFocus
               rows={1}
               placeholder={isChatMode ? 'Reply...' : 'Ask Oling anything...'}
-              className="relative w-full bg-transparent border-none outline-none text-transparent text-sm placeholder:text-text-secondary py-2 px-1 disabled:opacity-50 resize-none leading-relaxed"
+              className="relative w-full max-h-36 overflow-y-hidden bg-transparent border-none outline-none text-transparent text-sm placeholder:text-text-secondary py-2 px-1 disabled:opacity-50 resize-none leading-relaxed"
               style={{ caretColor: 'var(--color-text-primary)' }}
             />
           </div>
