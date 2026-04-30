@@ -915,6 +915,7 @@ pub fn run() {
                 let screenshot_app_handle = app.handle().clone();
                 let clipboard_window_handle = app.handle().clone();
                 let clipboard_hint_handle = app.handle().clone();
+                let overlay_escape_handle = app.handle().clone();
                 let shortcuts = app.state::<settings::ShortcutConfigState>().0.clone();
                 let activator = activator::OverlayActivator::new();
                 app.manage(crate::context::ActivationContextResolver::new(
@@ -967,6 +968,24 @@ pub fn run() {
                             let resolver = clipboard_hint_handle
                                 .state::<crate::context::ActivationContextResolver>();
                             resolver.note_copy_intent();
+                        },
+                        move || {
+                            // Esc must work even when the transparent NSPanel's
+                            // WKWebView misses key focus. Keep the event-tap
+                            // callback fast by dispatching native close work
+                            // onto Tauri's main thread.
+                            let dispatch_handle = overlay_escape_handle.clone();
+                            let close_handle = overlay_escape_handle.clone();
+                            let _ = dispatch_handle.run_on_main_thread(move || {
+                                let is_visible = close_handle
+                                    .get_webview_window(crate::overlay::OVERLAY_WINDOW_LABEL)
+                                    .and_then(|w| w.is_visible().ok())
+                                    .unwrap_or(false);
+                                if is_visible {
+                                    let _ =
+                                        crate::overlay::close_overlay_window(close_handle.clone());
+                                }
+                            });
                         },
                     );
                 }

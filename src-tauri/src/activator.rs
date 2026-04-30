@@ -54,6 +54,8 @@ const KC_R: i64 = 0x0f;
 const KC_C: i64 = 0x08;
 /// Keycode for the letter X. Used to detect the screenshot hotkey (⌘⇧X).
 const KC_X: i64 = 0x07;
+/// Keycode for Escape. Used as a native fallback to close screenshot overlay.
+const KC_ESCAPE: i64 = 0x35;
 
 /// Returns true when `keycode` + `flags` match the reply hotkey (⌃⇧R with
 /// **no** ⌘ or ⌥). Extracted as a pure function so the modifier-set check
@@ -67,6 +69,10 @@ fn is_reply_hotkey(keycode: i64, flags: CGEventFlags) -> bool {
     let has_cmd = flags.contains(CGEventFlags::CGEventFlagCommand);
     let has_alt = flags.contains(CGEventFlags::CGEventFlagAlternate);
     has_ctrl && has_shift && !has_cmd && !has_alt
+}
+
+fn is_escape_key(keycode: i64) -> bool {
+    keycode == KC_ESCAPE
 }
 
 fn flag_for_modifier(modifier: ShortcutModifier) -> CGEventFlags {
@@ -289,8 +295,9 @@ impl OverlayActivator {
     /// * `on_screenshot_hotkey` — invoked on the configured screenshot shortcut.
     /// * `on_clipboard_window_hotkey` — invoked on the configured clipboard-history shortcut.
     /// * `on_clipboard_hotkey` — invoked on ⌘C / ⌘X (clipboard monitor hint).
+    /// * `on_escape_key` — invoked on Escape (native overlay-close fallback).
     #[cfg_attr(coverage_nightly, coverage(off))]
-    pub fn start<F, G, H, I, J>(
+    pub fn start<F, G, H, I, J, K>(
         &self,
         shortcuts: Arc<Mutex<ShortcutConfig>>,
         on_activation: F,
@@ -298,12 +305,14 @@ impl OverlayActivator {
         on_screenshot_hotkey: H,
         on_clipboard_window_hotkey: I,
         on_clipboard_hotkey: J,
+        on_escape_key: K,
     ) where
         F: Fn() + Send + Sync + 'static,
         G: Fn() + Send + Sync + 'static,
         H: Fn() + Send + Sync + 'static,
         I: Fn() + Send + Sync + 'static,
         J: Fn() + Send + Sync + 'static,
+        K: Fn() + Send + Sync + 'static,
     {
         if self.is_active.load(Ordering::SeqCst) {
             return;
@@ -322,6 +331,7 @@ impl OverlayActivator {
         let on_screenshot_hotkey = Arc::new(on_screenshot_hotkey);
         let on_clipboard_window_hotkey = Arc::new(on_clipboard_window_hotkey);
         let on_clipboard_hotkey = Arc::new(on_clipboard_hotkey);
+        let on_escape_key = Arc::new(on_escape_key);
 
         std::thread::spawn(move || {
             run_loop_with_retry(
@@ -332,6 +342,7 @@ impl OverlayActivator {
                 on_screenshot_hotkey,
                 on_clipboard_window_hotkey,
                 on_clipboard_hotkey,
+                on_escape_key,
             );
         });
     }
@@ -361,7 +372,7 @@ enum TapExitReason {
 ///   `TapDisabledByTimeout`). Retries immediately with no attempt limit so the
 ///   listener recovers as fast as possible.
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn run_loop_with_retry<F, G, H, I, J>(
+fn run_loop_with_retry<F, G, H, I, J, K>(
     is_active: Arc<AtomicBool>,
     shortcuts: Arc<Mutex<ShortcutConfig>>,
     on_activation: Arc<F>,
@@ -369,12 +380,14 @@ fn run_loop_with_retry<F, G, H, I, J>(
     on_screenshot_hotkey: Arc<H>,
     on_clipboard_window_hotkey: Arc<I>,
     on_clipboard_hotkey: Arc<J>,
+    on_escape_key: Arc<K>,
 ) where
     F: Fn() + Send + Sync + 'static,
     G: Fn() + Send + Sync + 'static,
     H: Fn() + Send + Sync + 'static,
     I: Fn() + Send + Sync + 'static,
     J: Fn() + Send + Sync + 'static,
+    K: Fn() + Send + Sync + 'static,
 {
     let mut permission_failures: u32 = 0;
 
@@ -391,6 +404,7 @@ fn run_loop_with_retry<F, G, H, I, J>(
             &on_screenshot_hotkey,
             &on_clipboard_window_hotkey,
             &on_clipboard_hotkey,
+            &on_escape_key,
         ) {
             TapExitReason::Deactivated => return,
 
@@ -426,7 +440,7 @@ fn run_loop_with_retry<F, G, H, I, J>(
 /// Returns the reason the run loop exited so the caller can decide whether
 /// to retry.
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn try_initialize_tap<F, G, H, I, J>(
+fn try_initialize_tap<F, G, H, I, J, K>(
     is_active: &Arc<AtomicBool>,
     shortcuts: &Arc<Mutex<ShortcutConfig>>,
     on_activation: &Arc<F>,
@@ -434,6 +448,7 @@ fn try_initialize_tap<F, G, H, I, J>(
     on_screenshot_hotkey: &Arc<H>,
     on_clipboard_window_hotkey: &Arc<I>,
     on_clipboard_hotkey: &Arc<J>,
+    on_escape_key: &Arc<K>,
 ) -> TapExitReason
 where
     F: Fn() + Send + Sync + 'static,
@@ -441,6 +456,7 @@ where
     H: Fn() + Send + Sync + 'static,
     I: Fn() + Send + Sync + 'static,
     J: Fn() + Send + Sync + 'static,
+    K: Fn() + Send + Sync + 'static,
 {
     let state = Arc::new(Mutex::new(ActivationState {
         last_trigger: None,
@@ -455,6 +471,7 @@ where
     let cb_on_screenshot_hotkey = on_screenshot_hotkey.clone();
     let cb_on_clipboard_window_hotkey = on_clipboard_window_hotkey.clone();
     let cb_on_clipboard_hotkey = on_clipboard_hotkey.clone();
+    let cb_on_escape_key = on_escape_key.clone();
     let cb_state = state.clone();
 
     // Create the event tap at HID level — the lowest level before events reach
@@ -508,7 +525,9 @@ where
             match event_type {
                 CGEventType::KeyDown => {
                     let shortcut_config = cb_shortcuts.lock().unwrap().clone();
-                    if is_reply_hotkey(keycode, flags) {
+                    if is_escape_key(keycode) {
+                        cb_on_escape_key();
+                    } else if is_reply_hotkey(keycode, flags) {
                         cb_on_reply_hotkey();
                     } else if matches_key_combo(keycode, flags, &shortcut_config.screenshot_capture)
                     {
@@ -813,6 +832,12 @@ mod tests {
             | CGEventFlags::CGEventFlagShift
             | CGEventFlags::CGEventFlagAlphaShift;
         assert!(is_reply_hotkey(KC_R, flags));
+    }
+
+    #[test]
+    fn escape_key_matches_only_escape_keycode() {
+        assert!(is_escape_key(KC_ESCAPE));
+        assert!(!is_escape_key(KC_X));
     }
 
     // ─── matches_key_combo ──────────────────────────────────────────────────
