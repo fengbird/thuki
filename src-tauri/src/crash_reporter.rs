@@ -15,7 +15,7 @@
  * Design notes
  *   * The panic hook runs with no access to `AppHandle`, so filesystem
  *     paths are resolved via `dirs::data_dir()` + the hard-coded
- *     `com.quietnode.oling` bundle id. Every other entrypoint prefers
+ *     `com.tcaitool.oling` bundle id. Every other entrypoint prefers
  *     `app.path().app_data_dir()` for consistency.
  *   * Every write goes through `log::error!` first so installations with
  *     `tauri-plugin-log` enabled also keep a rolling plaintext log
@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 const CRASH_DIR_NAME: &str = "crashes";
-const APP_BUNDLE_ID: &str = "com.quietnode.oling";
+const APP_BUNDLE_ID: &str = "com.tcaitool.oling";
 
 /// JSON payload reported by the frontend error handler.
 #[derive(Debug, Clone, Deserialize, Serialize)]

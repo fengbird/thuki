@@ -408,6 +408,56 @@ describe('ClipboardHistoryView', () => {
     });
   });
 
+  it('scrolls the active row into view during keyboard navigation', async () => {
+    const originalScrollIntoView = window.HTMLElement.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    entries = Array.from({ length: 14 }, (_, index) => ({
+      id: `clip-${index}`,
+      kind: 'text' as const,
+      text_preview: `Clipboard item ${index}`,
+      text_content: `Clipboard item ${index}`,
+      image_path: null,
+      source_app: 'Test App',
+      source_bundle_id: 'com.test.app',
+      created_at: Date.now() - index * 1000,
+      last_copied_at: Date.now() - index * 1000,
+      copy_count: 1,
+      is_favorite: false,
+    }));
+
+    try {
+      render(<ClipboardHistoryView />);
+      await screen.findByTestId('clipboard-entry-clip-0');
+      scrollIntoView.mockClear();
+
+      for (let index = 0; index < 12; index += 1) {
+        await act(async () => {
+          fireEvent.keyDown(window, { key: 'ArrowDown' });
+        });
+      }
+
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('clipboard-entry-clip-12').getAttribute('style'),
+        ).toContain('141, 92');
+      });
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+      const contexts = scrollIntoView.mock.contexts;
+      expect(contexts[contexts.length - 1]).toBe(
+        screen.getByTestId('clipboard-entry-clip-12'),
+      );
+    } finally {
+      Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+        configurable: true,
+        value: originalScrollIntoView,
+      });
+    }
+  });
+
   it('focuses the search input on Cmd+F and closes on Escape', async () => {
     render(<ClipboardHistoryView />);
     await screen.findByTestId('clipboard-root');

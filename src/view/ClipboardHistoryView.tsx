@@ -945,6 +945,23 @@ function ListPane({
   activeEntryId,
   onSelect,
 }: ListPaneProps) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!activeEntryId) return;
+    const list = listRef.current;
+    if (!list) return;
+    const rows = Array.from(
+      list.querySelectorAll<HTMLElement>('[data-clipboard-entry-id]'),
+    );
+    const activeRow = rows.find(
+      (row) => row.dataset.clipboardEntryId === activeEntryId,
+    );
+    if (typeof activeRow?.scrollIntoView === 'function') {
+      activeRow.scrollIntoView({ block: 'nearest' });
+    }
+  }, [activeEntryId]);
+
   return (
     <section
       style={{
@@ -956,6 +973,8 @@ function ListPane({
       }}
     >
       <div
+        ref={listRef}
+        data-testid="clipboard-list-scroll"
         style={{
           minHeight: 0,
           overflow: 'auto',
@@ -1055,6 +1074,7 @@ function EntryRow({ entry, active, onSelect }: EntryRowProps) {
   return (
     <button
       data-testid={`clipboard-entry-${entry.id}`}
+      data-clipboard-entry-id={entry.id}
       type="button"
       onClick={() => onSelect(entry.id)}
       className="oling-entry-row"

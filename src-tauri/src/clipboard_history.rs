@@ -228,12 +228,15 @@ pub fn start_monitor(app_handle: tauri::AppHandle, state: ClipboardHistoryState)
 fn monitor_loop(app_handle: tauri::AppHandle, state: ClipboardHistoryState) {
     #[cfg(target_os = "macos")]
     {
-        let mut last_change_count = pasteboard_change_count();
+        let mut last_change_count =
+            pasteboard_change_count_on_main(&app_handle).unwrap_or_default();
         loop {
             std::thread::sleep(CLIPBOARD_POLL_INTERVAL);
 
             let now = Instant::now();
-            let change_count = pasteboard_change_count();
+            let Some(change_count) = pasteboard_change_count_on_main(&app_handle) else {
+                continue;
+            };
             if change_count == last_change_count {
                 continue;
             }
@@ -243,7 +246,7 @@ fn monitor_loop(app_handle: tauri::AppHandle, state: ClipboardHistoryState) {
                 continue;
             }
 
-            let Some(capture) = capture_current_clipboard(&app_handle) else {
+            let Some(capture) = capture_current_clipboard_on_main(&app_handle) else {
                 continue;
             };
 
@@ -252,6 +255,32 @@ fn monitor_loop(app_handle: tauri::AppHandle, state: ClipboardHistoryState) {
             }
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn run_on_main_sync<F, R>(app_handle: &tauri::AppHandle, f: F) -> Option<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    app_handle
+        .run_on_main_thread(move || {
+            let _ = tx.send(f());
+        })
+        .ok()?;
+    rx.recv_timeout(Duration::from_secs(2)).ok()
+}
+
+#[cfg(target_os = "macos")]
+fn pasteboard_change_count_on_main(app_handle: &tauri::AppHandle) -> Option<isize> {
+    run_on_main_sync(app_handle, pasteboard_change_count)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_current_clipboard_on_main(app_handle: &tauri::AppHandle) -> Option<ClipboardCapture> {
+    let handle = app_handle.clone();
+    run_on_main_sync(app_handle, move || capture_current_clipboard(&handle)).flatten()
 }
 
 fn persist_capture(app_handle: &tauri::AppHandle, capture: ClipboardCapture) -> Result<(), String> {
