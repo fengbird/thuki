@@ -192,7 +192,6 @@ export function OverlayView({
     }
     const img = new window.Image();
     img.crossOrigin = 'anonymous';
-    img.src = src;
     const reveal = () => {
       if (revealedRef.current) return;
       revealedRef.current = true;
@@ -207,6 +206,7 @@ export function OverlayView({
     };
     img.addEventListener('load', onLoad);
     img.addEventListener('error', onError);
+    img.src = src;
     return () => {
       img.removeEventListener('load', onLoad);
       img.removeEventListener('error', onError);

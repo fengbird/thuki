@@ -222,14 +222,32 @@ fn show_overlay_panel_or_fallback(app_handle: &tauri::AppHandle) {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn set_overlay_alpha(app_handle: &tauri::AppHandle, alpha: f64) {
+    use objc2_app_kit::NSWindow;
+
+    let Some(w) = app_handle.get_webview_window(OVERLAY_WINDOW_LABEL) else {
+        return;
+    };
+    let Ok(ns_window) = w.ns_window() else {
+        return;
+    };
+    let Some(ns_window) = (unsafe { (ns_window as *mut NSWindow).as_ref() }) else {
+        return;
+    };
+    ns_window.setAlphaValue(alpha.clamp(0.0, 1.0));
+}
+
 /// Reveals the screenshot overlay after the React view has loaded its
-/// background image. Creating and navigating the WebView while hidden avoids
-/// the one-frame flash that otherwise appears on hotkey capture.
+/// background image. The window is already visible at alpha 0 so WKWebView can
+/// load normally; this command restores opacity for the first useful frame.
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg_attr(not(coverage), tauri::command)]
 pub fn reveal_overlay_window(app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        set_overlay_alpha(&app_handle, 1.0);
         show_overlay_panel_or_fallback(&app_handle);
         Ok(())
     }
@@ -272,16 +290,12 @@ pub fn open_overlay_window(
     let url = overlay_url(&image_path, fit.unwrap_or(false), editor.as_deref());
 
     if let Some(existing) = app_handle.get_webview_window(OVERLAY_WINDOW_LABEL) {
-        // Ensure the panel is off-screen before we navigate. When the user
-        // closed the previous overlay we already called `hide()`, but being
-        // defensive here avoids a flash if a caller reopens while still
-        // visible. More importantly, we cover the WebView with a full-viewport
-        // opaque black div *inside the current page* so the last rendered
-        // frame from the previous session is replaced before the new URL
-        // commits — otherwise `show_and_make_key` below would paint stale
-        // content for the ~100–200ms it takes WKWebView to finish loading
-        // the new page.
-        let _ = existing.hide();
+        // Keep the WebView alive and loading, but make the native window fully
+        // transparent until the new screenshot image has decoded. Hiding a
+        // WKWebView can throttle navigation/loading and leave the hotkey path
+        // apparently doing nothing.
+        #[cfg(target_os = "macos")]
+        set_overlay_alpha(&app_handle, 0.0);
         existing
             .eval(format!(
                 r#"(function() {{
@@ -299,6 +313,9 @@ pub fn open_overlay_window(
             .map_err(|e| format!("Failed to navigate overlay window: {e}"))?;
         let _ = existing.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
         let _ = existing.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
+
+        #[cfg(target_os = "macos")]
+        show_overlay_panel_or_fallback(&app_handle);
 
         return Ok(());
     }
@@ -358,9 +375,14 @@ pub fn open_overlay_window(
                 // clicks back into another app mid-annotation.
                 panel.set_hides_on_deactivate(false);
                 panel.set_has_shadow(false);
+                set_overlay_alpha(&app_handle, 0.0);
+                panel.show_and_make_key();
             }
             Err(e) => {
-                eprintln!("oling: [overlay] NSPanel conversion failed: {e:?} — falling back to deferred plain show");
+                eprintln!("oling: [overlay] NSPanel conversion failed: {e:?} — falling back to transparent plain show");
+                set_overlay_alpha(&app_handle, 0.0);
+                let _ = window.show();
+                let _ = window.set_focus();
             }
         }
     }
