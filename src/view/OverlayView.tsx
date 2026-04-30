@@ -122,6 +122,7 @@ export function OverlayView({
     message: string;
   }>({ kind: 'idle', message: '' });
   const [longShotBusy, setLongShotBusy] = useState(false);
+  const revealedRef = useRef(false);
   const stageRef = useRef<Konva.Stage | null>(null);
   const { annotations, canUndo, canRedo, add, clear, undo, redo } =
     useAnnotations();
@@ -182,13 +183,34 @@ export function OverlayView({
 
   // Load the background screenshot so we know its natural pixel dimensions.
   useEffect(() => {
-    if (!src) return;
+    if (!src) {
+      if (!revealedRef.current) {
+        revealedRef.current = true;
+        void invoke('reveal_overlay_window');
+      }
+      return;
+    }
     const img = new window.Image();
     img.crossOrigin = 'anonymous';
     img.src = src;
-    const onLoad = () => setImage(img);
+    const reveal = () => {
+      if (revealedRef.current) return;
+      revealedRef.current = true;
+      void invoke('reveal_overlay_window');
+    };
+    const onLoad = () => {
+      setImage(img);
+      requestAnimationFrame(reveal);
+    };
+    const onError = () => {
+      requestAnimationFrame(reveal);
+    };
     img.addEventListener('load', onLoad);
-    return () => img.removeEventListener('load', onLoad);
+    img.addEventListener('error', onError);
+    return () => {
+      img.removeEventListener('load', onLoad);
+      img.removeEventListener('error', onError);
+    };
   }, [src]);
 
   useEffect(() => {

@@ -206,8 +206,8 @@ pub fn centered_editor_bounds(
 
 /// Makes the overlay window visible + key via the NSPanel path, with a plain
 /// `show()` + `set_focus()` fallback if the panel handle has gone missing.
-/// Shared by `open_overlay_window`'s fresh-build and reuse-after-navigate
-/// branches. Must be called on the macOS main thread.
+/// Called only after the frontend reports that the screenshot image has
+/// decoded, preventing a visible empty WKWebView frame.
 #[cfg(target_os = "macos")]
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn show_overlay_panel_or_fallback(app_handle: &tauri::AppHandle) {
@@ -219,6 +219,28 @@ fn show_overlay_panel_or_fallback(app_handle: &tauri::AppHandle) {
     if let Some(w) = app_handle.get_webview_window(OVERLAY_WINDOW_LABEL) {
         let _ = w.show();
         let _ = w.set_focus();
+    }
+}
+
+/// Reveals the screenshot overlay after the React view has loaded its
+/// background image. Creating and navigating the WebView while hidden avoids
+/// the one-frame flash that otherwise appears on hotkey capture.
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(not(coverage), tauri::command)]
+pub fn reveal_overlay_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        show_overlay_panel_or_fallback(&app_handle);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(w) = app_handle.get_webview_window(OVERLAY_WINDOW_LABEL) {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+        Ok(())
     }
 }
 
@@ -278,16 +300,6 @@ pub fn open_overlay_window(
         let _ = existing.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
         let _ = existing.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
 
-        // Show after a short delay so the new page has time to paint. Purely
-        // cosmetic — the NSPanel is already navigating the moment we return.
-        let delayed_handle = app_handle.clone();
-        tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(140)).await;
-            let show_handle = delayed_handle.clone();
-            let _ = delayed_handle.run_on_main_thread(move || {
-                show_overlay_panel_or_fallback(&show_handle);
-            });
-        });
         return Ok(());
     }
 
@@ -305,6 +317,7 @@ pub fn open_overlay_window(
     .resizable(false)
     .decorations(false)
     .transparent(true)
+    .background_color(tauri::utils::config::Color(0, 0, 0, 0))
     .always_on_top(true)
     .skip_taskbar(true)
     .shadow(false)
@@ -345,19 +358,15 @@ pub fn open_overlay_window(
                 // clicks back into another app mid-annotation.
                 panel.set_hides_on_deactivate(false);
                 panel.set_has_shadow(false);
-                panel.show_and_make_key();
             }
             Err(e) => {
-                eprintln!("oling: [overlay] NSPanel conversion failed: {e:?} — falling back to plain show");
-                let _ = window.show();
-                let _ = window.set_focus();
+                eprintln!("oling: [overlay] NSPanel conversion failed: {e:?} — falling back to deferred plain show");
             }
         }
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = window.show();
-        let _ = window.set_focus();
+        let _ = window;
     }
 
     Ok(())

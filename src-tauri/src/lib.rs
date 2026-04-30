@@ -1023,6 +1023,8 @@ pub fn run() {
             #[cfg(not(coverage))]
             overlay::open_overlay_window,
             #[cfg(not(coverage))]
+            overlay::reveal_overlay_window,
+            #[cfg(not(coverage))]
             overlay::close_overlay_window,
             #[cfg(not(coverage))]
             pasteboard::copy_image_to_clipboard,

@@ -1,4 +1,10 @@
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  act,
+  waitFor,
+} from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { OverlayView } from '../OverlayView';
 import { __mockKonvaSetPointerQueue } from '../../testUtils/mocks/react-konva';
@@ -75,6 +81,20 @@ describe('OverlayView — initial state', () => {
     render(<OverlayView imagePath="/tmp/shot.png" />);
     expect(screen.getByTestId('overlay-root')).toBeInTheDocument();
     expect(screen.getByTestId('overlay-background')).toBeInTheDocument();
+  });
+
+  it('reveals the native overlay only after the background image loads', async () => {
+    const restore = installImageStub();
+    try {
+      render(<OverlayView imagePath="/tmp/shot.png" />);
+
+      expect(invoke).not.toHaveBeenCalledWith('reveal_overlay_window');
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith('reveal_overlay_window'),
+      );
+    } finally {
+      restore();
+    }
   });
 
   it('omits the background image when imagePath is empty', () => {
