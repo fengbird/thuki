@@ -1,6 +1,6 @@
 [package]
 name = "oling"
-version = "0.6.5"
+version = "0.6.6"
 description = "Oling: The context-aware floating secretary"
 authors = ["Logan Nguyen"]
 license = "Apache-2.0"
