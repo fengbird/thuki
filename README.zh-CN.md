@@ -30,7 +30,13 @@
 
 ## 快速安装
 
-下载已签名 + 已公证的 DMG，双击即装 —— 不用跑任何终端命令：
+**Homebrew**（用 `brew upgrade` 自动跟随新版本）：
+
+```bash
+brew install --cask fengbird/tap/oling
+```
+
+**或直接下载 DMG**：
 
 ```bash
 curl -L https://github.com/fengbird/thuki/releases/latest/download/Oling.dmg -o Oling.dmg

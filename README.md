@@ -30,7 +30,13 @@
 
 ## Quick Install
 
-Download the latest signed & notarized DMG and double-click — no Terminal commands required:
+**Homebrew** (auto-updates on `brew upgrade`):
+
+```bash
+brew install --cask fengbird/tap/oling
+```
+
+**Or download the DMG directly**:
 
 ```bash
 curl -L https://github.com/fengbird/thuki/releases/latest/download/Oling.dmg -o Oling.dmg
