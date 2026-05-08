@@ -170,6 +170,23 @@ body {
   scrollbar-gutter: stable;
 }
 
+/* Keep multiline AskBar input scrollable without reserving visible scrollbar
+   gutter inside the text box. The textarea itself paints text and caret so
+   WebKit cannot desynchronize cursor baseline from a separate mirror layer. */
+.oling-ask-textarea {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  line-height: 20px;
+  scrollbar-width: none;
+}
+
+.oling-ask-textarea::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* ─── Markdown Body: Prose Defaults ───
  * Tailwind's preflight resets list-style to none globally. Streamdown adds no
  * list CSS of its own, so <ul>/<ol> inside .markdown-body lose their markers.

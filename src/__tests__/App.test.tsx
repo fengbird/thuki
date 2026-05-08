@@ -3020,6 +3020,7 @@ describe('App', () => {
         'Ask Oling anything...',
       ) as HTMLTextAreaElement;
       expect(textarea.value).toBe('What is in this image?');
+      expect(screen.getByAltText('Attached')).toBeInTheDocument();
     });
 
     it('attaches the image and pre-fills the prompt when received', async () => {
@@ -3039,6 +3040,34 @@ describe('App', () => {
         'Ask Oling anything...',
       ) as HTMLTextAreaElement;
       expect(textarea.value).toBe('What is in this image?');
+      expect(screen.getByAltText('Attached')).toBeInTheDocument();
+    });
+
+    it('drains overlay-submit when it arrives during the show transition', async () => {
+      render(<App />);
+      await act(async () => {});
+
+      await act(async () => {
+        emitTauriEvent('oling://visibility', {
+          state: 'show',
+          selected_text: null,
+          selected_source: null,
+          window_x: null,
+          window_y: null,
+          screen_bottom_y: null,
+        });
+        emitTauriEvent('oling://overlay-submit', {
+          imagePath: '/tmp/editor-shot.png',
+          prompt: 'What is in this image?',
+          autoSubmit: false,
+        });
+      });
+
+      const textarea = screen.getByPlaceholderText(
+        'Ask Oling anything...',
+      ) as HTMLTextAreaElement;
+      expect(textarea.value).toBe('What is in this image?');
+      expect(screen.getByAltText('Attached')).toBeInTheDocument();
     });
 
     it('ignores events with empty imagePath', async () => {
@@ -3077,6 +3106,7 @@ describe('App', () => {
         'Ask Oling anything...',
       ) as HTMLTextAreaElement;
       expect(textarea.value).toBe('');
+      expect(screen.getByAltText('Attached')).toBeInTheDocument();
     });
 
     it('auto-submits when autoSubmit is true', async () => {

@@ -205,6 +205,9 @@ function App() {
   const pendingClipboardComposeRef = useRef<ClipboardComposePayload | null>(
     null,
   );
+  /** When true, an overlay-submit event requested auto-submission. Cleared
+   *  by the effect below once handleSubmit runs with the fresh state. */
+  const [pendingOverlaySubmit, setPendingOverlaySubmit] = useState(false);
   /** True while waiting for images to finish processing before a deferred
    *  submit. Drives the "waiting" UI state in the ask bar. */
   const [isSubmitPending, setIsSubmitPending] = useState(false);
@@ -439,6 +442,51 @@ function App() {
     }
   }, [attachedImages, messages, pendingUserMessage, replyContext]);
 
+  const applyOverlaySubmitPayload = useCallback(
+    (payload: OverlaySubmitPayload) => {
+      if (!payload.imagePath) return;
+      const newImage: AttachedImage = {
+        id: crypto.randomUUID(),
+        blobUrl: convertFileSrc(payload.imagePath),
+        filePath: payload.imagePath,
+      };
+      setAttachedImages((prev) => [...prev, newImage]);
+      if (payload.prompt) {
+        setQuery(payload.prompt);
+      }
+      if (payload.autoSubmit) {
+        setPendingOverlaySubmit(true);
+      }
+    },
+    [],
+  );
+
+  const applyClipboardComposePayload = useCallback(
+    (payload: ClipboardComposePayload) => {
+      if (payload.query) {
+        setQuery(payload.query);
+      }
+      if (payload.autoSubmit) {
+        setPendingOverlaySubmit(true);
+      }
+    },
+    [],
+  );
+
+  const flushPendingActivationPayloads = useCallback(() => {
+    const pendingCompose = pendingClipboardComposeRef.current;
+    pendingClipboardComposeRef.current = null;
+    if (pendingCompose) {
+      applyClipboardComposePayload(pendingCompose);
+    }
+
+    const pendingOverlaySubmit = pendingOverlaySubmitRef.current;
+    pendingOverlaySubmitRef.current = null;
+    if (pendingOverlaySubmit) {
+      applyOverlaySubmitPayload(pendingOverlaySubmit);
+    }
+  }, [applyClipboardComposePayload, applyOverlaySubmitPayload]);
+
   /**
    * Replays the entrance sequence by transitioning the overlay to the visible state.
    * Clears conversation state for a fresh session each time the overlay appears.
@@ -478,34 +526,16 @@ function App() {
       setPendingUserMessage(null);
 
       reset();
-      const pendingCompose = pendingClipboardComposeRef.current;
-      pendingClipboardComposeRef.current = null;
-      if (pendingCompose?.query) {
-        setQuery(pendingCompose.query);
-      }
-      if (pendingCompose?.autoSubmit) {
-        setPendingOverlaySubmit(true);
-      }
-      const pendingOverlaySubmit = pendingOverlaySubmitRef.current;
-      pendingOverlaySubmitRef.current = null;
-      if (pendingOverlaySubmit?.imagePath) {
-        const newImage: AttachedImage = {
-          id: crypto.randomUUID(),
-          blobUrl: convertFileSrc(pendingOverlaySubmit.imagePath),
-          filePath: pendingOverlaySubmit.imagePath,
-        };
-        setAttachedImages([newImage]);
-        if (pendingOverlaySubmit.prompt) {
-          setQuery(pendingOverlaySubmit.prompt);
-        }
-        if (pendingOverlaySubmit.autoSubmit) {
-          setPendingOverlaySubmit(true);
-        }
-      }
+      flushPendingActivationPayloads();
       setOverlayState('visible');
     },
-    [cleanupSessionImages, reset],
+    [cleanupSessionImages, flushPendingActivationPayloads, reset],
   );
+
+  useEffect(() => {
+    if (overlayState !== 'visible') return;
+    flushPendingActivationPayloads();
+  }, [flushPendingActivationPayloads, overlayState]);
 
   /**
    * Moves the overlay into an exit phase. The actual Tauri window hide call is
@@ -916,9 +946,6 @@ function App() {
     activeCommands,
   ]);
 
-  /** When true, an overlay-submit event requested auto-submission. Cleared
-   *  by the effect below once handleSubmit runs with the fresh state. */
-  const [pendingOverlaySubmit, setPendingOverlaySubmit] = useState(false);
   useEffect(() => {
     if (!pendingOverlaySubmit) return;
     // State from the event has been committed; query is populated and the
@@ -1028,18 +1055,7 @@ function App() {
         pendingOverlaySubmitRef.current = payload;
         return;
       }
-      const newImage: AttachedImage = {
-        id: crypto.randomUUID(),
-        blobUrl: convertFileSrc(payload.imagePath),
-        filePath: payload.imagePath,
-      };
-      setAttachedImages((prev) => [...prev, newImage]);
-      if (payload.prompt) {
-        setQuery(payload.prompt);
-      }
-      if (payload.autoSubmit) {
-        setPendingOverlaySubmit(true);
-      }
+      applyOverlaySubmitPayload(payload);
     };
 
     const handleClipboardCompose = (payload: ClipboardComposePayload) => {
@@ -1047,12 +1063,7 @@ function App() {
         pendingClipboardComposeRef.current = payload;
         return;
       }
-      if (payload.query) {
-        setQuery(payload.query);
-      }
-      if (payload.autoSubmit) {
-        setPendingOverlaySubmit(true);
-      }
+      applyClipboardComposePayload(payload);
     };
 
     const attachListeners = async () => {
@@ -1135,7 +1146,12 @@ function App() {
       unlistenOverlaySubmit?.();
       unlistenClipboardCompose?.();
     };
-  }, [replayEntranceAnimation, requestHideOverlay]);
+  }, [
+    applyClipboardComposePayload,
+    applyOverlaySubmitPayload,
+    replayEntranceAnimation,
+    requestHideOverlay,
+  ]);
 
   /**
    * Combined close handler shared by the keyboard shortcut (Esc/Cmd+W)

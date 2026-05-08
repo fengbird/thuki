@@ -1204,101 +1204,8 @@ describe('AskBarView', () => {
     });
   });
 
-  describe('Command highlighting mirror div', () => {
-    it('renders a mirror div with aria-hidden behind the textarea', () => {
-      const { container } = render(
-        <AskBarView
-          {...IMAGE_DEFAULTS}
-          query="/translate explain"
-          setQuery={vi.fn()}
-          isChatMode={false}
-          isGenerating={false}
-          onSubmit={vi.fn()}
-          onCancel={vi.fn()}
-          inputRef={makeRef()}
-        />,
-      );
-      const mirror = container.querySelector('[aria-hidden="true"]');
-      expect(mirror).not.toBeNull();
-      expect(mirror!.classList.contains('pointer-events-none')).toBe(true);
-    });
-
-    it('highlights /translate command in violet in the mirror div', () => {
-      const { container } = render(
-        <AskBarView
-          {...IMAGE_DEFAULTS}
-          query="/translate explain this"
-          setQuery={vi.fn()}
-          isChatMode={false}
-          isGenerating={false}
-          onSubmit={vi.fn()}
-          onCancel={vi.fn()}
-          inputRef={makeRef()}
-        />,
-      );
-      const mirror = container.querySelector('[aria-hidden="true"]');
-      const highlighted = mirror!.querySelector('.text-violet-400');
-      expect(highlighted).not.toBeNull();
-      expect(highlighted!.textContent).toBe('/translate');
-    });
-
-    it('highlights multiple commands in the mirror div', () => {
-      const { container } = render(
-        <AskBarView
-          {...IMAGE_DEFAULTS}
-          query="/think /translate explain"
-          setQuery={vi.fn()}
-          isChatMode={false}
-          isGenerating={false}
-          onSubmit={vi.fn()}
-          onCancel={vi.fn()}
-          inputRef={makeRef()}
-        />,
-      );
-      const mirror = container.querySelector('[aria-hidden="true"]');
-      const highlighted = mirror!.querySelectorAll('.text-violet-400');
-      expect(highlighted).toHaveLength(2);
-      expect(highlighted[0].textContent).toBe('/think');
-      expect(highlighted[1].textContent).toBe('/translate');
-    });
-
-    it('does not highlight partial command matches like /screensaver', () => {
-      const { container } = render(
-        <AskBarView
-          {...IMAGE_DEFAULTS}
-          query="/screensaver is nice"
-          setQuery={vi.fn()}
-          isChatMode={false}
-          isGenerating={false}
-          onSubmit={vi.fn()}
-          onCancel={vi.fn()}
-          inputRef={makeRef()}
-        />,
-      );
-      const mirror = container.querySelector('[aria-hidden="true"]');
-      expect(mirror!.querySelector('.text-violet-400')).toBeNull();
-      expect(mirror!.textContent).toBe('/screensaver is nice');
-    });
-
-    it('renders plain text in mirror div when no commands present', () => {
-      const { container } = render(
-        <AskBarView
-          {...IMAGE_DEFAULTS}
-          query="hello world"
-          setQuery={vi.fn()}
-          isChatMode={false}
-          isGenerating={false}
-          onSubmit={vi.fn()}
-          onCancel={vi.fn()}
-          inputRef={makeRef()}
-        />,
-      );
-      const mirror = container.querySelector('[aria-hidden="true"]');
-      expect(mirror!.querySelector('.text-violet-400')).toBeNull();
-      expect(mirror!.textContent).toBe('hello world');
-    });
-
-    it('makes the textarea text transparent for the mirror overlay', () => {
+  describe('Ask textarea layout', () => {
+    it('renders real textarea text instead of a mirror overlay', () => {
       const { container } = render(
         <AskBarView
           {...IMAGE_DEFAULTS}
@@ -1312,56 +1219,11 @@ describe('AskBarView', () => {
         />,
       );
       const textarea = container.querySelector('textarea');
-      expect(textarea!.classList.contains('text-transparent')).toBe(true);
+      expect(container.querySelector('.oling-ask-mirror')).toBeNull();
+      expect(textarea!.classList.contains('text-text-primary')).toBe(true);
+      expect(textarea!.classList.contains('text-transparent')).toBe(false);
+      expect(textarea!.classList.contains('oling-ask-textarea')).toBe(true);
       expect(textarea!.style.caretColor).toBe('var(--color-text-primary)');
-    });
-
-    it('handles scroll event gracefully when refs are not yet set', () => {
-      // Render with a ref that has current = null to exercise the null guard
-      const nullRef = { current: null };
-      const { container } = render(
-        <AskBarView
-          {...IMAGE_DEFAULTS}
-          query="/think test"
-          setQuery={vi.fn()}
-          isChatMode={false}
-          isGenerating={false}
-          onSubmit={vi.fn()}
-          onCancel={vi.fn()}
-          inputRef={nullRef}
-        />,
-      );
-      // The textarea is rendered by React, but the inputRef.current is null
-      // because we passed a ref with current=null that was not wired via callback.
-      // The scroll handler should not throw.
-      const textarea = container.querySelector('textarea')!;
-      expect(() => fireEvent.scroll(textarea)).not.toThrow();
-    });
-
-    it('syncs mirror div scroll with textarea scroll', () => {
-      const ref = makeRef();
-      const { container } = render(
-        <AskBarView
-          {...IMAGE_DEFAULTS}
-          query="/think long text here"
-          setQuery={vi.fn()}
-          isChatMode={false}
-          isGenerating={false}
-          onSubmit={vi.fn()}
-          onCancel={vi.fn()}
-          inputRef={ref}
-        />,
-      );
-      const textarea = container.querySelector('textarea')!;
-      const mirror = container.querySelector('[aria-hidden="true"]')!;
-
-      // Simulate scrolling
-      Object.defineProperty(textarea, 'scrollTop', {
-        value: 42,
-        writable: true,
-      });
-      fireEvent.scroll(textarea);
-      expect(mirror.scrollTop).toBe(42);
     });
 
     it('resizes multiline input and keeps the caret line visible', () => {
@@ -1379,7 +1241,6 @@ describe('AskBarView', () => {
         <AskBarView {...baseProps} query="first line" />,
       );
       const textarea = container.querySelector('textarea')!;
-      const mirror = container.querySelector('[aria-hidden="true"]')!;
 
       Object.defineProperty(textarea, 'scrollHeight', {
         value: 72,
@@ -1398,7 +1259,6 @@ describe('AskBarView', () => {
 
       expect(textarea.style.height).toBe('72px');
       expect(textarea.scrollTop).toBe(72);
-      expect(mirror.scrollTop).toBe(72);
     });
   });
 
