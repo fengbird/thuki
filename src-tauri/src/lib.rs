@@ -148,6 +148,7 @@ fn emit_overlay_visibility(
 #[cfg(target_os = "macos")]
 mod cg_displays {
     use core_graphics::geometry::{CGPoint, CGRect};
+    use std::ffi::c_void;
 
     type CGDirectDisplayID = u32;
 
@@ -160,6 +161,13 @@ mod cg_displays {
         ) -> i32;
         fn CGDisplayBounds(display: CGDirectDisplayID) -> CGRect;
         fn CGMainDisplayID() -> CGDirectDisplayID;
+        fn CGEventCreate(source: *const c_void) -> *const c_void;
+        fn CGEventGetLocation(event: *const c_void) -> CGPoint;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFRelease(cf: *const c_void);
     }
 
     fn rect_to_tuple(r: CGRect) -> (f64, f64, f64, f64) {
@@ -184,6 +192,33 @@ mod cg_displays {
     /// Returns `(origin_x, origin_y, width, height)` of the main (menu-bar) display.
     pub fn main_display() -> (f64, f64, f64, f64) {
         unsafe { rect_to_tuple(CGDisplayBounds(CGMainDisplayID())) }
+    }
+
+    /// Returns the current mouse cursor location in Quartz coordinates
+    /// (top-left origin of the primary display). Returns `None` if the
+    /// system event services are unavailable.
+    pub fn cursor_position() -> Option<(f64, f64)> {
+        unsafe {
+            let event = CGEventCreate(std::ptr::null());
+            if event.is_null() {
+                return None;
+            }
+            let point = CGEventGetLocation(event);
+            CFRelease(event);
+            Some((point.x, point.y))
+        }
+    }
+
+    /// Returns the bounds of the display the mouse cursor is currently on,
+    /// falling back to the main display if the cursor position can't be
+    /// resolved (or sits in dead space between mirrored arrangements).
+    pub fn cursor_display() -> (f64, f64, f64, f64) {
+        if let Some((x, y)) = cursor_position() {
+            if let Some(bounds) = display_for_point(x, y) {
+                return bounds;
+            }
+        }
+        main_display()
     }
 }
 
@@ -362,10 +397,31 @@ fn toggle_overlay(app_handle: &tauri::AppHandle, ctx: crate::context::Activation
 fn capture_and_open_overlay(app_handle: &tauri::AppHandle) {
     let handle = app_handle.clone();
     tauri::async_runtime::spawn(async move {
-        // Phase 1: capture pixels on the main thread (CG requirement).
+        // Phase 1: resolve the target display first (the one the mouse
+        // cursor is on, not just the main display). Multi-monitor setups
+        // expect the screenshot overlay to open on the screen the user is
+        // actually looking at. Both the pixel capture and the overlay
+        // window use the same bounds so they line up perfectly.
+        let (tx_bounds, rx_bounds) = tokio::sync::oneshot::channel::<(f64, f64, f64, f64)>();
+        if handle
+            .run_on_main_thread(move || {
+                tx_bounds.send(cg_displays::cursor_display()).ok();
+            })
+            .is_err()
+        {
+            return;
+        }
+        let bounds = match rx_bounds.await {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+
+        // Phase 2: capture pixels for the chosen display on the main thread
+        // (CG requirement).
         let (tx, rx) = tokio::sync::oneshot::channel::<Result<(u32, u32, Vec<u8>), String>>();
+        let capture_bounds = bounds;
         if let Err(e) = handle.run_on_main_thread(move || {
-            tx.send(crate::screenshot::capture_full_screen_pixels())
+            tx.send(crate::screenshot::capture_display_pixels(capture_bounds))
                 .ok();
         }) {
             eprintln!("oling: [overlay] failed to dispatch capture: {e}");
@@ -383,7 +439,7 @@ fn capture_and_open_overlay(app_handle: &tauri::AppHandle) {
             }
         };
 
-        // Phase 2: encode lossless PNG at native resolution on a blocking
+        // Phase 3: encode lossless PNG at native resolution on a blocking
         // thread. The overlay must show pixel-perfect pixels, not a
         // JPEG-downscaled facsimile.
         let saved_path = match tauri::async_runtime::spawn_blocking(move || {
@@ -402,22 +458,8 @@ fn capture_and_open_overlay(app_handle: &tauri::AppHandle) {
             }
         };
 
-        // Phase 3: resolve main-display bounds on the main thread, then open the
-        // overlay window covering the entire display.
-        let (tx2, rx2) = tokio::sync::oneshot::channel::<(f64, f64, f64, f64)>();
-        if handle
-            .run_on_main_thread(move || {
-                tx2.send(cg_displays::main_display()).ok();
-            })
-            .is_err()
-        {
-            return;
-        }
-        let bounds = match rx2.await {
-            Ok(b) => b,
-            Err(_) => return,
-        };
-
+        // Phase 4: open the overlay window covering the same display we
+        // captured.
         let open_handle = handle.clone();
         let _ = handle.run_on_main_thread(move || {
             let _ = crate::overlay::open_overlay_window(

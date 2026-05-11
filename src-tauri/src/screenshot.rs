@@ -164,7 +164,9 @@ pub async fn capture_screenshot_command(
 /// requires Screen Recording permission and a running display server.
 #[cfg(target_os = "macos")]
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn capture_full_screen_raw() -> Result<(u32, u32, Vec<u8>), String> {
+fn capture_full_screen_raw(
+    target_bounds: Option<(f64, f64, f64, f64)>,
+) -> Result<(u32, u32, Vec<u8>), String> {
     use core_foundation::base::TCFType;
     use core_foundation::string::CFString;
     use core_graphics::geometry::{CGPoint, CGRect, CGSize};
@@ -241,10 +243,20 @@ fn capture_full_screen_raw() -> Result<(u32, u32, Vec<u8>), String> {
     let our_pid = std::process::id() as i32;
 
     unsafe {
-        // Use the actual main display bounds instead of abstract CGRectNull
-        // or CGRectInfinite, which have platform-dependent representations
-        // that can cause CGWindowListCreateImage to return null.
-        let screen_bounds = CGDisplayBounds(CGMainDisplayID());
+        // Use the actual display bounds for the target screen. Caller can
+        // pass `target_bounds` to capture a specific display (e.g. the one
+        // the mouse cursor is on for multi-monitor setups); when None we
+        // fall back to the main display, matching the original behavior.
+        // Abstract sentinels like CGRectNull / CGRectInfinite have
+        // platform-dependent representations that can cause
+        // CGWindowListCreateImage to return null.
+        let screen_bounds = match target_bounds {
+            Some((x, y, w, h)) => CGRect {
+                origin: CGPoint::new(x, y),
+                size: CGSize::new(w, h),
+            },
+            None => CGDisplayBounds(CGMainDisplayID()),
+        };
 
         // Two-stage permission check for Screen Recording.
         //
@@ -419,13 +431,37 @@ fn capture_full_screen_raw() -> Result<(u32, u32, Vec<u8>), String> {
 #[cfg(target_os = "macos")]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub fn capture_full_screen_pixels() -> Result<(u32, u32, Vec<u8>), String> {
-    capture_full_screen_raw()
+    capture_full_screen_raw(None)
+}
+
+/// Captures raw RGBA pixels for an arbitrary display rectangle. Used by the
+/// screenshot overlay flow to grab only the screen the user is actually on
+/// (multi-monitor support). `bounds` is `(origin_x, origin_y, width, height)`
+/// in Quartz points (top-left of primary display, Y-down) — exactly what
+/// `CGDisplayBounds` returns for each display.
+///
+/// Must be called on the macOS main thread for the same reason as
+/// `capture_full_screen_pixels` — CoreGraphics deadlocks otherwise.
+#[cfg(target_os = "macos")]
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub fn capture_display_pixels(
+    bounds: (f64, f64, f64, f64),
+) -> Result<(u32, u32, Vec<u8>), String> {
+    capture_full_screen_raw(Some(bounds))
 }
 
 /// Non-macOS stub: full-screen capture is macOS-only.
 #[cfg(not(target_os = "macos"))]
 pub fn capture_full_screen_pixels() -> Result<(u32, u32, Vec<u8>), String> {
     Err("full-screen capture is only supported on macOS".to_string())
+}
+
+/// Non-macOS stub: per-display capture is macOS-only.
+#[cfg(not(target_os = "macos"))]
+pub fn capture_display_pixels(
+    _bounds: (f64, f64, f64, f64),
+) -> Result<(u32, u32, Vec<u8>), String> {
+    Err("display capture is only supported on macOS".to_string())
 }
 
 // ─── Single-window capture (macOS) ─────────────────────────────────────────
